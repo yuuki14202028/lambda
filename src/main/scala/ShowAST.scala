@@ -5,6 +5,7 @@ type ShowResult[I] = String
 val showAlg: Algebra[AST, ShowResult] = [x] => node => node match {
   case AST.Program(seq)            => seq.mkString("\n")
   case AST.Abs(v, body)            => s"λ${v.name}. $body"
+  case AST.Let(v, value, body)     => s"let ${v.name} = $value in $body"
   case AST.App(func, arg)          => s"$func($arg)"
   case AST.Var(v)                  => s"${v.name}"
   case AST.Num(v)                  => s"$v"

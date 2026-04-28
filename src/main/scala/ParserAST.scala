@@ -8,7 +8,7 @@ object ParserAST {
   private val sp1: Parser0[Unit] = Parser.charIn(" \t").rep0.void
   private val identifier: Parser[String] = alpha.rep.map(_.toList.mkString)
 
-  lazy val expr: Parser[Rec[Expr]] = Parser.defer(absP | additive)
+  lazy val expr: Parser[Rec[Expr]] = Parser.defer(absP | letP )
 
   lazy val absP: Parser[Rec[Expr]] = {
     val name = Parser.string("λ") *> sp *> identifier
@@ -16,7 +16,16 @@ object ParserAST {
     (name ~ body).map { case (n, b) => abs(Variable(n), b) }
   }
 
-  private val addOp: Parser[BinOps] =
+  lazy val letP: Parser[Rec[Expr]] = {
+    val name = Parser.string("let") *> sp *> identifier
+    val value = sp *> Parser.char('=') *> sp *> expr
+    val body = sp *> Parser.string("in") *> sp *> Parser.defer(expr)
+    (name ~ value ~ body).map { case ((name, value), body) =>
+      let(Variable(name), value, body)
+    }
+  }
+
+   private val addOp: Parser[BinOps] =
     Parser.char('+').as(BinOps.Add) | Parser.char('-').as(BinOps.Sub)
 
   private val mulOp: Parser[BinOps] =
@@ -61,6 +70,6 @@ object ParserAST {
 
   val programParser: Parser0[Rec[AST.Program.type]] = {
     val sep: Parser[Unit] = (sp1.with1 *> Parser.charIn("\n;").rep <* sp).void
-    (sp.with1 *> expr.repSep(sep) <* sp).map(nel => program(nel.toList))
+    (sp *> expr.repSep(sep) <* sp).map(nel => program(nel.toList))
   }
 }

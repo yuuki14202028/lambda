@@ -10,6 +10,7 @@ given HFunctor[AST] with {
   def map[R[_], S[_], I](fa: AST[R, I])(f: R ~> S): AST[S, I] = fa match {
     case AST.Program(seq) => AST.Program(seq.map(f.apply))
     case AST.Abs(v, body) => AST.Abs(v, f(body))
+    case AST.Let(varr, vall, body) => AST.Let(varr, f(vall), f(body))
     case AST.App(func, arg) => AST.App(f(func), f(arg))
     case AST.Var(v) => AST.Var(v)
     case AST.Num(v) => AST.Num(v)

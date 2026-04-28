@@ -10,6 +10,7 @@ type Type = TypeNode.type
 enum AST[R[_], I] {
   case Program(body: Seq[R[Expr]]) extends AST[R, Program.type]
   case Abs(variable: Variable, body: R[Expr]) extends AST[R, Expr]
+  case Let(variable: Variable, value: R[Expr], body: R[Expr]) extends AST[R, Expr]
   case App(function: R[Expr], argument: R[Expr]) extends AST[R, Expr]
   case Var(value: Variable) extends AST[R, Expr]
   case Num(value: Int) extends AST[R, Expr]
@@ -43,6 +44,7 @@ type Rec[I] = HFix[AST, I]
 
 def program(defines: Seq[Rec[Expr]]): Rec[AST.Program.type] = HFix(AST.Program(defines))
 def abs(variable: Variable, body: Rec[Expr]): Rec[Expr] = HFix(AST.Abs(variable, body))
+def let(variable: Variable, value: Rec[Expr], body: Rec[Expr]): Rec[Expr] = HFix(AST.Let(variable, value, body))
 def app(function: Rec[Expr], argument: Rec[Expr]): Rec[Expr] = HFix(AST.App(function, argument))
 def varr(variable: Variable): Rec[Expr] = HFix(AST.Var(variable))
 def num(value: Int): Rec[Expr] = HFix(AST.Num(value))

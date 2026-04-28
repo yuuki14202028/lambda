@@ -126,6 +126,28 @@ object Generator {
       _   <- liftS(addFunc(liftedFn(lbl, bc)))
     } yield closureAlloc(lbl)
 
+    case AST.Let(Variable(param), value, body) => for {
+      vc <- value
+      bc <- body.local((env: Env) => param :: env)
+    } yield vc ++ List(
+      "    ldr x9, [x29, #-16]",
+      "    str x9, [sp, #-16]!",
+      "    str x0, [sp, #-16]!",
+      "    mov x0, #16",
+      "    bl _malloc",
+      "    ldr x1, [sp], #16",
+      "    str x1, [x0]",
+      "    ldr x9, [sp], #16",
+      "    str x9, [x0, #8]",
+      "    str x0, [x29, #-16]"
+    ) ++ bc ++ List(
+      "    mov x9, x0",
+      "    ldr x0, [x29, #-16]",
+      "    ldr x0, [x0, #8]",
+      "    str x0, [x29, #-16]",
+      "    mov x0, x9"
+    )
+
     case AST.App(f, a) => for {
       fc <- f
       str = List("    str x0, [sp, #-16]!")

@@ -1,5 +1,7 @@
-(λcompose.
-  (λtwice.
-    twice(twice)(compose(λx. x * 3)(λx. x))(1)
-  )(λf. λx. f(f(x)))
-)(λf. λg. λx. f(g(x)))
+let main = λz.
+  let x = 7 in
+  let y = 11 in
+  x + y
+in main(0)
+
+
