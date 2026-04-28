@@ -49,6 +49,12 @@ object Generator {
     case BinOps.Sub => "    sub  w0, w1, w0"
     case BinOps.Mul => "    mul  w0, w1, w0"
     case BinOps.Div => "    sdiv w0, w1, w0"
+    case BinOps.Eq  => "    cmp  w1, w0\n    cset w0, eq"
+    case BinOps.Neq => "    cmp  w1, w0\n    cset w0, ne"
+    case BinOps.Lt  => "    cmp  w1, w0\n    cset w0, lt"
+    case BinOps.Leq => "    cmp  w1, w0\n    cset w0, le"
+    case BinOps.Gt  => "    cmp  w1, w0\n    cset w0, gt"
+    case BinOps.Geq => "    cmp  w1, w0\n    cset w0, ge"
   }
 
   private def liftedFn(label: String, body: List[String]): List[String] = {

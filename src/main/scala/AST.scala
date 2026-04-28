@@ -19,13 +19,19 @@ enum AST[R[_], I] {
 }
 
 enum BinOps {
-  case Add, Sub, Mul, Div
+  case Add, Sub, Mul, Div, Eq, Neq, Lt, Leq, Gt, Geq
 
   override def toString: String = this match {
     case BinOps.Add => "+"
     case BinOps.Sub => "-"
     case BinOps.Mul => "*"
     case BinOps.Div => "/"
+    case BinOps.Eq  => "=="
+    case BinOps.Neq => "!="
+    case BinOps.Lt  => "<"
+    case BinOps.Leq => "<="
+    case BinOps.Gt  => ">"
+    case BinOps.Geq => ">="
   }
 }
 

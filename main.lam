@@ -1,7 +1,7 @@
 let main = λz.
   let x = 7 in
   let y = 11 in
-  x + y
+  x > y
 in main(0)
 
 

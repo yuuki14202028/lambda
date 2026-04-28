@@ -8,7 +8,7 @@ object ParserAST {
   private val sp1: Parser0[Unit] = Parser.charIn(" \t").rep0.void
   private val identifier: Parser[String] = alpha.rep.map(_.toList.mkString)
 
-  lazy val expr: Parser[Rec[Expr]] = Parser.defer(absP | letP )
+  lazy val expr: Parser[Rec[Expr]] = Parser.defer(absP | letP | equitive)
 
   lazy val absP: Parser[Rec[Expr]] = {
     val name = Parser.string("λ") *> sp *> identifier
@@ -25,11 +25,24 @@ object ParserAST {
     }
   }
 
-   private val addOp: Parser[BinOps] =
+  private val eqOp: Parser[BinOps] =
+    Parser.string("==").as(BinOps.Eq) | Parser.string("!=").as(BinOps.Neq) |
+    Parser.string("<").as(BinOps.Lt) | Parser.string("<=").as(BinOps.Leq) |
+    Parser.string(">").as(BinOps.Gt) | Parser.string(">=").as(BinOps.Geq)
+
+  private val addOp: Parser[BinOps] =
     Parser.char('+').as(BinOps.Add) | Parser.char('-').as(BinOps.Sub)
 
   private val mulOp: Parser[BinOps] =
     Parser.char('*').as(BinOps.Mul) | Parser.char('/').as(BinOps.Div)
+
+  lazy val equitive: Parser[Rec[Expr]] = {
+    val eq  = Parser.defer(additive)
+    val tail = (sp.with1.soft *> eqOp ~ (sp.with1 *> eq)).rep0
+    (eq ~ tail).map { case (init, ops) =>
+      ops.foldLeft(init) { case (acc, (op, r)) => binop(op, acc, r) }
+    }
+  }
 
   lazy val additive: Parser[Rec[Expr]] = {
     val mul  = Parser.defer(multiplicative)
