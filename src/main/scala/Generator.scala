@@ -18,6 +18,13 @@ object Generator {
     }
   }
 
+  private def label(): GenS[String] = {
+    State { st =>
+      val c = st.counter + 1
+      (st.copy(counter = c), s"L$c")
+    }
+  }
+
   private def addFunc(fn: List[String]): GenS[Unit] = {
     State.modify(st => st.copy(funcs = st.funcs :+ fn))
   }
@@ -159,6 +166,25 @@ object Generator {
       str = List("    str x0, [sp, #-16]!")
       ac <- a
     } yield fc ++ str ++ ac ++ appSeq
+
+    case AST.If(c, t, e) => for {
+      l <- liftS(label())
+      cond <- c
+      ct = List(
+        s"    cbnz w0, .${l}true",
+        s"    b .${l}false",
+        s".${l}true:"
+      )
+      trB <- t
+      te = List(
+        s"    b .${l}end",
+        s".${l}false:"
+      )
+      elB <- e
+      end = List(
+        s".${l}end:"
+      )
+    } yield cond ++ ct ++ trB ++ te ++ elB ++ end
 
     case AST.Program(seq) => {
       seq.toList.sequence.map(parts => mainWrapper(parts.flatten))

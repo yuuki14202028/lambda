@@ -11,6 +11,7 @@ val showAlg: Algebra[AST, ShowResult] = [x] => node => node match {
   case AST.Num(v)                  => s"$v"
   case AST.BinOp(op, l, r)         => s"($l $op $r)"
   case AST.UnaryOp(op, t)          => s"$op $t"
+  case AST.If(c, t, e)             => s"if $c then $t else $e"
 }
 
 extension [I](t: Rec[I]) {

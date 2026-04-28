@@ -8,7 +8,7 @@ object ParserAST {
   private val sp1: Parser0[Unit] = Parser.charIn(" \t").rep0.void
   private val identifier: Parser[String] = alpha.rep.map(_.toList.mkString)
 
-  lazy val expr: Parser[Rec[Expr]] = Parser.defer(absP | letP | equitive)
+  lazy val expr: Parser[Rec[Expr]] = Parser.defer(absP | letP | ifP | equitive)
 
   lazy val absP: Parser[Rec[Expr]] = {
     val name = Parser.string("λ") *> sp *> identifier
@@ -25,10 +25,19 @@ object ParserAST {
     }
   }
 
+  lazy val ifP: Parser[Rec[Expr]] = {
+    val cond = Parser.string("if") *> sp *> expr
+    val trueBranch = sp *> Parser.string("then") *> sp *> expr
+    val elseBranch = sp *> Parser.string("else") *> sp *> expr
+    (cond ~ trueBranch ~ elseBranch).map { case ((cond, tr), el) =>
+      iff(cond, tr, el)
+    }
+  }
+
   private val eqOp: Parser[BinOps] =
     Parser.string("==").as(BinOps.Eq) | Parser.string("!=").as(BinOps.Neq) |
-    Parser.string("<").as(BinOps.Lt) | Parser.string("<=").as(BinOps.Leq) |
-    Parser.string(">").as(BinOps.Gt) | Parser.string(">=").as(BinOps.Geq)
+    Parser.string("<=").as(BinOps.Leq) | Parser.string("<").as(BinOps.Lt) |
+    Parser.string(">=").as(BinOps.Geq) | Parser.string(">").as(BinOps.Gt)
 
   private val addOp: Parser[BinOps] =
     Parser.char('+').as(BinOps.Add) | Parser.char('-').as(BinOps.Sub)

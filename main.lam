@@ -1,7 +1,12 @@
-let main = λz.
-  let x = 7 in
-  let y = 11 in
-  x > y
-in main(0)
+let fix = λf. (λx. f(λv. x(x)(v)))((λx. f(λv. x(x)(v))))
+in
+let fib = fix(λself. λn.
+  if n <= 1 then
+    n
+  else
+    self(n - 1) + self(n - 2))
+in fib(10)
+
+
 
 
