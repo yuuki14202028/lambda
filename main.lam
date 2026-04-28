@@ -1,0 +1,5 @@
+(λcompose.
+  (λtwice.
+    twice(twice)(compose(λx. x * 3)(λx. x))(1)
+  )(λf. λx. f(f(x)))
+)(λf. λg. λx. f(g(x)))
