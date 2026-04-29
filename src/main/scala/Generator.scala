@@ -6,7 +6,7 @@ import cats.syntax.all.*
 object Generator {
   type Env = List[String]
 
-  case class GenState(funcs: Vector[List[String]], counter: Int)
+  case class GenState(funcs: Vector[List[String]], counter: Int, externs: Set[String])
   type GenS[A] = State[GenState, A]
   type GenR[A] = ReaderT[GenS, Env, A]
   type Gen[I]  = GenR[List[String]]
@@ -27,6 +27,10 @@ object Generator {
 
   private def addFunc(fn: List[String]): GenS[Unit] = {
     State.modify(st => st.copy(funcs = st.funcs :+ fn))
+  }
+
+  private def addExtern(symbol: String): GenS[Unit] = {
+    State.modify(st => st.copy(externs = st.externs + symbol))
   }
 
   private def liftS[A](sa: GenS[A]): GenR[A] = ReaderT.liftF(sa)
@@ -86,6 +90,16 @@ object Generator {
     )
   }
 
+  private def foreignWrapper(label: String, symbol: String): List[String] = List(
+    "", ".p2align 2", s"$label:",
+    "    stp x29, x30, [sp, #-16]!",
+    "    mov x29, sp",
+    "    mov w0, w1",
+    s"    bl _$symbol",
+    "    ldp x29, x30, [sp], #16",
+    "    ret"
+  )
+
   private def closureAlloc(label: String): List[String] = List(
     "    mov x0, #16",
     "    bl _malloc",
@@ -133,6 +147,20 @@ object Generator {
 
     case AST.Var(Variable(name)) =>
       ask.map(env => varLookup(name, env))
+
+    case AST.Foreign(Variable(name)) => for {
+      lbl <- liftS(fresh(s"foreign_$name"))
+      _   <- liftS(addExtern(name))
+      _   <- liftS(addFunc(foreignWrapper(lbl, name)))
+    } yield List(
+      "    mov x0, #16",
+      "    bl _malloc",
+      s"    adrp x9, $lbl@PAGE",
+      s"    add x9, x9, $lbl@PAGEOFF",
+      "    str x9, [x0]",
+      "    mov x9, #0",
+      "    str x9, [x0, #8]"
+    )
 
     case AST.Abs(Variable(param), body) => for {
       lbl <- liftS(fresh("lambda"))
@@ -194,7 +222,8 @@ object Generator {
 
   def generate(prog: Rec[AST.Program.type]): String = {
     val gen = prog.cata(genAlg)
-    val (finalSt, mainCode) = gen.run(Nil).run(GenState(Vector.empty, 0)).value
-    (mainCode ++ finalSt.funcs.toList.flatten).mkString("\n") + "\n"
+    val (finalSt, mainCode) = gen.run(Nil).run(GenState(Vector.empty, 0, Set.empty)).value
+    val externs = finalSt.externs.toList.sorted.map(sym => s".extern _$sym")
+    (externs ++ mainCode ++ finalSt.funcs.toList.flatten).mkString("\n") + "\n"
   }
 }

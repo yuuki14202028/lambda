@@ -12,6 +12,7 @@ given HFunctor[AST] with {
     case AST.Abs(v, body) => AST.Abs(v, f(body))
     case AST.Let(varr, vall, body) => AST.Let(varr, f(vall), f(body))
     case AST.App(func, arg) => AST.App(f(func), f(arg))
+    case AST.Foreign(v) => AST.Foreign(v)
     case AST.Var(v) => AST.Var(v)
     case AST.Num(v) => AST.Num(v)
     case AST.Char(v) => AST.Char(v)

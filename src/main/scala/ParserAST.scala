@@ -1,12 +1,17 @@
 package com.yuuki14202028
 
 import cats.parse.{Numbers, Parser, Parser0}
-import cats.parse.Rfc5234.alpha
-
+import cats.parse.Rfc5234.{alpha, digit}
 object ParserAST {
   private val sp: Parser0[Unit]  = Parser.charIn(" \t\n\r").rep0.void
   private val sp1: Parser0[Unit] = Parser.charIn(" \t").rep0.void
-  private val identifier: Parser[String] = alpha.rep.map(_.toList.mkString)
+  private val identStart: Parser[Char] = alpha
+  private val identChar: Parser[Char] =
+    alpha | digit | Parser.char('_').as('_')
+  private val identifier: Parser[String] =
+    (identStart ~ identChar.rep0).map { case (head, tail) =>
+      (head :: tail.toList).mkString
+    }
 
   lazy val expr: Parser[Rec[Expr]] = Parser.defer(absP | letP | ifP | equitive)
 
@@ -81,8 +86,11 @@ object ParserAST {
 
   lazy val atom: Parser[Rec[Expr]] = {
     val parens = Parser.char('(') *> sp *> Parser.defer(expr) <* sp <* Parser.char(')')
-    Parser.defer(numP | charP | varP | parens)
+    Parser.defer(numP | charP | foreignP | varP | parens)
   }
+
+  val foreignP: Parser[Rec[Expr]] =
+    (Parser.string("foreign") *> (sp1.with1 *> identifier)).map(n => foreign(Variable(n)))
 
   val varP: Parser[Rec[Expr]] =
     identifier.map(n => varr(Variable(n)))

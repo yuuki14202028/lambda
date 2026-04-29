@@ -1,12 +1,15 @@
-let fix = λf. (λx. f(λv. x(x)(v)))((λx. f(λv. x(x)(v))))
-in
-let fib = fix(λself. λn.
-  if n <= 1 then
-    n
-  else
-    self(n - 1) + self(n - 2))
-in fib(10)
-
-
-
+let put = foreign put_char in
+let h = put('h') in
+let e = put('e') in
+let l0 = put('l') in
+let l1 = put('l') in
+let o = put('o') in
+let sp = put(32) in
+let w = put('w') in
+let o1 = put('o') in
+let r = put('r') in
+let l2 = put('l') in
+let d = put('d') in
+let bang = put(33) in
+put(10)
 
