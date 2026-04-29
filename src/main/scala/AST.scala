@@ -14,6 +14,7 @@ enum AST[R[_], I] {
   case App(function: R[Expr], argument: R[Expr]) extends AST[R, Expr]
   case Var(value: Variable) extends AST[R, Expr]
   case Num(value: Int) extends AST[R, Expr]
+  case Char(value: scala.Char) extends AST[R, Expr]
   case BinOp(op: BinOps, left: R[Expr], right: R[Expr]) extends AST[R, Expr]
   case UnaryOp(op: UnaryOps, body: R[Expr]) extends AST[R, Expr]
   case If(cond: R[Expr], thenBranch: R[Expr], elseBranch: R[Expr]) extends AST[R, Expr]
@@ -55,6 +56,7 @@ def let(variable: Variable, value: Rec[Expr], body: Rec[Expr]): Rec[Expr] = HFix
 def app(function: Rec[Expr], argument: Rec[Expr]): Rec[Expr] = HFix(AST.App(function, argument))
 def varr(variable: Variable): Rec[Expr] = HFix(AST.Var(variable))
 def num(value: Int): Rec[Expr] = HFix(AST.Num(value))
+def char(value: scala.Char): Rec[Expr] = HFix(AST.Char(value))
 def binop(op: BinOps, left: Rec[Expr], right: Rec[Expr]): Rec[Expr] = HFix(AST.BinOp(op, left, right))
 def unop(op: UnaryOps, body: Rec[Expr]): Rec[Expr] = HFix(AST.UnaryOp(op, body))
 def iff(cond: Rec[Expr], thenBranch: Rec[Expr], elseBranch: Rec[Expr]): Rec[Expr] = HFix(AST.If(cond, thenBranch, elseBranch))

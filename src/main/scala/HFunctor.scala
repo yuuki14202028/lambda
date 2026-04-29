@@ -14,6 +14,7 @@ given HFunctor[AST] with {
     case AST.App(func, arg) => AST.App(f(func), f(arg))
     case AST.Var(v) => AST.Var(v)
     case AST.Num(v) => AST.Num(v)
+    case AST.Char(v) => AST.Char(v)
     case AST.BinOp(op, l, r) => AST.BinOp(op, f(l), f(r))
     case AST.UnaryOp(op, t) => AST.UnaryOp(op, f(t))
     case AST.If(c, t, e) => AST.If(f(c), f(t), f(e))

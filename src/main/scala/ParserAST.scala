@@ -81,7 +81,7 @@ object ParserAST {
 
   lazy val atom: Parser[Rec[Expr]] = {
     val parens = Parser.char('(') *> sp *> Parser.defer(expr) <* sp <* Parser.char(')')
-    Parser.defer(numP | varP | parens)
+    Parser.defer(numP | charP | varP | parens)
   }
 
   val varP: Parser[Rec[Expr]] =
@@ -89,6 +89,9 @@ object ParserAST {
 
   val numP: Parser[Rec[Expr]] =
     Numbers.digits.map(_.toInt).map(num)
+
+  val charP: Parser[Rec[Expr]] =
+    Parser.char('\'') *> alpha.map(char) <* Parser.char('\'')
 
   val programParser: Parser0[Rec[AST.Program.type]] = {
     val sep: Parser[Unit] = (sp1.with1 *> Parser.charIn("\n;").rep <* sp).void
