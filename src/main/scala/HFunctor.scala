@@ -9,8 +9,8 @@ trait HFunctor[H[_[_], _]]:
 given HFunctor[AST] with {
   def map[R[_], S[_], I](fa: AST[R, I])(f: R ~> S): AST[S, I] = fa match {
     case AST.Program(seq) => AST.Program(seq.map(f.apply))
-    case AST.Abs(v, body) => AST.Abs(v, f(body))
-    case AST.Let(varr, vall, body) => AST.Let(varr, f(vall), f(body))
+    case AST.Abs(v, types, body) => AST.Abs(v, f(types), f(body))
+    case AST.Let(varr, types, vall, body) => AST.Let(varr, f(types), f(vall), f(body))
     case AST.App(func, arg) => AST.App(f(func), f(arg))
     case AST.Foreign(v) => AST.Foreign(v)
     case AST.Var(v) => AST.Var(v)
@@ -19,6 +19,8 @@ given HFunctor[AST] with {
     case AST.BinOp(op, l, r) => AST.BinOp(op, f(l), f(r))
     case AST.UnaryOp(op, t) => AST.UnaryOp(op, f(t))
     case AST.If(c, t, e) => AST.If(f(c), f(t), f(e))
+    case AST.Primitive(n) => AST.Primitive(n)
+    case AST.Arrow(from, to) => AST.Arrow(f(from), f(to))
   }
 }
 

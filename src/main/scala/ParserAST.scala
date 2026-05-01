@@ -17,17 +17,31 @@ object ParserAST {
 
   lazy val absP: Parser[Rec[Expr]] = {
     val name = Parser.string("λ") *> sp *> identifier
+    val types = sp *> Parser.char(':') *> sp *> typeP
     val body = sp *> Parser.char('.') *> sp *> Parser.defer(expr)
-    (name ~ body).map { case (n, b) => abs(Variable(n), b) }
+    (name ~ types ~ body).map { case ((n, t), b) => abs(Variable(n), t, b) }
   }
 
   lazy val letP: Parser[Rec[Expr]] = {
     val name = Parser.string("let") *> sp *> identifier
+    val types = sp *> Parser.char(':') *> sp *> typeP
     val value = sp *> Parser.char('=') *> sp *> expr
     val body = sp *> Parser.string("in") *> sp *> Parser.defer(expr)
-    (name ~ value ~ body).map { case ((name, value), body) =>
-      let(Variable(name), value, body)
+    (name ~ types ~ value ~ body).map { case (((name, types), value), body) =>
+      let(Variable(name), types, value, body)
     }
+  }
+
+  lazy val typeP: Parser[Rec[Type]] = {
+    val arrowTail = sp.with1.soft *> Parser.char('→') *> sp *> Parser.defer(typeP)
+    (primitiveP ~ arrowTail.?).map {
+      case (from, Some(to)) => arrow(from, to)
+      case (t, None) => t
+    }
+  }
+
+  private val primitiveP: Parser[Rec[Type]] = {
+    Parser.string("Int").as(primitive("Int")) | Parser.string("Char").as(primitive("Char"))
   }
 
   lazy val ifP: Parser[Rec[Expr]] = {

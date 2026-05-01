@@ -47,3 +47,6 @@ build/
 .bsp/
 .sbt/
 .sbtboot/
+.sbt-local/
+
+/.idea/git_toolbox_prj.xml

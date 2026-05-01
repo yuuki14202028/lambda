@@ -1,15 +1,14 @@
-let put = foreign put_char in
-let h = put('h') in
-let e = put('e') in
-let l0 = put('l') in
-let l1 = put('l') in
-let o = put('o') in
-let sp = put(32) in
-let w = put('w') in
-let o1 = put('o') in
-let r = put('r') in
-let l2 = put('l') in
-let d = put('d') in
-let bang = put(33) in
+let put: Char → Int = foreign put_char in
+let h: Int = put('h') in
+let e: Int = put('e') in
+let l0: Int = put('l') in
+let l1: Int = put('l') in
+let o: Int = put('o') in
+let sp: Int = put(32) in
+let w: Int = put('w') in
+let o1: Int = put('o') in
+let r: Int = put('r') in
+let l2: Int = put('l') in
+let d: Int = put('d') in
+let bang: Int = put(33) in
 put(10)
-

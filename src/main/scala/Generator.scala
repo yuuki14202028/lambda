@@ -162,13 +162,13 @@ object Generator {
       "    str x9, [x0, #8]"
     )
 
-    case AST.Abs(Variable(param), body) => for {
+    case AST.Abs(Variable(param), types, body) => for {
       lbl <- liftS(fresh("lambda"))
       bc  <- body.local((env: Env) => param :: env)
       _   <- liftS(addFunc(liftedFn(lbl, bc)))
     } yield closureAlloc(lbl)
 
-    case AST.Let(Variable(param), value, body) => for {
+    case AST.Let(Variable(param), types, value, body) => for {
       vc <- value
       bc <- body.local((env: Env) => param :: env)
     } yield vc ++ List(
@@ -218,6 +218,9 @@ object Generator {
     case AST.Program(seq) => {
       seq.toList.sequence.map(parts => mainWrapper(parts.flatten))
     }
+
+    case AST.Primitive(_) => pure(Nil)
+    case AST.Arrow(_, _)  => pure(Nil)
   }
 
   def generate(prog: Rec[AST.Program.type]): String = {
