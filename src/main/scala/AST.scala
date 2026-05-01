@@ -13,6 +13,7 @@ enum AST[R[_], I] {
   case Program(body: Seq[R[Expr]]) extends AST[R, Program.type]
   case Abs(variable: Variable, types: R[Type], body: R[Expr]) extends AST[R, Expr]
   case Let(variable: Variable, types: R[Type], value: R[Expr], body: R[Expr]) extends AST[R, Expr]
+  case LetRec(variable: Variable, types: R[Type], value: R[Expr], body: R[Expr]) extends AST[R, Expr]
   case App(function: R[Expr], argument: R[Expr]) extends AST[R, Expr]
   case Foreign(value: Variable) extends AST[R, Expr]
   case Var(value: Variable) extends AST[R, Expr]
@@ -58,6 +59,7 @@ type Rec[I] = HFix[AST, I]
 def program(defines: Seq[Rec[Expr]]): Rec[AST.Program.type] = HFix(AST.Program(defines))
 def abs(variable: Variable, types: Rec[Type], body: Rec[Expr]): Rec[Expr] = HFix(AST.Abs(variable, types, body))
 def let(variable: Variable, types: Rec[Type], value: Rec[Expr], body: Rec[Expr]): Rec[Expr] = HFix(AST.Let(variable, types, value, body))
+def letRec(variable: Variable, types: Rec[Type], value: Rec[Expr], body: Rec[Expr]): Rec[Expr] = HFix(AST.LetRec(variable, types, value, body))
 def app(function: Rec[Expr], argument: Rec[Expr]): Rec[Expr] = HFix(AST.App(function, argument))
 def foreign(variable: Variable): Rec[Expr] = HFix(AST.Foreign(variable))
 def varr(variable: Variable): Rec[Expr] = HFix(AST.Var(variable))
@@ -86,6 +88,8 @@ def absT(variable: Variable, t: Rec[Type], types: TypeRec[Type], body: TypeRec[E
   HCofree(ExprAnn(t), AST.Abs(variable, types, body))
 def letT(variable: Variable, t: Rec[Type], types: TypeRec[Type], value: TypeRec[Expr], body: TypeRec[Expr]): TypeRec[Expr] =
   HCofree(ExprAnn(t), AST.Let(variable, types, value, body))
+def letRecT(variable: Variable, t: Rec[Type], types: TypeRec[Type], value: TypeRec[Expr], body: TypeRec[Expr]): TypeRec[Expr] =
+  HCofree(ExprAnn(t), AST.LetRec(variable, types, value, body))
 def appT(t: Rec[Type], function: TypeRec[Expr], argument: TypeRec[Expr]): TypeRec[Expr] =
   HCofree(ExprAnn(t), AST.App(function, argument))
 def foreignT(variable: Variable, t: Rec[Type]): TypeRec[Expr] = HCofree(ExprAnn(t), AST.Foreign(variable))

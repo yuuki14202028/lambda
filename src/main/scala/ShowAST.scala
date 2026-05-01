@@ -6,6 +6,7 @@ val showAlg: Algebra[AST, ShowResult] = [x] => node => node match {
   case AST.Program(seq)            => seq.mkString("\n")
   case AST.Abs(v, types, body)     => s"λ${v.name}: $types. $body"
   case AST.Let(v, types, value, body) => s"let ${v.name}: $types = $value in $body"
+  case AST.LetRec(v, types, value, body) => s"let rec ${v.name}: $types = $value in $body"
   case AST.App(func, arg)          => s"$func($arg)"
   case AST.Foreign(v)              => s"foreign ${v.name}"
   case AST.Var(v)                  => s"${v.name}"
@@ -20,4 +21,17 @@ val showAlg: Algebra[AST, ShowResult] = [x] => node => node match {
 
 extension [I](t: Rec[I]) {
   def show: String = t.cata(showAlg)
+}
+
+val typedShowAlg: HCofreeAlgebra[AST, TypeAnn, ShowResult] = [x] => (ann, node) => {
+  val shown = showAlg[x](node)
+  ann match {
+    case ProgramAnn        => shown
+    case ExprAnn(exprType) => s"($shown)[${exprType.show}]"
+    case TypeAnn           => shown
+  }
+}
+
+extension [I](t: TypeRec[I]) {
+  def show: String = t.cataAnn(typedShowAlg)
 }

@@ -1,2 +1,8 @@
-let id : Int → Int = λx: Int. x in
-id(id(1))
+let put: Int → Int = foreign put_char in
+let print: Int → Int = foreign print_int in
+let rec loop: Int → Int → Int =
+  λn: Int.
+  λacc: Int.
+    if n <= 0 then acc else loop(n - 1)(acc + n)
+in
+print(loop(100)(0))

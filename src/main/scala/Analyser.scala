@@ -38,6 +38,15 @@ object Analyser {
       resultType = typeOf(typedBody)
     } yield letT(variable, resultType, typedTypes, typedValue, typedBody)
 
+    case AST.LetRec(variable, types, value, body) => for {
+      typedTypes <- types
+      declaredType = eraseAnn[Type](typedTypes)
+      typedValue <- value.local((env: Env) => env + (variable -> declaredType))
+      _ <- ReaderT.liftF(expect(declaredType, typeOf(typedValue)))
+      typedBody <- body.local((env: Env) => env + (variable -> declaredType))
+      resultType = typeOf(typedBody)
+    } yield letRecT(variable, resultType, typedTypes, typedValue, typedBody)
+
     case AST.App(function, argument) => for {
       typedFunction <- function
       typedArgument <- argument

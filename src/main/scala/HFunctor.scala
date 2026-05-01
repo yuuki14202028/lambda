@@ -11,6 +11,7 @@ given HFunctor[AST] with {
     case AST.Program(seq) => AST.Program(seq.map(f.apply))
     case AST.Abs(v, types, body) => AST.Abs(v, f(types), f(body))
     case AST.Let(varr, types, vall, body) => AST.Let(varr, f(types), f(vall), f(body))
+    case AST.LetRec(varr, types, vall, body) => AST.LetRec(varr, f(types), f(vall), f(body))
     case AST.App(func, arg) => AST.App(f(func), f(arg))
     case AST.Foreign(v) => AST.Foreign(v)
     case AST.Var(v) => AST.Var(v)

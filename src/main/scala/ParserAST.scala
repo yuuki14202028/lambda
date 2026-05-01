@@ -13,7 +13,7 @@ object ParserAST {
       (head :: tail.toList).mkString
     }
 
-  lazy val expr: Parser[Rec[Expr]] = Parser.defer(absP | letP | ifP | equitive)
+  lazy val expr: Parser[Rec[Expr]] = Parser.defer(absP | letRecP.backtrack | letP | ifP | equitive)
 
   lazy val absP: Parser[Rec[Expr]] = {
     val name = Parser.string("λ") *> sp *> identifier
@@ -29,6 +29,17 @@ object ParserAST {
     val body = sp *> Parser.string("in") *> sp *> Parser.defer(expr)
     (name ~ types ~ value ~ body).map { case (((name, types), value), body) =>
       let(Variable(name), types, value, body)
+    }
+  }
+
+  lazy val letRecP: Parser[Rec[Expr]] = {
+    val gap = Parser.charIn(" \t").rep.void
+    val name = Parser.string("let") *> gap *> Parser.string("rec") *> gap *> identifier
+    val types = sp *> Parser.char(':') *> sp *> typeP
+    val value = sp *> Parser.char('=') *> sp *> expr
+    val body = sp *> Parser.string("in") *> sp *> Parser.defer(expr)
+    (name ~ types ~ value ~ body).map { case (((name, types), value), body) =>
+      letRec(Variable(name), types, value, body)
     }
   }
 
