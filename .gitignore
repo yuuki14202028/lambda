@@ -48,5 +48,8 @@ build/
 .sbt/
 .sbtboot/
 .sbt-local/
+.bloop/
+.metals/
+project/
 
 /.idea/git_toolbox_prj.xml
