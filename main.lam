@@ -1,14 +1,2 @@
-let put: Char → Int = foreign put_char in
-let h: Int = put('h') in
-let e: Int = put('e') in
-let l0: Int = put('l') in
-let l1: Int = put('l') in
-let o: Int = put('o') in
-let sp: Int = put(32) in
-let w: Int = put('w') in
-let o1: Int = put('o') in
-let r: Int = put('r') in
-let l2: Int = put('l') in
-let d: Int = put('d') in
-let bang: Int = put(33) in
-put(10)
+let id : Int → Int = λx: Int. x in
+id(id(1))

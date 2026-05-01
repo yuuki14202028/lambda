@@ -14,6 +14,12 @@ def main(): Unit = {
 
     case Right(ast) =>
       println(ast.show)
+      Analyser.validate(ast) match {
+        case Left(err) =>
+          Console.err.println(s"Type error: $err")
+          sys.exit(1)
+        case Right(_) => ()
+      }
       val asm = Generator.generate(ast)
       val outDir = Paths.get("build")
       Files.createDirectories(outDir)
