@@ -133,9 +133,16 @@ object Generator {
   private val genAlg: Algebra[AST, Gen] = [x] => (node: AST[Gen, x]) => node match {
     case AST.Num(v) => pure(loadImm(v))
     case AST.Char(v) => pure(loadImm(v.toInt))
+    case AST.Bool(v) => pure(loadImm(if (v) 1 else 0))
 
     case AST.UnaryOp(UnaryOps.Neg, body) => {
       body.map(_ ++ List("    neg w0, w0"))
+    }
+    case AST.UnaryOp(UnaryOps.Not, body) => {
+      body.map(_ ++ List(
+        "    cmp w0, #0",
+        "    cset w0, eq"
+      ))
     }
 
     case AST.BinOp(op, l, r) => for {

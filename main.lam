@@ -3,6 +3,6 @@ let print: Int → Int = foreign print_int in
 let rec loop: Int → Int → Int =
   λn: Int.
   λacc: Int.
-    if n <= 0 then acc else loop(n - 1)(acc + n)
+    if !(n > 0) then acc else loop(n - 1)(acc + n)
 in
 print(loop(100)(0))

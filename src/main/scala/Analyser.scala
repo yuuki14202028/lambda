@@ -18,6 +18,10 @@ object Analyser {
     Either.cond(isNumericType(actual), (), s"Type mismatch: expected Int or Char, actual $actual")
   }
 
+  private def expectEquatable(actual: Rec[Type]): EitherS[Unit] = {
+    Either.cond(isEquatableType(actual), (), s"Type mismatch: expected Int, Char, or Bool, actual $actual")
+  }
+
   private val tcAlg: Algebra[AST, TC] = [x] => (node: AST[TC, x]) => node match {
 
     case AST.Program(body) => body.traverse(identity).map(programT)
@@ -70,21 +74,33 @@ object Analyser {
 
     case AST.Num(value) => ReaderT.pure(numT(value, intType))
     case AST.Char(value) => ReaderT.pure(charT(value, charType))
+    case AST.Bool(value) => ReaderT.pure(boolT(value, boolType))
 
     case AST.BinOp(op, left, right) => for {
       typedLeft <- left
       typedRight <- right
       leftType = typeOf(typedLeft)
       rightType = typeOf(typedRight)
-      _ <- ReaderT.liftF(expectNumeric(leftType))
+      _ <- ReaderT.liftF(op match {
+        case BinOps.Add | BinOps.Sub | BinOps.Mul | BinOps.Div => expectNumeric(leftType)
+        case BinOps.Eq | BinOps.Neq => expectEquatable(leftType)
+        case BinOps.Lt | BinOps.Leq | BinOps.Gt | BinOps.Geq => expectNumeric(leftType)
+      })
       _ <- ReaderT.liftF(expect(leftType, rightType))
-    } yield binopT(op, leftType, typedLeft, typedRight)
+      resultType = op match {
+        case BinOps.Add | BinOps.Sub | BinOps.Mul | BinOps.Div => leftType
+        case BinOps.Eq | BinOps.Neq | BinOps.Lt | BinOps.Leq | BinOps.Gt | BinOps.Geq => boolType
+      }
+    } yield binopT(op, resultType, typedLeft, typedRight)
 
-    case AST.UnaryOp(UnaryOps.Neg, body) => for {
+    case AST.UnaryOp(op, body) => for {
       typedBody <- body
       bodyType = typeOf(typedBody)
-      _ <- ReaderT.liftF(expectNumeric(bodyType))
-    } yield unopT(UnaryOps.Neg, bodyType, typedBody)
+      _ <- ReaderT.liftF(op match {
+        case UnaryOps.Neg => expectNumeric(bodyType)
+        case UnaryOps.Not => expect(boolType, bodyType)
+      })
+    } yield unopT(op, bodyType, typedBody)
 
     case AST.If(cond, thenBranch, elseBranch) => for {
       typedCond <- cond
@@ -93,12 +109,13 @@ object Analyser {
       condType = typeOf(typedCond)
       thenType = typeOf(typedThen)
       elseType = typeOf(typedElse)
-      _ <- ReaderT.liftF(expectNumeric(condType))
+      _ <- ReaderT.liftF(expect(boolType, condType))
       _ <- ReaderT.liftF(expect(thenType, elseType))
     } yield ifT(thenType, typedCond, typedThen, typedElse)
 
     case AST.Primitive("Int") => ReaderT.pure(primitiveT("Int"))
     case AST.Primitive("Char") => ReaderT.pure(primitiveT("Char"))
+    case AST.Primitive("Bool") => ReaderT.pure(primitiveT("Bool"))
     case AST.Primitive(name) => ReaderT.liftF(Left(s"Primitive type $name is not defined"))
     case AST.Arrow(from, to) => (from, to).mapN(arrowT)
   }

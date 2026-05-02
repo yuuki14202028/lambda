@@ -52,7 +52,9 @@ object ParserAST {
   }
 
   private val primitiveP: Parser[Rec[Type]] = {
-    Parser.string("Int").as(primitive("Int")) | Parser.string("Char").as(primitive("Char"))
+    Parser.string("Int").as(primitive("Int")) |
+    Parser.string("Char").as(primitive("Char")) |
+    Parser.string("Bool").as(primitive("Bool"))
   }
 
   lazy val ifP: Parser[Rec[Expr]] = {
@@ -101,7 +103,8 @@ object ParserAST {
 
   lazy val unaryP: Parser[Rec[Expr]] = {
     val neg = (Parser.char('-') *> sp *> Parser.defer(unaryP)).map(b => unop(UnaryOps.Neg, b))
-    neg | Parser.defer(appP)
+    val not = (Parser.char('!') *> sp *> Parser.defer(unaryP)).map(b => unop(UnaryOps.Not, b))
+    neg | not | Parser.defer(appP)
   }
 
   lazy val appP: Parser[Rec[Expr]] = {
@@ -111,7 +114,7 @@ object ParserAST {
 
   lazy val atom: Parser[Rec[Expr]] = {
     val parens = Parser.char('(') *> sp *> Parser.defer(expr) <* sp <* Parser.char(')')
-    Parser.defer(numP | charP | foreignP | varP | parens)
+    Parser.defer(numP | charP | boolP | foreignP | varP | parens)
   }
 
   val foreignP: Parser[Rec[Expr]] =
@@ -125,6 +128,9 @@ object ParserAST {
 
   val charP: Parser[Rec[Expr]] =
     Parser.char('\'') *> alpha.map(char) <* Parser.char('\'')
+
+  val boolP: Parser[Rec[Expr]] =
+    Parser.string("true").as(bool(true)) | Parser.string("false").as(bool(false))
 
   val programParser: Parser0[Rec[AST.Program.type]] = {
     val sep: Parser[Unit] = (sp1.with1 *> Parser.charIn("\n;").rep <* sp).void
