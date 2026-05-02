@@ -175,6 +175,8 @@ object Generator {
       _   <- liftS(addFunc(liftedFn(lbl, bc)))
     } yield closureAlloc(lbl)
 
+    case AST.TyAbs(_, body) => body
+
     case AST.Let(Variable(param), types, value, body) => for {
       vc <- value
       bc <- body.local((env: Env) => param :: env)
@@ -227,6 +229,8 @@ object Generator {
       ac <- a
     } yield fc ++ str ++ ac ++ appSeq
 
+    case AST.TyApp(f, _) => f
+
     case AST.If(c, t, e) => for {
       l <- liftS(label())
       cond <- c
@@ -251,7 +255,9 @@ object Generator {
     }
 
     case AST.Primitive(_) => pure(Nil)
+    case AST.TypeVar(_) => pure(Nil)
     case AST.Arrow(_, _)  => pure(Nil)
+    case AST.ForAll(_, _) => pure(Nil)
   }
 
   def generate(prog: Rec[AST.Program.type]): String = {

@@ -5,9 +5,11 @@ type ShowResult[I] = String
 val showAlg: Algebra[AST, ShowResult] = [x] => node => node match {
   case AST.Program(seq)            => seq.mkString("\n")
   case AST.Abs(v, types, body)     => s"λ${v.name}: $types. $body"
+  case AST.TyAbs(v, body)          => s"Λ${v.name}. $body"
   case AST.Let(v, types, value, body) => s"let ${v.name}: $types = $value in $body"
   case AST.LetRec(v, types, value, body) => s"let rec ${v.name}: $types = $value in $body"
   case AST.App(func, arg)          => s"$func($arg)"
+  case AST.TyApp(func, arg)        => s"$func[$arg]"
   case AST.Foreign(v)              => s"foreign ${v.name}"
   case AST.Var(v)                  => s"${v.name}"
   case AST.Num(v)                  => s"$v"
@@ -17,7 +19,9 @@ val showAlg: Algebra[AST, ShowResult] = [x] => node => node match {
   case AST.UnaryOp(op, t)          => s"$op $t"
   case AST.If(c, t, e)             => s"if $c then $t else $e"
   case AST.Primitive(name)         => name
+  case AST.TypeVar(v)              => v.name
   case AST.Arrow(from, to)         => s"$from → $to"
+  case AST.ForAll(v, body)         => s"∀${v.name}. $body"
 }
 
 extension [I](t: Rec[I]) {

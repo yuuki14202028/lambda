@@ -1,11 +1,13 @@
 # Lambda
 
-Scala 3 で実装された、小さな単純型付きラムダ計算系言語のコンパイラです。
+Scala 3 で実装された、小さな型付きラムダ計算系言語のコンパイラです。
 `main.lam` を読み込み、型検査を行ったうえで ARM64 向けのアセンブリを `build/out.s` に生成します。
 
 ## できること
 
 - 単純型付きラムダ抽象 `λx: T. ...`
+- 型抽象 `ΛA. ...`
+- 型適用 `f[T]`
 - 関数適用 `f(x)`
 - `let x: T = ... in ...`
 - 再帰束縛 `let rec f: T = ... in ...`
@@ -28,9 +30,11 @@ Int
 Char
 Bool
 T → U
+∀A. T
 ```
 
 `λ`、`let`、`let rec` では型注釈が必須です。
+多相関数は `ΛA. ...` で型抽象し、`f[Int]` のように明示的に型適用します。
 
 ```text
 λx: Int. x + 1
@@ -40,6 +44,9 @@ x + 10
 
 let rec f: Int → Int = λn: Int. if n <= 0 then 0 else f(n - 1) in
 f(10)
+
+let id: ∀A. A → A = ΛA. λx: A. x in
+id[Int](42)
 ```
 
 `foreign name` は現状 `Int → Int` として扱われます。`runtime/ffi.c` には `print_int` と `put_char` が用意されています。

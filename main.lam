@@ -1,8 +1,42 @@
 let put: Int → Int = foreign put_char in
 let print: Int → Int = foreign print_int in
-let rec loop: Int → Int → Int =
-  λn: Int.
-  λacc: Int.
-    if !(n > 0) then acc else loop(n - 1)(acc + n)
+
+let none: ∀A. ∀R. R → (A → R) → R =
+  ΛA.
+  ΛR. λfst: R.
+  λsnd: A → R. fst
 in
-print(loop(100)(0))
+
+let some: ∀A. A → ∀R. R → (A → R) → R =
+  ΛA. λv: A.
+  ΛR. λfst: R.
+  λsnd: A → R. snd(v)
+in
+
+let printOption: (∀R. R → (Int → R) → R) → Int =
+  λoption: ∀R. R → (Int → R) → R.
+    let l: Int → Int = λunit: Int.
+      let n: Int = put(78) in
+      let o: Int = put(111) in
+      let n2: Int = put(110) in
+      let e: Int = put(101) in
+      put(10)
+    in
+    let r: Int → Int → Int = λvalue: Int.
+      λunit: Int.
+      print(value)
+    in
+    option[Int → Int](l)(r)(0)
+in
+
+let someValue: ∀R. R → (Int → R) → R =
+  some[Int](42)
+in
+
+let noneValue: ∀R. R → (Int → R) → R =
+  none[Int]
+in
+
+let a: Int = printOption(someValue) in
+let b: Int = printOption(noneValue) in
+0

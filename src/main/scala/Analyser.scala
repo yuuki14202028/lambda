@@ -6,12 +6,12 @@ import cats.implicits.catsSyntaxTuple2Semigroupal
 
 object Analyser {
 
-  type Env = Map[Variable, Rec[Type]]
+  case class Env(values: Map[Variable, Rec[Type]], typeVars: Set[TypeVariable])
   type EitherS[A] = Either[String, A]
   type TC[I] = ReaderT[EitherS, Env, TypeRec[I]]
 
   private def expect(expected: Rec[Type], actual: Rec[Type]): EitherS[Unit] = {
-    Either.cond(expected == actual, (), s"Type mismatch: expected $expected, actual $actual")
+    Either.cond(sameType(expected, actual), (), s"Type mismatch: expected ${expected.show}, actual ${actual.show}")
   }
 
   private def expectNumeric(actual: Rec[Type]): EitherS[Unit] = {
@@ -29,25 +29,34 @@ object Analyser {
     case AST.Abs(variable, types, body) => for {
       typedTypes <- types
       paramType = eraseAnn[Type](typedTypes)
-      typedBody <- body.local((env: Env) => env + (variable -> paramType))
+      typedBody <- body.local((env: Env) => env.copy(values = env.values + (variable -> paramType)))
       resultType = arrow(paramType, typeOf(typedBody))
     } yield absT(variable, resultType, typedTypes, typedBody)
+
+    case AST.TyAbs(variable, body) => for {
+      env <- ReaderT.ask[EitherS, Env]
+      _ <- ReaderT.liftF[EitherS, Env, Unit](
+        Either.cond(!env.typeVars.contains(variable), (), s"Type variable ${variable.name} is already defined")
+      )
+      typedBody <- body.local((env: Env) => env.copy(typeVars = env.typeVars + variable))
+      resultType = forallType(variable, typeOf(typedBody))
+    } yield tyAbsT(variable, resultType, typedBody)
 
     case AST.Let(variable, types, value, body) => for {
       typedTypes <- types
       declaredType = eraseAnn[Type](typedTypes)
       typedValue <- value
       _ <- ReaderT.liftF(expect(declaredType, typeOf(typedValue)))
-      typedBody <- body.local((env: Env) => env + (variable -> declaredType))
+      typedBody <- body.local((env: Env) => env.copy(values = env.values + (variable -> declaredType)))
       resultType = typeOf(typedBody)
     } yield letT(variable, resultType, typedTypes, typedValue, typedBody)
 
     case AST.LetRec(variable, types, value, body) => for {
       typedTypes <- types
       declaredType = eraseAnn[Type](typedTypes)
-      typedValue <- value.local((env: Env) => env + (variable -> declaredType))
+      typedValue <- value.local((env: Env) => env.copy(values = env.values + (variable -> declaredType)))
       _ <- ReaderT.liftF(expect(declaredType, typeOf(typedValue)))
-      typedBody <- body.local((env: Env) => env + (variable -> declaredType))
+      typedBody <- body.local((env: Env) => env.copy(values = env.values + (variable -> declaredType)))
       resultType = typeOf(typedBody)
     } yield letRecT(variable, resultType, typedTypes, typedValue, typedBody)
 
@@ -56,19 +65,31 @@ object Analyser {
       typedArgument <- argument
       resultType <- ReaderT.liftF[EitherS, Env, Rec[Type]] {
         destructArrow(typeOf(typedFunction)) match {
-          case Some((from, to)) if from == typeOf(typedArgument) => Right(to)
-          case Some((from, _)) => Left(s"Type mismatch: expected $from, actual ${typeOf(typedArgument)}")
-          case None => Left(s"Not a function: ${typeOf(typedFunction)}")
+          case Some((from, to)) if sameType(from, typeOf(typedArgument)) => Right(to)
+          case Some((from, _)) => Left(s"Type mismatch: expected ${from.show}, actual ${typeOf(typedArgument).show}")
+          case None => Left(s"Not a function: ${typeOf(typedFunction).show}")
         }
       }
     } yield appT(resultType, typedFunction, typedArgument)
+
+    case AST.TyApp(function, argument) => for {
+      typedFunction <- function
+      typedArgument <- argument
+      argumentType = eraseAnn[Type](typedArgument)
+      resultType <- ReaderT.liftF[EitherS, Env, Rec[Type]] {
+        destructForAll(typeOf(typedFunction)) match {
+          case Some((variable, bodyType)) => Right(substType(variable, argumentType, bodyType))
+          case None => Left(s"Not a polymorphic function: ${typeOf(typedFunction).show}")
+        }
+      }
+    } yield tyAppT(resultType, typedFunction, typedArgument)
 
     case AST.Foreign(value) => ReaderT.pure(foreignT(value, foreignType))
 
     case AST.Var(value) => for {
       env <- ReaderT.ask[EitherS, Env]
       t <- ReaderT.liftF[EitherS, Env, Rec[Type]](
-        env.get(value).toRight(s"Variable $value is not defined")
+        env.values.get(value).toRight(s"Variable $value is not defined")
       )
     } yield varrType(value, t)
 
@@ -117,11 +138,24 @@ object Analyser {
     case AST.Primitive("Char") => ReaderT.pure(primitiveT("Char"))
     case AST.Primitive("Bool") => ReaderT.pure(primitiveT("Bool"))
     case AST.Primitive(name) => ReaderT.liftF(Left(s"Primitive type $name is not defined"))
+    case AST.TypeVar(variable) => for {
+      env <- ReaderT.ask[EitherS, Env]
+      _ <- ReaderT.liftF[EitherS, Env, Unit](
+        Either.cond(env.typeVars.contains(variable), (), s"Type variable ${variable.name} is not defined")
+      )
+    } yield typeVarT(variable)
     case AST.Arrow(from, to) => (from, to).mapN(arrowT)
+    case AST.ForAll(variable, body) => for {
+      env <- ReaderT.ask[EitherS, Env]
+      _ <- ReaderT.liftF[EitherS, Env, Unit](
+        Either.cond(!env.typeVars.contains(variable), (), s"Type variable ${variable.name} is already defined")
+      )
+      typedBody <- body.local((env: Env) => env.copy(typeVars = env.typeVars + variable))
+    } yield forallTypeT(variable, typedBody)
   }
 
   def validate(prog: Rec[AST.Program.type]): EitherS[TypeRec[AST.Program.type]] = {
-    prog.cata(tcAlg).run(Map.empty)
+    prog.cata(tcAlg).run(Env(Map.empty, Set.empty))
   }
 
 }

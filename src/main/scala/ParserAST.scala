@@ -13,7 +13,13 @@ object ParserAST {
       (head :: tail.toList).mkString
     }
 
-  lazy val expr: Parser[Rec[Expr]] = Parser.defer(absP | letRecP.backtrack | letP | ifP | equitive)
+  lazy val expr: Parser[Rec[Expr]] = Parser.defer(tyAbsP | absP | letRecP.backtrack | letP | ifP | equitive)
+
+  lazy val tyAbsP: Parser[Rec[Expr]] = {
+    val name = Parser.string("Λ") *> sp *> identifier
+    val body = sp *> Parser.char('.') *> sp *> Parser.defer(expr)
+    (name ~ body).map { case (n, b) => tyAbs(TypeVariable(n), b) }
+  }
 
   lazy val absP: Parser[Rec[Expr]] = {
     val name = Parser.string("λ") *> sp *> identifier
@@ -43,19 +49,35 @@ object ParserAST {
     }
   }
 
-  lazy val typeP: Parser[Rec[Type]] = {
+  lazy val typeP: Parser[Rec[Type]] = Parser.defer(forAllP | arrowTypeP)
+
+  lazy val forAllP: Parser[Rec[Type]] = {
+    val name = Parser.string("∀") *> sp *> identifier
+    val body = sp *> Parser.char('.') *> sp *> Parser.defer(typeP)
+    (name ~ body).map { case (n, b) => forallType(TypeVariable(n), b) }
+  }
+
+  lazy val arrowTypeP: Parser[Rec[Type]] = {
     val arrowTail = sp.with1.soft *> Parser.char('→') *> sp *> Parser.defer(typeP)
-    (primitiveP ~ arrowTail.?).map {
+    (typeAtomP ~ arrowTail.?).map {
       case (from, Some(to)) => arrow(from, to)
       case (t, None) => t
     }
   }
 
-  private val primitiveP: Parser[Rec[Type]] = {
+  private lazy val typeAtomP: Parser[Rec[Type]] = {
+    val parens = Parser.char('(') *> sp *> Parser.defer(typeP) <* sp <* Parser.char(')')
+    primitiveP | typeVarP | parens
+  }
+
+  private lazy val primitiveP: Parser[Rec[Type]] = {
     Parser.string("Int").as(primitive("Int")) |
     Parser.string("Char").as(primitive("Char")) |
     Parser.string("Bool").as(primitive("Bool"))
   }
+
+  private lazy val typeVarP: Parser[Rec[Type]] =
+    identifier.map(n => typeVar(TypeVariable(n)))
 
   lazy val ifP: Parser[Rec[Expr]] = {
     val cond = Parser.string("if") *> sp *> expr
@@ -108,8 +130,17 @@ object ParserAST {
   }
 
   lazy val appP: Parser[Rec[Expr]] = {
-    val arg = Parser.char('(') *> sp *> Parser.defer(expr) <* sp <* Parser.char(')')
-    (atom ~ arg.rep0).map { case (f, args) => args.foldLeft(f)((acc, a) => app(acc, a)) }
+    type Postfix = Either[Rec[Expr], Rec[Type]]
+    val exprArg: Parser[Postfix] =
+      (Parser.char('(') *> sp *> Parser.defer(expr) <* sp <* Parser.char(')')).map(Left(_))
+    val typeArg: Parser[Postfix] =
+      (Parser.char('[') *> sp *> Parser.defer(typeP) <* sp <* Parser.char(']')).map(Right(_))
+    (atom ~ (exprArg | typeArg).rep0).map { case (f, args) =>
+      args.foldLeft(f) {
+        case (acc, Left(a)) => app(acc, a)
+        case (acc, Right(t)) => tyApp(acc, t)
+      }
+    }
   }
 
   lazy val atom: Parser[Rec[Expr]] = {
