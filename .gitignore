@@ -47,6 +47,7 @@ build/
 .bsp/
 .sbt/
 .sbtboot/
+.sbt-boot/
 .sbt-local/
 .bloop/
 .metals/

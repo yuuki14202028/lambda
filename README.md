@@ -43,7 +43,7 @@ F[T]
 複数引数の型別名は `type Result[A][E] = ...`、利用側は `Result[Int][Char]` です。
 あくまでも型別名であり、`Result[Int]`のように利用することは出来ません。
 
-```text
+```ocaml
 λx: Int. x + 1
 
 let x: Int = 3 in
@@ -65,14 +65,14 @@ none[Int]
 
 関数束縛、再帰関数束縛は糖衣構文になっています。。  
 
-```text
+```ocaml
 let choose[A](x: A)(y: A): A = x in
 choose[Int](1)(2)
 ```
 
 これは既存の `let` / `let rec` と `λ` / `Λ` に変換されます。
 
-```text
+```ocaml
 let choose: ∀A. A → A → A =
   ΛΑ. λx: A. λy: A. x
 in
@@ -81,7 +81,7 @@ choose[Int](1)(2)
 
 `foreign name` は現状 `Int → Int` として扱われます。`runtime/ffi.c` には `print_int` と `put_char` が用意されています。
 
-```text
+```ocaml
 let print: Int → Int = foreign print_int in
 print(42)
 ```
@@ -112,7 +112,7 @@ print(42)
 
 `main.lam` には、たとえば次のような式を書けます。
 
-```text
+```ocaml
 let print: Int → Int = foreign print_int in
 let rec loop(n: Int)(acc: Int): Int =
   if n <= 0 then acc else loop(n - 1)(acc + n)
@@ -143,7 +143,7 @@ struct Closure {
 
 たとえば次の式では、`f` のクロージャが外側の `x` を捕捉します。
 
-```text
+```ocaml
 let x: Int = 3 in
 let f(y: Int): Int = x + y in
 f(10)
