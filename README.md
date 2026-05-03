@@ -8,9 +8,12 @@ Scala 3 で実装された、小さな型付きラムダ計算系言語のコン
 - 単純型付きラムダ抽象 `λx: T. ...`
 - 型抽象 `ΛA. ...`
 - 型適用 `f[T]`
+- 型別名 `type Option[A] = ... in ...`
 - 関数適用 `f(x)`
-- `let x: T = ... in ...`
+- 変数束縛 `let x: T = ... in ...`
+- 関数束縛 `let f[A](x: T)(y: U): R = ... in ...`
 - 再帰束縛 `let rec f: T = ... in ...`
+- 再帰関数束縛 `let rec f(x: T): R = ... in ...`
 - 外部 C 関数の参照 `foreign name`
 - 整数リテラル `0`, `2`, `11`
 - 文字リテラル `'a'`, `'z'`
@@ -31,10 +34,14 @@ Char
 Bool
 T → U
 ∀A. T
+F[T]
 ```
 
-`λ`、`let`、`let rec` では型注釈が必須です。
-多相関数は `ΛA. ...` で型抽象し、`f[Int]` のように明示的に型適用します。
+`λ`、`let`、`let rec` では型注釈が必須です。  
+多相関数は `ΛA. ...` で型抽象し、`f[Int]` のように明示的に型適用します。  
+型別名は `type Option[A] = ... in ...` のように定義でき、 `Option[Int]` のように単項の型適用を連ねます。  
+複数引数の型別名は `type Result[A][E] = ...`、利用側は `Result[Int][Char]` です。
+あくまでも型別名であり、`Result[Int]`のように利用することは出来ません。
 
 ```text
 λx: Int. x + 1
@@ -47,6 +54,29 @@ f(10)
 
 let id: ∀A. A → A = ΛA. λx: A. x in
 id[Int](42)
+
+type Option[A] = ∀R. R → (A → R) → R in
+let none[A]: Option[A] =
+  let run[R](fst: R)(snd: A → R): R = fst in
+  run
+in
+none[Int]
+```
+
+関数束縛、再帰関数束縛は糖衣構文になっています。。  
+
+```text
+let choose[A](x: A)(y: A): A = x in
+choose[Int](1)(2)
+```
+
+これは既存の `let` / `let rec` と `λ` / `Λ` に変換されます。
+
+```text
+let choose: ∀A. A → A → A =
+  ΛΑ. λx: A. λy: A. x
+in
+choose[Int](1)(2)
 ```
 
 `foreign name` は現状 `Int → Int` として扱われます。`runtime/ffi.c` には `print_int` と `put_char` が用意されています。
@@ -84,10 +114,8 @@ print(42)
 
 ```text
 let print: Int → Int = foreign print_int in
-let rec loop: Int → Int → Int =
-  λn: Int.
-  λacc: Int.
-    if n <= 0 then acc else loop(n - 1)(acc + n)
+let rec loop(n: Int)(acc: Int): Int =
+  if n <= 0 then acc else loop(n - 1)(acc + n)
 in
 print(loop(100)(0))
 ```
@@ -117,7 +145,7 @@ struct Closure {
 
 ```text
 let x: Int = 3 in
-let f: Int → Int = λy: Int. x + y in
+let f(y: Int): Int = x + y in
 f(10)
 ```
 
