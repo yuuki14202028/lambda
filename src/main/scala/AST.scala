@@ -18,10 +18,11 @@ enum AST[R[_], I] {
   case TypeLet(variable: TypeVariable, params: Seq[TypeVariable], alias: R[Type], body: R[Expr]) extends AST[R, Expr]
   case App(function: R[Expr], argument: R[Expr]) extends AST[R, Expr]
   case TyApp(function: R[Expr], argument: R[Type]) extends AST[R, Expr]
-  case Foreign(value: Variable) extends AST[R, Expr]
+  case Foreign(value: Variable, types: R[Type]) extends AST[R, Expr]
   case Var(value: Variable) extends AST[R, Expr]
   case Num(value: Int) extends AST[R, Expr]
   case Char(value: scala.Char) extends AST[R, Expr]
+  case StringLit(value: String) extends AST[R, Expr]
   case Bool(value: Boolean) extends AST[R, Expr]
   case UnitLit() extends AST[R, Expr]
   case Block(discarded: Seq[R[Expr]], result: Option[R[Expr]]) extends AST[R, Expr]
@@ -78,10 +79,11 @@ def typeLet(variable: TypeVariable, params: Seq[TypeVariable], alias: Rec[Type],
   HFix(AST.TypeLet(variable, params, alias, body))
 def app(function: Rec[Expr], argument: Rec[Expr]): Rec[Expr] = HFix(AST.App(function, argument))
 def tyApp(function: Rec[Expr], argument: Rec[Type]): Rec[Expr] = HFix(AST.TyApp(function, argument))
-def foreign(variable: Variable): Rec[Expr] = HFix(AST.Foreign(variable))
+def foreign(variable: Variable, types: Rec[Type]): Rec[Expr] = HFix(AST.Foreign(variable, types))
 def varr(variable: Variable): Rec[Expr] = HFix(AST.Var(variable))
 def num(value: Int): Rec[Expr] = HFix(AST.Num(value))
 def char(value: scala.Char): Rec[Expr] = HFix(AST.Char(value))
+def stringLit(value: String): Rec[Expr] = HFix(AST.StringLit(value))
 def bool(value: Boolean): Rec[Expr] = HFix(AST.Bool(value))
 def unitLit: Rec[Expr] = HFix(AST.UnitLit())
 def block(discarded: Seq[Rec[Expr]], result: Option[Rec[Expr]]): Rec[Expr] = HFix(AST.Block(discarded, result))
@@ -96,9 +98,9 @@ def typeApp(function: Rec[Type], argument: Rec[Type]): Rec[Type] = HFix(AST.Type
 
 def intType: Rec[Type] = primitive("Int")
 def charType: Rec[Type] = primitive("Char")
+def stringType: Rec[Type] = primitive("String")
 def boolType: Rec[Type] = primitive("Bool")
 def unitType: Rec[Type] = primitive("Unit")
-def foreignType: Rec[Type] = arrow(intType, intType)
 
 type TypeRec[I] = HCofree[AST, TypeAnn, I]
 
@@ -123,10 +125,11 @@ def appT(t: Rec[Type], function: TypeRec[Expr], argument: TypeRec[Expr]): TypeRe
   HCofree(ExprAnn(t), AST.App(function, argument))
 def tyAppT(t: Rec[Type], function: TypeRec[Expr], argument: TypeRec[Type]): TypeRec[Expr] =
   HCofree(ExprAnn(t), AST.TyApp(function, argument))
-def foreignT(variable: Variable, t: Rec[Type]): TypeRec[Expr] = HCofree(ExprAnn(t), AST.Foreign(variable))
+def foreignT(variable: Variable, t: Rec[Type], types: TypeRec[Type]): TypeRec[Expr] = HCofree(ExprAnn(t), AST.Foreign(variable, types))
 def varrType(variable: Variable, t: Rec[Type]): TypeRec[Expr] = HCofree(ExprAnn(t), AST.Var(variable))
 def numT(value: Int, t: Rec[Type]): TypeRec[Expr] = HCofree(ExprAnn(t), AST.Num(value))
 def charT(value: scala.Char, t: Rec[Type]): TypeRec[Expr] = HCofree(ExprAnn(t), AST.Char(value))
+def stringLitT(value: String, t: Rec[Type]): TypeRec[Expr] = HCofree(ExprAnn(t), AST.StringLit(value))
 def boolT(value: Boolean, t: Rec[Type]): TypeRec[Expr] = HCofree(ExprAnn(t), AST.Bool(value))
 def unitLitT(t: Rec[Type]): TypeRec[Expr] = HCofree(ExprAnn(t), AST.UnitLit())
 def blockT(t: Rec[Type], discarded: Seq[TypeRec[Expr]], result: Option[TypeRec[Expr]]): TypeRec[Expr] =

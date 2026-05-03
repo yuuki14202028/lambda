@@ -16,9 +16,10 @@ Scala 3 で実装された、小さな型付きラムダ計算系言語のコン
 - 関数束縛 `let f[A](x: T)(y: U): R = ... in ...`
 - 再帰束縛 `let rec f: T = ... in ...`
 - 再帰関数束縛 `let rec f(x: T): R = ... in ...`
-- 外部 C 関数の参照 `foreign name`
+- 外部 C 関数の参照 `foreign[T → U] name`
 - 整数リテラル `0`, `2`, `11`
 - 文字リテラル `'a'`, `'z'`
+- 文字列リテラル `"hello"`
 - 真偽値リテラル `true`, `false`
 - ユニットリテラル `()`
 - 整数・文字に対する単項 `-`
@@ -34,6 +35,7 @@ Scala 3 で実装された、小さな型付きラムダ計算系言語のコン
 ```text
 Int
 Char
+String
 Bool
 Unit / ()
 T → U
@@ -85,11 +87,13 @@ in
 choose[Int](1)(2)
 ```
 
-`foreign name` は現状 `Int → Int` として扱われます。`runtime/ffi.c` には `print_int` と `put_char` が用意されています。
+外部 C 関数を使う場合は `foreign[T → U] name` のように型を書き、
+一変数の関数しか置くことができません。また、
+この型注釈は C 側の実装が従うものとして信頼します。
 
 ```ocaml
-let print: Int → Int = foreign print_int in
-print(42)
+let puts: String → Int = foreign[String → Int] puts in
+puts("hello")
 ```
 
 比較演算の結果は `Bool` です。`if` の条件には `Bool` が必要です。
@@ -119,7 +123,7 @@ print(42)
 `main.lam` には、たとえば次のような式を書けます。
 
 ```ocaml
-let print: Int → Int = foreign print_int in
+let print: Int → Int = foreign[Int → Int] print_int in
 let rec loop(n: Int)(acc: Int): Int =
   if n <= 0 then acc else loop(n - 1)(acc + n)
 in

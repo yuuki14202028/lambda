@@ -1,5 +1,6 @@
-let put: Int → Int = foreign put_char in
-let print: Int → Int = foreign print_int in
+let put: Int → Int = foreign[Int → Int] put_char in
+let print: Int → Int = foreign[Int → Int] print_int in
+let puts: String → Int = foreign[String → Int] puts in
 
 type Option[A] = ∀R. R → (A → R) → R in
 
@@ -14,13 +15,7 @@ let some[A](v: A): Option[A] =
 in
 
 let printOption(option: Option[Int]): Int =
-  let l(): Int = {
-    put(78);
-    put(111);
-    put(110);
-    put(101);
-    put(10)
-  } in
+  let l(): Int = puts("None") in
   let r(value: Int)(): Int =
     print(value)
   in

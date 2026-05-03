@@ -172,6 +172,7 @@ object ParserAST {
   private lazy val primitiveP: Parser[Rec[Type]] = {
     Parser.string("Int").as(primitive("Int")) |
     Parser.string("Char").as(primitive("Char")) |
+    Parser.string("String").as(primitive("String")) |
     Parser.string("Bool").as(primitive("Bool")) |
     Parser.string("Unit").as(unitType) |
     (Parser.char('(') *> sp *> Parser.char(')')).as(unitType).backtrack
@@ -248,7 +249,7 @@ object ParserAST {
 
   lazy val atom: Parser[Rec[Expr]] = {
     val parens = Parser.char('(') *> sp *> Parser.defer(expr) <* sp <* Parser.char(')')
-    Parser.defer(blockP | unitP.backtrack | numP | charP | boolP | foreignP | varP | parens)
+    Parser.defer(blockP | unitP.backtrack | numP | charP | stringP | boolP | foreignP | varP | parens)
   }
 
   lazy val blockP: Parser[Rec[Expr]] = {
@@ -261,8 +262,12 @@ object ParserAST {
     }
   }
 
-  val foreignP: Parser[Rec[Expr]] =
-    (Parser.string("foreign") *> (sp1.with1 *> identifier)).map(n => foreign(Variable(n)))
+  val foreignP: Parser[Rec[Expr]] = {
+    val types = Parser.char('[') *> sp *> typeP <* sp <* Parser.char(']')
+    (Parser.string("foreign") *> types ~ (sp1.with1 *> identifier)).map {
+      case (t, n) => foreign(Variable(n), t)
+    }
+  }
 
   val varP: Parser[Rec[Expr]] =
     identifier.map(n => varr(Variable(n)))
@@ -272,6 +277,19 @@ object ParserAST {
 
   val charP: Parser[Rec[Expr]] =
     Parser.char('\'') *> alpha.map(char) <* Parser.char('\'')
+
+  val stringP: Parser[Rec[Expr]] = {
+    val escaped = Parser.char('\\') *> (
+      Parser.char('"').as('"') |
+      Parser.char('\\').as('\\') |
+      Parser.char('n').as('\n') |
+      Parser.char('r').as('\r') |
+      Parser.char('t').as('\t') |
+      Parser.char('0').as('\u0000')
+    )
+    val plain = Parser.charWhere(ch => ch != '"' && ch != '\\' && ch != '\n' && ch != '\r')
+    (Parser.char('"') *> (escaped | plain).rep0 <* Parser.char('"')).map(chars => stringLit(chars.toList.mkString))
+  }
 
   val boolP: Parser[Rec[Expr]] =
     Parser.string("true").as(bool(true)) | Parser.string("false").as(bool(false))

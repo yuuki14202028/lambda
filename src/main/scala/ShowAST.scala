@@ -14,10 +14,19 @@ val showAlg: Algebra[AST, ShowResult] = [x] => node => node match {
     s"type $head = $alias in $body"
   case AST.App(func, arg)          => s"$func($arg)"
   case AST.TyApp(func, arg)        => s"$func[$arg]"
-  case AST.Foreign(v)              => s"foreign ${v.name}"
+  case AST.Foreign(v, types)       => s"foreign[$types] ${v.name}"
   case AST.Var(v)                  => s"${v.name}"
   case AST.Num(v)                  => s"$v"
   case AST.Char(v)                 => s"$v"
+  case AST.StringLit(v)            => "\"" + v.flatMap {
+    case '"' => "\\\""
+    case '\\' => "\\\\"
+    case '\n' => "\\n"
+    case '\r' => "\\r"
+    case '\t' => "\\t"
+    case '\u0000' => "\\0"
+    case ch => ch.toString
+  } + "\""
   case AST.Bool(v)                 => s"$v"
   case AST.UnitLit()               => "()"
   case AST.Block(discarded, result) =>

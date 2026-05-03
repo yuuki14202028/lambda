@@ -6,7 +6,7 @@ import cats.syntax.all.*
 object Generator {
   type Env = List[String]
 
-  case class GenState(funcs: Vector[List[String]], counter: Int, externs: Set[String])
+  case class GenState(funcs: Vector[List[String]], counter: Int, externs: Set[String], strings: Vector[(String, String)])
   type GenS[A] = State[GenState, A]
   type GenR[A] = ReaderT[GenS, Env, A]
   type Gen[I]  = GenR[List[String]]
@@ -31,6 +31,14 @@ object Generator {
 
   private def addExtern(symbol: String): GenS[Unit] = {
     State.modify(st => st.copy(externs = st.externs + symbol))
+  }
+
+  private def addString(value: String): GenS[String] = {
+    State { st =>
+      val c = st.counter + 1
+      val label = s"Lstr$c"
+      (st.copy(counter = c, strings = st.strings :+ (label -> value)), label)
+    }
   }
 
   private def liftS[A](sa: GenS[A]): GenR[A] = ReaderT.liftF(sa)
@@ -68,6 +76,18 @@ object Generator {
     case BinOps.Geq => "    cmp  w1, w0\n    cset w0, ge"
   }
 
+  private def asmString(value: String): String =
+    value.flatMap {
+      case '"' => "\\\""
+      case '\\' => "\\\\"
+      case '\n' => "\\n"
+      case '\r' => "\\r"
+      case '\t' => "\\t"
+      case '\u0000' => "\\0"
+      case ch if ch >= ' ' && ch <= '~' => ch.toString
+      case ch => f"\\${ch.toInt & 0xff}%03o"
+    }
+
   private def liftedFn(label: String, body: List[String]): List[String] = {
     List(
       "", ".p2align 2", s"$label:",
@@ -94,7 +114,7 @@ object Generator {
     "", ".p2align 2", s"$label:",
     "    stp x29, x30, [sp, #-16]!",
     "    mov x29, sp",
-    "    mov w0, w1",
+    "    mov x0, x1",
     s"    bl _$symbol",
     "    ldp x29, x30, [sp], #16",
     "    ret"
@@ -133,6 +153,12 @@ object Generator {
   private val genAlg: Algebra[AST, Gen] = [x] => (node: AST[Gen, x]) => node match {
     case AST.Num(v) => pure(loadImm(v))
     case AST.Char(v) => pure(loadImm(v.toInt))
+    case AST.StringLit(v) => for {
+      lbl <- liftS(addString(v))
+    } yield List(
+      s"    adrp x0, $lbl@PAGE",
+      s"    add x0, x0, $lbl@PAGEOFF"
+    )
     case AST.Bool(v) => pure(loadImm(if (v) 1 else 0))
     case AST.UnitLit() => pure(loadImm(0))
 
@@ -164,7 +190,7 @@ object Generator {
     case AST.Var(Variable(name)) =>
       ask.map(env => varLookup(name, env))
 
-    case AST.Foreign(Variable(name)) => for {
+    case AST.Foreign(Variable(name), _) => for {
       lbl <- liftS(fresh(s"foreign_$name"))
       _   <- liftS(addExtern(name))
       _   <- liftS(addFunc(foreignWrapper(lbl, name)))
@@ -274,8 +300,12 @@ object Generator {
 
   def generate(prog: Rec[AST.Program.type]): String = {
     val gen = prog.cata(genAlg)
-    val (finalSt, mainCode) = gen.run(Nil).run(GenState(Vector.empty, 0, Set.empty)).value
+    val (finalSt, mainCode) = gen.run(Nil).run(GenState(Vector.empty, 0, Set.empty, Vector.empty)).value
     val externs = finalSt.externs.toList.sorted.map(sym => s".extern _$sym")
-    (externs ++ mainCode ++ finalSt.funcs.toList.flatten).mkString("\n") + "\n"
+    val strings = if (finalSt.strings.isEmpty) Nil
+      else ".section __TEXT,__cstring,cstring_literals" :: finalSt.strings.toList.flatMap {
+        case (label, value) => List(s"$label:", s"""    .asciz "${asmString(value)}"""")
+      }
+    (externs ++ strings ++ mainCode ++ finalSt.funcs.toList.flatten).mkString("\n") + "\n"
   }
 }

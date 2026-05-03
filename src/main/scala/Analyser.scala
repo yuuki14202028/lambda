@@ -23,6 +23,13 @@ object Analyser {
     Either.cond(isEquatableType(actual), (), s"Type mismatch: expected Int, Char, or Bool, actual $actual")
   }
 
+  private def expectForeignType(t: Rec[Type]): EitherS[Unit] = {
+    destructArrow(t) match {
+      case Some((_, to)) if destructArrow(to).isEmpty => Right(())
+      case _ => Left(s"Foreign function must have exactly one argument: ${t.show}")
+    }
+  }
+
   private def collectTypeApps(t: Rec[Type]): (Rec[Type], Seq[Rec[Type]]) = t.unfix match {
     case AST.TypeApp(function, argument) =>
       val (head, args) = collectTypeApps(function)
@@ -33,6 +40,7 @@ object Analyser {
   private def expandType(t: Rec[Type], env: Env): EitherS[Rec[Type]] = t.unfix match {
     case AST.Primitive("Int") => Right(intType)
     case AST.Primitive("Char") => Right(charType)
+    case AST.Primitive("String") => Right(stringType)
     case AST.Primitive("Bool") => Right(boolType)
     case AST.Primitive("Unit") => Right(unitType)
     case AST.Primitive(name) => Left(s"Primitive type $name is not defined")
@@ -170,7 +178,11 @@ object Analyser {
       }
     } yield tyAppT(resultType, typedFunction, typedArgument)
 
-    case AST.Foreign(value) => ReaderT.pure(foreignT(value, foreignType))
+    case AST.Foreign(value, types) => for {
+      typedTypes <- types
+      declaredType <- expandCheckedType(typedTypes)
+      _ <- ReaderT.liftF(expectForeignType(declaredType))
+    } yield foreignT(value, declaredType, typedTypes)
 
     case AST.Var(value) => for {
       env <- ReaderT.ask[EitherS, Env]
@@ -181,6 +193,7 @@ object Analyser {
 
     case AST.Num(value) => ReaderT.pure(numT(value, intType))
     case AST.Char(value) => ReaderT.pure(charT(value, charType))
+    case AST.StringLit(value) => ReaderT.pure(stringLitT(value, stringType))
     case AST.Bool(value) => ReaderT.pure(boolT(value, boolType))
     case AST.UnitLit() => ReaderT.pure(unitLitT(unitType))
 
@@ -229,6 +242,7 @@ object Analyser {
 
     case AST.Primitive("Int") => ReaderT.pure(primitiveT("Int"))
     case AST.Primitive("Char") => ReaderT.pure(primitiveT("Char"))
+    case AST.Primitive("String") => ReaderT.pure(primitiveT("String"))
     case AST.Primitive("Bool") => ReaderT.pure(primitiveT("Bool"))
     case AST.Primitive("Unit") => ReaderT.pure(primitiveT("Unit"))
     case AST.Primitive(name) => ReaderT.liftF(Left(s"Primitive type $name is not defined"))
