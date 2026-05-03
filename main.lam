@@ -3,32 +3,28 @@ let print: Int → Int = foreign print_int in
 
 type Option[A] = ∀R. R → (A → R) → R in
 
-let none: ∀A. Option[A] =
-  ΛA.
-  ΛR. λfst: R.
-  λsnd: A → R. fst
+let none[A]: Option[A] =
+  let run[R](fst: R)(snd: A → R): R = fst in
+  run
 in
 
-let some: ∀A. A → Option[A] =
-  ΛA. λv: A.
-  ΛR. λfst: R.
-  λsnd: A → R. snd(v)
+let some[A](v: A): Option[A] =
+  let run[R](fst: R)(snd: A → R): R = snd(v) in
+  run
 in
 
-let printOption: Option[Int] → Int =
-  λoption: Option[Int].
-    let l: Int → Int = λunit: Int.
-      let n: Int = put(78) in
-      let o: Int = put(111) in
-      let n2: Int = put(110) in
-      let e: Int = put(101) in
-      put(10)
-    in
-    let r: Int → Int → Int = λvalue: Int.
-      λunit: Int.
-      print(value)
-    in
-    option[Int → Int](l)(r)(0)
+let printOption(option: Option[Int]): Int =
+  let l(unit: Int): Int =
+    let n: Int = put(78) in
+    let o: Int = put(111) in
+    let n2: Int = put(110) in
+    let e: Int = put(101) in
+    put(10)
+  in
+  let r(value: Int)(unit: Int): Int =
+    print(value)
+  in
+  option[Int → Int](l)(r)(0)
 in
 
 let someValue: Option[Int] =

@@ -13,7 +13,11 @@ object ParserAST {
       (head :: tail.toList).mkString
     }
 
-  lazy val expr: Parser[Rec[Expr]] = Parser.defer(typeLetP | tyAbsP | absP | letRecP.backtrack | letP | ifP | equitive)
+  lazy val expr: Parser[Rec[Expr]] =
+    Parser.defer(typeLetP | tyAbsP | absP | letSeriesP | ifP | equitive)
+
+  private lazy val letSeriesP: Parser[Rec[Expr]] =
+    Parser.defer(letRecFunP.backtrack | letRecPolyP.backtrack | letFunP.backtrack | letPolyP.backtrack | letRecP.backtrack | letP)
 
   lazy val tyAbsP: Parser[Rec[Expr]] = {
     val name = Parser.string("Λ") *> sp *> identifier
@@ -38,6 +42,53 @@ object ParserAST {
     }
   }
 
+  private def functionType(params: List[(String, Rec[Type])], returnType: Rec[Type]): Rec[Type] =
+    params.map(_._2).foldRight(returnType)(arrow)
+
+  private def functionValue(params: List[(String, Rec[Type])], value: Rec[Expr]): Rec[Expr] =
+    params.foldRight(value) { case ((name, types), body) => abs(Variable(name), types, body) }
+
+  private def polymorphicType(params: List[TypeVariable], bodyType: Rec[Type]): Rec[Type] =
+    params.foldRight(bodyType)(forallType)
+
+  private def polymorphicValue(params: List[TypeVariable], value: Rec[Expr]): Rec[Expr] =
+    params.foldRight(value)(tyAbs)
+
+  private lazy val typeParamsP: Parser[List[TypeVariable]] = {
+    val param = Parser.char('[') *> sp *> identifier <* sp <* Parser.char(']')
+    param.rep.map(_.toList.map(TypeVariable(_)))
+  }
+
+  private lazy val functionParamsP: Parser[List[(String, Rec[Type])]] = {
+    val param = Parser.char('(') *> sp *> ((identifier <* sp <* Parser.char(':') <* sp) ~ typeP) <* sp <* Parser.char(')')
+    param.rep.map(_.toList)
+  }
+
+  lazy val letFunP: Parser[Rec[Expr]] = {
+    val name = Parser.string("let") *> sp *> identifier
+    val typeParams = (sp *> typeParamsP).?.map(_.getOrElse(Nil))
+    val params = sp *> functionParamsP
+    val returnType = sp *> Parser.char(':') *> sp *> typeP
+    val value = sp *> Parser.char('=') *> sp *> expr
+    val body = sp *> Parser.string("in") *> sp *> Parser.defer(expr)
+    (name ~ typeParams ~ params ~ returnType ~ value ~ body).map { case (((((name, typeParams), params), returnType), value), body) =>
+      val valueType = polymorphicType(typeParams, functionType(params, returnType))
+      val valueExpr = polymorphicValue(typeParams, functionValue(params, value))
+      let(Variable(name), valueType, valueExpr, body)
+    }
+  }
+
+  lazy val letPolyP: Parser[Rec[Expr]] = {
+    val name = Parser.string("let") *> sp *> identifier
+    val typeParams = sp *> typeParamsP
+    val returnType = sp *> Parser.char(':') *> sp *> typeP
+    val value = sp *> Parser.char('=') *> sp *> expr
+    val body = sp *> Parser.string("in") *> sp *> Parser.defer(expr)
+    (name ~ typeParams ~ returnType ~ value ~ body).map { case ((((name, typeParams), returnType), value), body) =>
+      let(Variable(name), polymorphicType(typeParams, returnType), polymorphicValue(typeParams, value), body)
+    }
+  }
+
   lazy val letRecP: Parser[Rec[Expr]] = {
     val gap = Parser.charIn(" \t").rep.void
     val name = Parser.string("let") *> gap *> Parser.string("rec") *> gap *> identifier
@@ -46,6 +97,33 @@ object ParserAST {
     val body = sp *> Parser.string("in") *> sp *> Parser.defer(expr)
     (name ~ types ~ value ~ body).map { case (((name, types), value), body) =>
       letRec(Variable(name), types, value, body)
+    }
+  }
+
+  lazy val letRecFunP: Parser[Rec[Expr]] = {
+    val gap = Parser.charIn(" \t").rep.void
+    val name = Parser.string("let") *> gap *> Parser.string("rec") *> gap *> identifier
+    val typeParams = (sp *> typeParamsP).?.map(_.getOrElse(Nil))
+    val params = sp *> functionParamsP
+    val returnType = sp *> Parser.char(':') *> sp *> typeP
+    val value = sp *> Parser.char('=') *> sp *> expr
+    val body = sp *> Parser.string("in") *> sp *> Parser.defer(expr)
+    (name ~ typeParams ~ params ~ returnType ~ value ~ body).map { case (((((name, typeParams), params), returnType), value), body) =>
+      val valueType = polymorphicType(typeParams, functionType(params, returnType))
+      val valueExpr = polymorphicValue(typeParams, functionValue(params, value))
+      letRec(Variable(name), valueType, valueExpr, body)
+    }
+  }
+
+  lazy val letRecPolyP: Parser[Rec[Expr]] = {
+    val gap = Parser.charIn(" \t").rep.void
+    val name = Parser.string("let") *> gap *> Parser.string("rec") *> gap *> identifier
+    val typeParams = sp *> typeParamsP
+    val returnType = sp *> Parser.char(':') *> sp *> typeP
+    val value = sp *> Parser.char('=') *> sp *> expr
+    val body = sp *> Parser.string("in") *> sp *> Parser.defer(expr)
+    (name ~ typeParams ~ returnType ~ value ~ body).map { case ((((name, typeParams), returnType), value), body) =>
+      letRec(Variable(name), polymorphicType(typeParams, returnType), polymorphicValue(typeParams, value), body)
     }
   }
 
