@@ -136,6 +136,14 @@ object Generator {
     case AST.Bool(v) => pure(loadImm(if (v) 1 else 0))
     case AST.UnitLit() => pure(loadImm(0))
 
+    case AST.Block(discarded, result) => for {
+      discardedCode <- discarded.toList.sequence
+      resultCode <- result match {
+        case Some(expr) => expr
+        case None => pure(loadImm(0))
+      }
+    } yield discardedCode.flatten ++ resultCode
+
     case AST.UnaryOp(UnaryOps.Neg, body) => {
       body.map(_ ++ List("    neg w0, w0"))
     }

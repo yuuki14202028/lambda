@@ -14,13 +14,13 @@ let some[A](v: A): Option[A] =
 in
 
 let printOption(option: Option[Int]): Int =
-  let l(unit: ()): Int =
-    let n: Int = put(78) in
-    let o: Int = put(111) in
-    let n2: Int = put(110) in
-    let e: Int = put(101) in
+  let l(unit: ()): Int = {
+    put(78);
+    put(111);
+    put(110);
+    put(101);
     put(10)
-  in
+  } in
   let r(value: Int)(unit: ()): Int =
     print(value)
   in
@@ -35,6 +35,8 @@ let noneValue: Option[Int] =
   none[Int]
 in
 
-let a: Int = printOption(someValue) in
-let b: Int = printOption(noneValue) in
-0
+{
+  printOption(someValue);
+  printOption(noneValue);
+  0
+}

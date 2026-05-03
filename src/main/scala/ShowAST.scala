@@ -20,6 +20,9 @@ val showAlg: Algebra[AST, ShowResult] = [x] => node => node match {
   case AST.Char(v)                 => s"$v"
   case AST.Bool(v)                 => s"$v"
   case AST.UnitLit()               => "()"
+  case AST.Block(discarded, result) =>
+    val body = (discarded.map(_.toString + ";") ++ result.toSeq.map(_.toString)).mkString(" ")
+    s"{ $body }"
   case AST.BinOp(op, l, r)         => s"($l $op $r)"
   case AST.UnaryOp(op, t)          => s"$op $t"
   case AST.If(c, t, e)             => s"if $c then $t else $e"

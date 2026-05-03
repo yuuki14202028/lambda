@@ -244,7 +244,17 @@ object ParserAST {
 
   lazy val atom: Parser[Rec[Expr]] = {
     val parens = Parser.char('(') *> sp *> Parser.defer(expr) <* sp <* Parser.char(')')
-    Parser.defer(unitP.backtrack | numP | charP | boolP | foreignP | varP | parens)
+    Parser.defer(blockP | unitP.backtrack | numP | charP | boolP | foreignP | varP | parens)
+  }
+
+  lazy val blockP: Parser[Rec[Expr]] = {
+    val semi = sp *> Parser.char(';') <* sp
+    val discarded = (Parser.defer(expr) <* semi).backtrack.rep0
+    val result = Parser.defer(expr).?
+    (Parser.char('{') *> sp *> discarded ~ result <* sp <* Parser.char('}')).map {
+      case (discarded, result) =>
+        block(discarded.toList, result)
+    }
   }
 
   val foreignP: Parser[Rec[Expr]] =

@@ -184,6 +184,12 @@ object Analyser {
     case AST.Bool(value) => ReaderT.pure(boolT(value, boolType))
     case AST.UnitLit() => ReaderT.pure(unitLitT(unitType))
 
+    case AST.Block(discarded, result) => for {
+      typedDiscarded <- discarded.toList.traverse(identity)
+      typedResult <- result.traverse(identity)
+      resultType = typedResult.map(typeOf).getOrElse(unitType)
+    } yield blockT(resultType, typedDiscarded, typedResult)
+
     case AST.BinOp(op, left, right) => for {
       typedLeft <- left
       typedRight <- right

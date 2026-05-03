@@ -24,6 +24,7 @@ enum AST[R[_], I] {
   case Char(value: scala.Char) extends AST[R, Expr]
   case Bool(value: Boolean) extends AST[R, Expr]
   case UnitLit() extends AST[R, Expr]
+  case Block(discarded: Seq[R[Expr]], result: Option[R[Expr]]) extends AST[R, Expr]
   case BinOp(op: BinOps, left: R[Expr], right: R[Expr]) extends AST[R, Expr]
   case UnaryOp(op: UnaryOps, body: R[Expr]) extends AST[R, Expr]
   case If(cond: R[Expr], thenBranch: R[Expr], elseBranch: R[Expr]) extends AST[R, Expr]
@@ -83,6 +84,7 @@ def num(value: Int): Rec[Expr] = HFix(AST.Num(value))
 def char(value: scala.Char): Rec[Expr] = HFix(AST.Char(value))
 def bool(value: Boolean): Rec[Expr] = HFix(AST.Bool(value))
 def unitLit: Rec[Expr] = HFix(AST.UnitLit())
+def block(discarded: Seq[Rec[Expr]], result: Option[Rec[Expr]]): Rec[Expr] = HFix(AST.Block(discarded, result))
 def binop(op: BinOps, left: Rec[Expr], right: Rec[Expr]): Rec[Expr] = HFix(AST.BinOp(op, left, right))
 def unop(op: UnaryOps, body: Rec[Expr]): Rec[Expr] = HFix(AST.UnaryOp(op, body))
 def iff(cond: Rec[Expr], thenBranch: Rec[Expr], elseBranch: Rec[Expr]): Rec[Expr] = HFix(AST.If(cond, thenBranch, elseBranch))
@@ -127,6 +129,8 @@ def numT(value: Int, t: Rec[Type]): TypeRec[Expr] = HCofree(ExprAnn(t), AST.Num(
 def charT(value: scala.Char, t: Rec[Type]): TypeRec[Expr] = HCofree(ExprAnn(t), AST.Char(value))
 def boolT(value: Boolean, t: Rec[Type]): TypeRec[Expr] = HCofree(ExprAnn(t), AST.Bool(value))
 def unitLitT(t: Rec[Type]): TypeRec[Expr] = HCofree(ExprAnn(t), AST.UnitLit())
+def blockT(t: Rec[Type], discarded: Seq[TypeRec[Expr]], result: Option[TypeRec[Expr]]): TypeRec[Expr] =
+  HCofree(ExprAnn(t), AST.Block(discarded, result))
 def binopT(op: BinOps, t: Rec[Type], left: TypeRec[Expr], right: TypeRec[Expr]): TypeRec[Expr] =
   HCofree(ExprAnn(t), AST.BinOp(op, left, right))
 def unopT(op: UnaryOps, t: Rec[Type], body: TypeRec[Expr]): TypeRec[Expr] =

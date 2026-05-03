@@ -22,6 +22,7 @@ given HFunctor[AST] with {
     case AST.Char(v) => AST.Char(v)
     case AST.Bool(v) => AST.Bool(v)
     case AST.UnitLit() => AST.UnitLit()
+    case AST.Block(discarded, result) => AST.Block(discarded.map(f.apply), result.map(f.apply))
     case AST.BinOp(op, l, r) => AST.BinOp(op, f(l), f(r))
     case AST.UnaryOp(op, t) => AST.UnaryOp(op, f(t))
     case AST.If(c, t, e) => AST.If(f(c), f(t), f(e))
