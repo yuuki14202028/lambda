@@ -34,6 +34,7 @@ object Analyser {
     case AST.Primitive("Int") => Right(intType)
     case AST.Primitive("Char") => Right(charType)
     case AST.Primitive("Bool") => Right(boolType)
+    case AST.Primitive("Unit") => Right(unitType)
     case AST.Primitive(name) => Left(s"Primitive type $name is not defined")
 
     case AST.TypeVar(variable) if env.typeVars.contains(variable) => Right(typeVar(variable))
@@ -181,6 +182,7 @@ object Analyser {
     case AST.Num(value) => ReaderT.pure(numT(value, intType))
     case AST.Char(value) => ReaderT.pure(charT(value, charType))
     case AST.Bool(value) => ReaderT.pure(boolT(value, boolType))
+    case AST.UnitLit() => ReaderT.pure(unitLitT(unitType))
 
     case AST.BinOp(op, left, right) => for {
       typedLeft <- left
@@ -222,6 +224,7 @@ object Analyser {
     case AST.Primitive("Int") => ReaderT.pure(primitiveT("Int"))
     case AST.Primitive("Char") => ReaderT.pure(primitiveT("Char"))
     case AST.Primitive("Bool") => ReaderT.pure(primitiveT("Bool"))
+    case AST.Primitive("Unit") => ReaderT.pure(primitiveT("Unit"))
     case AST.Primitive(name) => ReaderT.liftF(Left(s"Primitive type $name is not defined"))
     case AST.TypeVar(variable) => for {
       env <- ReaderT.ask[EitherS, Env]

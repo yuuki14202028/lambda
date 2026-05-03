@@ -134,6 +134,7 @@ object Generator {
     case AST.Num(v) => pure(loadImm(v))
     case AST.Char(v) => pure(loadImm(v.toInt))
     case AST.Bool(v) => pure(loadImm(if (v) 1 else 0))
+    case AST.UnitLit() => pure(loadImm(0))
 
     case AST.UnaryOp(UnaryOps.Neg, body) => {
       body.map(_ ++ List("    neg w0, w0"))

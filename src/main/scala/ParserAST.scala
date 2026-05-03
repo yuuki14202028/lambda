@@ -170,7 +170,9 @@ object ParserAST {
   private lazy val primitiveP: Parser[Rec[Type]] = {
     Parser.string("Int").as(primitive("Int")) |
     Parser.string("Char").as(primitive("Char")) |
-    Parser.string("Bool").as(primitive("Bool"))
+    Parser.string("Bool").as(primitive("Bool")) |
+    Parser.string("Unit").as(unitType) |
+    (Parser.char('(') *> sp *> Parser.char(')')).as(unitType).backtrack
   }
 
   private lazy val typeVarP: Parser[Rec[Type]] =
@@ -242,7 +244,7 @@ object ParserAST {
 
   lazy val atom: Parser[Rec[Expr]] = {
     val parens = Parser.char('(') *> sp *> Parser.defer(expr) <* sp <* Parser.char(')')
-    Parser.defer(numP | charP | boolP | foreignP | varP | parens)
+    Parser.defer(unitP.backtrack | numP | charP | boolP | foreignP | varP | parens)
   }
 
   val foreignP: Parser[Rec[Expr]] =
@@ -259,6 +261,9 @@ object ParserAST {
 
   val boolP: Parser[Rec[Expr]] =
     Parser.string("true").as(bool(true)) | Parser.string("false").as(bool(false))
+
+  val unitP: Parser[Rec[Expr]] =
+    (Parser.char('(') *> sp *> Parser.char(')')).as(unitLit)
 
   val programParser: Parser0[Rec[AST.Program.type]] = {
     val sep: Parser[Unit] = (sp1.with1 *> Parser.charIn("\n;").rep <* sp).void

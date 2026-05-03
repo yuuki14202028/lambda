@@ -373,7 +373,7 @@
           <key>name</key>
           <string>storage.type.primitive.lambda</string>
           <key>match</key>
-          <string>\b(?:Int|Char|Bool)\b</string>
+          <string>\b(?:Int|Char|Bool|Unit)\b</string>
         </dict>
         <dict>
           <key>name</key>

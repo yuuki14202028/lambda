@@ -23,6 +23,7 @@ enum AST[R[_], I] {
   case Num(value: Int) extends AST[R, Expr]
   case Char(value: scala.Char) extends AST[R, Expr]
   case Bool(value: Boolean) extends AST[R, Expr]
+  case UnitLit() extends AST[R, Expr]
   case BinOp(op: BinOps, left: R[Expr], right: R[Expr]) extends AST[R, Expr]
   case UnaryOp(op: UnaryOps, body: R[Expr]) extends AST[R, Expr]
   case If(cond: R[Expr], thenBranch: R[Expr], elseBranch: R[Expr]) extends AST[R, Expr]
@@ -81,6 +82,7 @@ def varr(variable: Variable): Rec[Expr] = HFix(AST.Var(variable))
 def num(value: Int): Rec[Expr] = HFix(AST.Num(value))
 def char(value: scala.Char): Rec[Expr] = HFix(AST.Char(value))
 def bool(value: Boolean): Rec[Expr] = HFix(AST.Bool(value))
+def unitLit: Rec[Expr] = HFix(AST.UnitLit())
 def binop(op: BinOps, left: Rec[Expr], right: Rec[Expr]): Rec[Expr] = HFix(AST.BinOp(op, left, right))
 def unop(op: UnaryOps, body: Rec[Expr]): Rec[Expr] = HFix(AST.UnaryOp(op, body))
 def iff(cond: Rec[Expr], thenBranch: Rec[Expr], elseBranch: Rec[Expr]): Rec[Expr] = HFix(AST.If(cond, thenBranch, elseBranch))
@@ -93,6 +95,7 @@ def typeApp(function: Rec[Type], argument: Rec[Type]): Rec[Type] = HFix(AST.Type
 def intType: Rec[Type] = primitive("Int")
 def charType: Rec[Type] = primitive("Char")
 def boolType: Rec[Type] = primitive("Bool")
+def unitType: Rec[Type] = primitive("Unit")
 def foreignType: Rec[Type] = arrow(intType, intType)
 
 type TypeRec[I] = HCofree[AST, TypeAnn, I]
@@ -123,6 +126,7 @@ def varrType(variable: Variable, t: Rec[Type]): TypeRec[Expr] = HCofree(ExprAnn(
 def numT(value: Int, t: Rec[Type]): TypeRec[Expr] = HCofree(ExprAnn(t), AST.Num(value))
 def charT(value: scala.Char, t: Rec[Type]): TypeRec[Expr] = HCofree(ExprAnn(t), AST.Char(value))
 def boolT(value: Boolean, t: Rec[Type]): TypeRec[Expr] = HCofree(ExprAnn(t), AST.Bool(value))
+def unitLitT(t: Rec[Type]): TypeRec[Expr] = HCofree(ExprAnn(t), AST.UnitLit())
 def binopT(op: BinOps, t: Rec[Type], left: TypeRec[Expr], right: TypeRec[Expr]): TypeRec[Expr] =
   HCofree(ExprAnn(t), AST.BinOp(op, left, right))
 def unopT(op: UnaryOps, t: Rec[Type], body: TypeRec[Expr]): TypeRec[Expr] =
