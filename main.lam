@@ -1,20 +1,22 @@
 let put: Int → Int = foreign put_char in
 let print: Int → Int = foreign print_int in
 
-let none: ∀A. ∀R. R → (A → R) → R =
+type Option[A] = ∀R. R → (A → R) → R in
+
+let none: ∀A. Option[A] =
   ΛA.
   ΛR. λfst: R.
   λsnd: A → R. fst
 in
 
-let some: ∀A. A → ∀R. R → (A → R) → R =
+let some: ∀A. A → Option[A] =
   ΛA. λv: A.
   ΛR. λfst: R.
   λsnd: A → R. snd(v)
 in
 
-let printOption: (∀R. R → (Int → R) → R) → Int =
-  λoption: ∀R. R → (Int → R) → R.
+let printOption: Option[Int] → Int =
+  λoption: Option[Int].
     let l: Int → Int = λunit: Int.
       let n: Int = put(78) in
       let o: Int = put(111) in
@@ -29,11 +31,11 @@ let printOption: (∀R. R → (Int → R) → R) → Int =
     option[Int → Int](l)(r)(0)
 in
 
-let someValue: ∀R. R → (Int → R) → R =
+let someValue: Option[Int] =
   some[Int](42)
 in
 
-let noneValue: ∀R. R → (Int → R) → R =
+let noneValue: Option[Int] =
   none[Int]
 in
 

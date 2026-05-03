@@ -13,6 +13,7 @@ given HFunctor[AST] with {
     case AST.TyAbs(v, body) => AST.TyAbs(v, f(body))
     case AST.Let(varr, types, vall, body) => AST.Let(varr, f(types), f(vall), f(body))
     case AST.LetRec(varr, types, vall, body) => AST.LetRec(varr, f(types), f(vall), f(body))
+    case AST.TypeLet(varr, params, alias, body) => AST.TypeLet(varr, params, f(alias), f(body))
     case AST.App(func, arg) => AST.App(f(func), f(arg))
     case AST.TyApp(func, arg) => AST.TyApp(f(func), f(arg))
     case AST.Foreign(v) => AST.Foreign(v)
@@ -27,6 +28,7 @@ given HFunctor[AST] with {
     case AST.TypeVar(v) => AST.TypeVar(v)
     case AST.Arrow(from, to) => AST.Arrow(f(from), f(to))
     case AST.ForAll(v, body) => AST.ForAll(v, f(body))
+    case AST.TypeApp(func, arg) => AST.TypeApp(f(func), f(arg))
   }
 }
 

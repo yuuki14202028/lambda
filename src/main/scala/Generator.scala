@@ -223,6 +223,8 @@ object Generator {
       "    mov x0, x9"
     )
 
+    case AST.TypeLet(_, _, _, body) => body
+
     case AST.App(f, a) => for {
       fc <- f
       str = List("    str x0, [sp, #-16]!")
@@ -258,6 +260,7 @@ object Generator {
     case AST.TypeVar(_) => pure(Nil)
     case AST.Arrow(_, _)  => pure(Nil)
     case AST.ForAll(_, _) => pure(Nil)
+    case AST.TypeApp(_, _) => pure(Nil)
   }
 
   def generate(prog: Rec[AST.Program.type]): String = {

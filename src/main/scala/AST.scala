@@ -15,6 +15,7 @@ enum AST[R[_], I] {
   case TyAbs(variable: TypeVariable, body: R[Expr]) extends AST[R, Expr]
   case Let(variable: Variable, types: R[Type], value: R[Expr], body: R[Expr]) extends AST[R, Expr]
   case LetRec(variable: Variable, types: R[Type], value: R[Expr], body: R[Expr]) extends AST[R, Expr]
+  case TypeLet(variable: TypeVariable, params: Seq[TypeVariable], alias: R[Type], body: R[Expr]) extends AST[R, Expr]
   case App(function: R[Expr], argument: R[Expr]) extends AST[R, Expr]
   case TyApp(function: R[Expr], argument: R[Type]) extends AST[R, Expr]
   case Foreign(value: Variable) extends AST[R, Expr]
@@ -29,6 +30,7 @@ enum AST[R[_], I] {
   case TypeVar(value: TypeVariable) extends AST[R, Type]
   case Arrow(from: R[Type], to: R[Type]) extends AST[R, Type]
   case ForAll(variable: TypeVariable, body: R[Type]) extends AST[R, Type]
+  case TypeApp(function: R[Type], argument: R[Type]) extends AST[R, Type]
 }
 
 enum BinOps {
@@ -70,6 +72,8 @@ def abs(variable: Variable, types: Rec[Type], body: Rec[Expr]): Rec[Expr] = HFix
 def tyAbs(variable: TypeVariable, body: Rec[Expr]): Rec[Expr] = HFix(AST.TyAbs(variable, body))
 def let(variable: Variable, types: Rec[Type], value: Rec[Expr], body: Rec[Expr]): Rec[Expr] = HFix(AST.Let(variable, types, value, body))
 def letRec(variable: Variable, types: Rec[Type], value: Rec[Expr], body: Rec[Expr]): Rec[Expr] = HFix(AST.LetRec(variable, types, value, body))
+def typeLet(variable: TypeVariable, params: Seq[TypeVariable], alias: Rec[Type], body: Rec[Expr]): Rec[Expr] =
+  HFix(AST.TypeLet(variable, params, alias, body))
 def app(function: Rec[Expr], argument: Rec[Expr]): Rec[Expr] = HFix(AST.App(function, argument))
 def tyApp(function: Rec[Expr], argument: Rec[Type]): Rec[Expr] = HFix(AST.TyApp(function, argument))
 def foreign(variable: Variable): Rec[Expr] = HFix(AST.Foreign(variable))
@@ -84,6 +88,7 @@ def primitive(name: String): Rec[Type] = HFix(AST.Primitive(name))
 def typeVar(variable: TypeVariable): Rec[Type] = HFix(AST.TypeVar(variable))
 def arrow(from: Rec[Type], to: Rec[Type]): Rec[Type] = HFix(AST.Arrow(from, to))
 def forallType(variable: TypeVariable, body: Rec[Type]): Rec[Type] = HFix(AST.ForAll(variable, body))
+def typeApp(function: Rec[Type], argument: Rec[Type]): Rec[Type] = HFix(AST.TypeApp(function, argument))
 
 def intType: Rec[Type] = primitive("Int")
 def charType: Rec[Type] = primitive("Char")
@@ -107,6 +112,8 @@ def letT(variable: Variable, t: Rec[Type], types: TypeRec[Type], value: TypeRec[
   HCofree(ExprAnn(t), AST.Let(variable, types, value, body))
 def letRecT(variable: Variable, t: Rec[Type], types: TypeRec[Type], value: TypeRec[Expr], body: TypeRec[Expr]): TypeRec[Expr] =
   HCofree(ExprAnn(t), AST.LetRec(variable, types, value, body))
+def typeLetT(variable: TypeVariable, params: Seq[TypeVariable], t: Rec[Type], alias: TypeRec[Type], body: TypeRec[Expr]): TypeRec[Expr] =
+  HCofree(ExprAnn(t), AST.TypeLet(variable, params, alias, body))
 def appT(t: Rec[Type], function: TypeRec[Expr], argument: TypeRec[Expr]): TypeRec[Expr] =
   HCofree(ExprAnn(t), AST.App(function, argument))
 def tyAppT(t: Rec[Type], function: TypeRec[Expr], argument: TypeRec[Type]): TypeRec[Expr] =
@@ -126,6 +133,7 @@ def primitiveT(name: String): TypeRec[Type] = HCofree(TypeAnn, AST.Primitive(nam
 def typeVarT(variable: TypeVariable): TypeRec[Type] = HCofree(TypeAnn, AST.TypeVar(variable))
 def arrowT(from: TypeRec[Type], to: TypeRec[Type]): TypeRec[Type] = HCofree(TypeAnn, AST.Arrow(from, to))
 def forallTypeT(variable: TypeVariable, body: TypeRec[Type]): TypeRec[Type] = HCofree(TypeAnn, AST.ForAll(variable, body))
+def typeAppT(function: TypeRec[Type], argument: TypeRec[Type]): TypeRec[Type] = HCofree(TypeAnn, AST.TypeApp(function, argument))
 
 def typeOf(expr: TypeRec[Expr]): Rec[Type] = expr.head match {
   case ExprAnn(t) => t
@@ -146,6 +154,7 @@ def freeTypeVars(t: Rec[Type]): Set[TypeVariable] = t.unfix match {
   case AST.TypeVar(variable) => Set(variable)
   case AST.Arrow(from, to) => freeTypeVars(from) ++ freeTypeVars(to)
   case AST.ForAll(variable, body) => freeTypeVars(body) - variable
+  case AST.TypeApp(function, argument) => freeTypeVars(function) ++ freeTypeVars(argument)
 }
 
 private def freshTypeVariable(base: TypeVariable, used: Set[TypeVariable]): TypeVariable = {
@@ -165,6 +174,7 @@ def renameTypeVar(from: TypeVariable, to: TypeVariable, in: Rec[Type]): Rec[Type
   case AST.Arrow(left, right) => arrow(renameTypeVar(from, to, left), renameTypeVar(from, to, right))
   case AST.ForAll(variable, body) if variable == from => forallType(variable, body)
   case AST.ForAll(variable, body) => forallType(variable, renameTypeVar(from, to, body))
+  case AST.TypeApp(function, argument) => typeApp(renameTypeVar(from, to, function), renameTypeVar(from, to, argument))
 }
 
 def substType(target: TypeVariable, replacement: Rec[Type], in: Rec[Type]): Rec[Type] = in.unfix match {
@@ -183,6 +193,7 @@ def substType(target: TypeVariable, replacement: Rec[Type], in: Rec[Type]): Rec[
     } else {
       forallType(variable, substType(target, replacement, body))
     }
+  case AST.TypeApp(function, argument) => typeApp(substType(target, replacement, function), substType(target, replacement, argument))
 }
 
 def sameType(left: Rec[Type], right: Rec[Type]): Boolean = {
@@ -195,6 +206,7 @@ def sameType(left: Rec[Type], right: Rec[Type]): Boolean = {
       }
     case (AST.Arrow(lf, lt), AST.Arrow(rf, rt)) => loop(lf, rf, bound) && loop(lt, rt, bound)
     case (AST.ForAll(lv, lb), AST.ForAll(rv, rb)) => loop(lb, rb, bound + (lv -> rv))
+    case (AST.TypeApp(lf, la), AST.TypeApp(rf, ra)) => loop(lf, rf, bound) && loop(la, ra, bound)
     case _ => false
   }
 

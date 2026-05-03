@@ -8,6 +8,10 @@ val showAlg: Algebra[AST, ShowResult] = [x] => node => node match {
   case AST.TyAbs(v, body)          => s"Λ${v.name}. $body"
   case AST.Let(v, types, value, body) => s"let ${v.name}: $types = $value in $body"
   case AST.LetRec(v, types, value, body) => s"let rec ${v.name}: $types = $value in $body"
+  case AST.TypeLet(v, params, alias, body) =>
+    val suffix = params.map(param => s"[${param.name}]").mkString
+    val head = s"${v.name}$suffix"
+    s"type $head = $alias in $body"
   case AST.App(func, arg)          => s"$func($arg)"
   case AST.TyApp(func, arg)        => s"$func[$arg]"
   case AST.Foreign(v)              => s"foreign ${v.name}"
@@ -22,6 +26,7 @@ val showAlg: Algebra[AST, ShowResult] = [x] => node => node match {
   case AST.TypeVar(v)              => v.name
   case AST.Arrow(from, to)         => s"$from → $to"
   case AST.ForAll(v, body)         => s"∀${v.name}. $body"
+  case AST.TypeApp(func, arg)      => s"$func[$arg]"
 }
 
 extension [I](t: Rec[I]) {
