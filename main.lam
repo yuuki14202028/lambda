@@ -14,17 +14,17 @@ let some[A](v: A): Option[A] =
 in
 
 let printOption(option: Option[Int]): Int =
-  let l(unit: ()): Int = {
+  let l(): Int = {
     put(78);
     put(111);
     put(110);
     put(101);
     put(10)
   } in
-  let r(value: Int)(unit: ()): Int =
+  let r(value: Int)(): Int =
     print(value)
   in
-  option[() → Int](l)(r)(())
+  option[() → Int](l)(r)()
 in
 
 let someValue: Option[Int] =

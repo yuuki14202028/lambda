@@ -60,7 +60,9 @@ object ParserAST {
   }
 
   private lazy val functionParamsP: Parser[List[(String, Rec[Type])]] = {
-    val param = Parser.char('(') *> sp *> ((identifier <* sp <* Parser.char(':') <* sp) ~ typeP) <* sp <* Parser.char(')')
+    val namedParam = ((identifier <* sp <* Parser.char(':') <* sp) ~ typeP)
+    val unitParam = Parser.char('(') *> sp *> Parser.char(')').as(("_", unitType))
+    val param = unitParam.backtrack | (Parser.char('(') *> sp *> namedParam <* sp <* Parser.char(')'))
     param.rep.map(_.toList)
   }
 
@@ -230,11 +232,13 @@ object ParserAST {
 
   lazy val appP: Parser[Rec[Expr]] = {
     type Postfix = Either[Rec[Expr], Rec[Type]]
+    val unitArg: Parser[Postfix] =
+      (Parser.char('(') *> sp *> Parser.char(')')).as(Left(unitLit)).backtrack
     val exprArg: Parser[Postfix] =
       (Parser.char('(') *> sp *> Parser.defer(expr) <* sp <* Parser.char(')')).map(Left(_))
     val typeArg: Parser[Postfix] =
       (Parser.char('[') *> sp *> Parser.defer(typeP) <* sp <* Parser.char(']')).map(Right(_))
-    (atom ~ (exprArg | typeArg).rep0).map { case (f, args) =>
+    (atom ~ (unitArg | exprArg | typeArg).rep0).map { case (f, args) =>
       args.foldLeft(f) {
         case (acc, Left(a)) => app(acc, a)
         case (acc, Right(t)) => tyApp(acc, t)
