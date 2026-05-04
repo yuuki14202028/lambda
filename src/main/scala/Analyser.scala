@@ -6,13 +6,11 @@ import cats.data.ReaderT
 object Analyser {
 
   case class TypeAlias(params: Seq[TypeVariable], body: TypeRec[Type])
-  case class DataTypeDef(params: Seq[TypeVariable], constructors: Seq[ConstructorDef])
-  case class ConstructorDef(owner: TypeVariable, fields: Seq[TypeRec[Type]], tag: Int)
   case class Env(
       values: Map[Variable, TypeRec[Type]],
       typeVars: Set[TypeVariable],
       typeAliases: Map[TypeVariable, TypeAlias],
-      dataTypes: Map[TypeVariable, DataTypeDef],
+      dataTypes: Map[TypeVariable, DataDef],
       constructors: Map[Variable, ConstructorDef]
   )
   private type EitherS[A] = Either[String, A]
@@ -63,8 +61,8 @@ object Analyser {
         case Some(TypeAlias(params, _)) => Left(s"Type alias ${variable.name} expects ${params.length} arguments, got 0")
         case None =>
           env.dataTypes.get(variable) match {
-            case Some(DataTypeDef(params, _)) if params.isEmpty => Right(typeVarT(variable))
-            case Some(DataTypeDef(params, _)) => Left(s"Data type ${variable.name} expects ${params.length} arguments, got 0")
+            case Some(DataDef(params, _)) if params.isEmpty => Right(typeVarT(variable))
+            case Some(DataDef(params, _)) => Left(s"Data type ${variable.name} expects ${params.length} arguments, got 0")
             case None => Left(s"Type variable ${variable.name} is not defined")
           }
       }
@@ -94,9 +92,9 @@ object Analyser {
               Left(s"Type alias ${variable.name} expects ${params.length} arguments, got ${args.length}")
             case None =>
               env.dataTypes.get(variable) match {
-                case Some(DataTypeDef(params, _)) if params.length == args.length =>
+                case Some(DataDef(params, _)) if params.length == args.length =>
                   args.toList.traverse(arg => expandType(arg, env)).map(es => applyTypeConstructor(variable, es))
-                case Some(DataTypeDef(params, _)) =>
+                case Some(DataDef(params, _)) =>
                   Left(s"Data type ${variable.name} expects ${params.length} arguments, got ${args.length}")
                 case None =>
                   Left(s"Type variable ${variable.name} is not defined")
@@ -174,17 +172,17 @@ object Analyser {
         constructorNames.forall(name => !env.values.contains(name) && !env.constructors.contains(name)),
         s"Data type ${variable.name} has a constructor that is already defined"
       )
-      placeholder = DataTypeDef(params, Seq.empty)
+      placeholder = DataDef(params, Seq.empty)
       fieldEnv = env.copy(typeVars = env.typeVars ++ params, dataTypes = env.dataTypes + (variable -> placeholder))
       typedConstructors <- constructors.toList.traverse { c =>
         c.fields.toList.traverse(field => field.local((_: Env) => fieldEnv)).map(fs => DataConstructor(c.name, fs))
       }
       expandedConstructors <- lift {
         typedConstructors.zipWithIndex.toList.traverse { case (c, tag) =>
-          c.fields.toList.traverse(field => expandType(field, fieldEnv)).map(fs => ConstructorDef(variable, fs, tag))
+          c.fields.toList.traverse(field => expandType(field, fieldEnv)).map(fs => ConstructorDef(c.name, variable, fs, tag))
         }
       }
-      dataDef = DataTypeDef(params, expandedConstructors)
+      dataDef = DataDef(params, expandedConstructors)
       constructorDefs = constructorNames.zip(expandedConstructors).toMap
       constructorTypes = constructorNames.zip(expandedConstructors).map { case (name, c) =>
         name -> constructorType(variable, params, c.fields)

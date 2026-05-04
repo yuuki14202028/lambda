@@ -4,8 +4,6 @@ import cats.data.ReaderT
 import cats.syntax.all.*
 
 object ChurchEncoder {
-  case class DataDef(params: Seq[TypeVariable], constructors: Seq[ConstructorDef])
-  case class ConstructorDef(name: Variable, fields: Seq[TypeRec[Type]], tag: Int)
   case class Env(dataTypes: Map[TypeVariable, DataDef])
 
   type EitherS[A] = Either[String, A]
@@ -187,7 +185,7 @@ object ChurchEncoder {
     case (TypeAnn, _) => encodeType(originalNode(TypeAnn, node))
     case (ExprAnn(t), AST.DataLet(variable, params, constructors, body)) =>
       val taggedConstructors = constructors.zipWithIndex.map { case (constructor, tag) =>
-        ConstructorDef(constructor.name, constructor.fields.map(_.original), tag)
+        ConstructorDef(constructor.name, variable, constructor.fields.map(_.original), tag)
       }
       val dataDef = DataDef(params, taggedConstructors)
       for {
