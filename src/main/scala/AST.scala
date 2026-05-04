@@ -120,38 +120,38 @@ private val eraseAnn: TypeRec ~> Rec = new (TypeRec ~> Rec) {
 }
 
 def programT(defines: Seq[TypeRec[Expr]]): TypeRec[AST.Program.type] = HCofree(ProgramAnn, AST.Program(defines))
-def absT(variable: Variable, t: Rec[Type], types: TypeRec[Type], body: TypeRec[Expr]): TypeRec[Expr] =
+def absT(variable: Variable, t: TypeRec[Type], types: TypeRec[Type], body: TypeRec[Expr]): TypeRec[Expr] =
   HCofree(ExprAnn(t), AST.Abs(variable, types, body))
-def tyAbsT(variable: TypeVariable, t: Rec[Type], body: TypeRec[Expr]): TypeRec[Expr] =
+def tyAbsT(variable: TypeVariable, t: TypeRec[Type], body: TypeRec[Expr]): TypeRec[Expr] =
   HCofree(ExprAnn(t), AST.TyAbs(variable, body))
-def letT(variable: Variable, t: Rec[Type], types: TypeRec[Type], value: TypeRec[Expr], body: TypeRec[Expr]): TypeRec[Expr] =
+def letT(variable: Variable, t: TypeRec[Type], types: TypeRec[Type], value: TypeRec[Expr], body: TypeRec[Expr]): TypeRec[Expr] =
   HCofree(ExprAnn(t), AST.Let(variable, types, value, body))
-def letRecT(variable: Variable, t: Rec[Type], types: TypeRec[Type], value: TypeRec[Expr], body: TypeRec[Expr]): TypeRec[Expr] =
+def letRecT(variable: Variable, t: TypeRec[Type], types: TypeRec[Type], value: TypeRec[Expr], body: TypeRec[Expr]): TypeRec[Expr] =
   HCofree(ExprAnn(t), AST.LetRec(variable, types, value, body))
-def typeLetT(variable: TypeVariable, params: Seq[TypeVariable], t: Rec[Type], alias: TypeRec[Type], body: TypeRec[Expr]): TypeRec[Expr] =
+def typeLetT(variable: TypeVariable, params: Seq[TypeVariable], t: TypeRec[Type], alias: TypeRec[Type], body: TypeRec[Expr]): TypeRec[Expr] =
   HCofree(ExprAnn(t), AST.TypeLet(variable, params, alias, body))
-def dataLetT(variable: TypeVariable, params: Seq[TypeVariable], t: Rec[Type], constructors: Seq[DataConstructor[TypeRec]], body: TypeRec[Expr]): TypeRec[Expr] =
+def dataLetT(variable: TypeVariable, params: Seq[TypeVariable], t: TypeRec[Type], constructors: Seq[DataConstructor[TypeRec]], body: TypeRec[Expr]): TypeRec[Expr] =
   HCofree(ExprAnn(t), AST.DataLet(variable, params, constructors, body))
-def matchExprT(t: Rec[Type], scrutinee: TypeRec[Expr], cases: Seq[MatchCase[TypeRec]]): TypeRec[Expr] =
+def matchExprT(t: TypeRec[Type], scrutinee: TypeRec[Expr], cases: Seq[MatchCase[TypeRec]]): TypeRec[Expr] =
   HCofree(ExprAnn(t), AST.Match(scrutinee, cases))
-def appT(t: Rec[Type], function: TypeRec[Expr], argument: TypeRec[Expr]): TypeRec[Expr] =
+def appT(t: TypeRec[Type], function: TypeRec[Expr], argument: TypeRec[Expr]): TypeRec[Expr] =
   HCofree(ExprAnn(t), AST.App(function, argument))
-def tyAppT(t: Rec[Type], function: TypeRec[Expr], argument: TypeRec[Type]): TypeRec[Expr] =
+def tyAppT(t: TypeRec[Type], function: TypeRec[Expr], argument: TypeRec[Type]): TypeRec[Expr] =
   HCofree(ExprAnn(t), AST.TyApp(function, argument))
-def foreignT(variable: Variable, t: Rec[Type], types: TypeRec[Type]): TypeRec[Expr] = HCofree(ExprAnn(t), AST.Foreign(variable, types))
-def varrType(variable: Variable, t: Rec[Type]): TypeRec[Expr] = HCofree(ExprAnn(t), AST.Var(variable))
-def numT(value: Int, t: Rec[Type]): TypeRec[Expr] = HCofree(ExprAnn(t), AST.Num(value))
-def charT(value: scala.Char, t: Rec[Type]): TypeRec[Expr] = HCofree(ExprAnn(t), AST.Char(value))
-def stringLitT(value: String, t: Rec[Type]): TypeRec[Expr] = HCofree(ExprAnn(t), AST.StringLit(value))
-def boolT(value: Boolean, t: Rec[Type]): TypeRec[Expr] = HCofree(ExprAnn(t), AST.Bool(value))
-def unitLitT(t: Rec[Type]): TypeRec[Expr] = HCofree(ExprAnn(t), AST.UnitLit())
-def blockT(t: Rec[Type], discarded: Seq[TypeRec[Expr]], result: Option[TypeRec[Expr]]): TypeRec[Expr] =
+def foreignT(variable: Variable, t: TypeRec[Type], types: TypeRec[Type]): TypeRec[Expr] = HCofree(ExprAnn(t), AST.Foreign(variable, types))
+def varrType(variable: Variable, t: TypeRec[Type]): TypeRec[Expr] = HCofree(ExprAnn(t), AST.Var(variable))
+def numT(value: Int, t: TypeRec[Type]): TypeRec[Expr] = HCofree(ExprAnn(t), AST.Num(value))
+def charT(value: scala.Char, t: TypeRec[Type]): TypeRec[Expr] = HCofree(ExprAnn(t), AST.Char(value))
+def stringLitT(value: String, t: TypeRec[Type]): TypeRec[Expr] = HCofree(ExprAnn(t), AST.StringLit(value))
+def boolT(value: Boolean, t: TypeRec[Type]): TypeRec[Expr] = HCofree(ExprAnn(t), AST.Bool(value))
+def unitLitT(t: TypeRec[Type]): TypeRec[Expr] = HCofree(ExprAnn(t), AST.UnitLit())
+def blockT(t: TypeRec[Type], discarded: Seq[TypeRec[Expr]], result: Option[TypeRec[Expr]]): TypeRec[Expr] =
   HCofree(ExprAnn(t), AST.Block(discarded, result))
-def binopT(op: BinOps, t: Rec[Type], left: TypeRec[Expr], right: TypeRec[Expr]): TypeRec[Expr] =
+def binopT(op: BinOps, t: TypeRec[Type], left: TypeRec[Expr], right: TypeRec[Expr]): TypeRec[Expr] =
   HCofree(ExprAnn(t), AST.BinOp(op, left, right))
-def unopT(op: UnaryOps, t: Rec[Type], body: TypeRec[Expr]): TypeRec[Expr] =
+def unopT(op: UnaryOps, t: TypeRec[Type], body: TypeRec[Expr]): TypeRec[Expr] =
   HCofree(ExprAnn(t), AST.UnaryOp(op, body))
-def ifT(t: Rec[Type], cond: TypeRec[Expr], thenBranch: TypeRec[Expr], elseBranch: TypeRec[Expr]): TypeRec[Expr] =
+def ifT(t: TypeRec[Type], cond: TypeRec[Expr], thenBranch: TypeRec[Expr], elseBranch: TypeRec[Expr]): TypeRec[Expr] =
   HCofree(ExprAnn(t), AST.If(cond, thenBranch, elseBranch))
 def primitiveT(name: String): TypeRec[Type] = HCofree(TypeAnn, AST.Primitive(name))
 def typeVarT(variable: TypeVariable): TypeRec[Type] = HCofree(TypeAnn, AST.TypeVar(variable))
@@ -159,21 +159,31 @@ def arrowT(from: TypeRec[Type], to: TypeRec[Type]): TypeRec[Type] = HCofree(Type
 def forallTypeT(variable: TypeVariable, body: TypeRec[Type]): TypeRec[Type] = HCofree(TypeAnn, AST.ForAll(variable, body))
 def typeAppT(function: TypeRec[Type], argument: TypeRec[Type]): TypeRec[Type] = HCofree(TypeAnn, AST.TypeApp(function, argument))
 
-def typeOf(expr: TypeRec[Expr]): Rec[Type] = expr.head match {
+def intTypeT: TypeRec[Type] = primitiveT("Int")
+def charTypeT: TypeRec[Type] = primitiveT("Char")
+def stringTypeT: TypeRec[Type] = primitiveT("String")
+def boolTypeT: TypeRec[Type] = primitiveT("Bool")
+def unitTypeT: TypeRec[Type] = primitiveT("Unit")
+
+def typeOf(expr: TypeRec[Expr]): TypeRec[Type] = expr.head match {
   case ExprAnn(t) => t
 }
 
-def destructArrow(t: Rec[Type]): Option[(Rec[Type], Rec[Type])] = t.unfix match {
+extension (r: TypeRec[Type]) {
+  def projectT: AST[TypeRec, Type] = r.tail
+}
+
+def destructArrow(t: TypeRec[Type]): Option[(TypeRec[Type], TypeRec[Type])] = t.projectT match {
   case AST.Arrow(from, to) => Some((from, to))
   case _ => None
 }
 
-def destructForAll(t: Rec[Type]): Option[(TypeVariable, Rec[Type])] = t.unfix match {
+def destructForAll(t: TypeRec[Type]): Option[(TypeVariable, TypeRec[Type])] = t.projectT match {
   case AST.ForAll(variable, body) => Some((variable, body))
   case _ => None
 }
 
-def freeTypeVars(t: Rec[Type]): Set[TypeVariable] = t.unfix match {
+def freeTypeVars(t: TypeRec[Type]): Set[TypeVariable] = t.projectT match {
   case AST.Primitive(_) => Set.empty
   case AST.TypeVar(variable) => Set(variable)
   case AST.Arrow(from, to) => freeTypeVars(from) ++ freeTypeVars(to)
@@ -191,37 +201,33 @@ private def freshTypeVariable(base: TypeVariable, used: Set[TypeVariable]): Type
     .get
 }
 
-def renameTypeVar(from: TypeVariable, to: TypeVariable, in: Rec[Type]): Rec[Type] = in.unfix match {
-  case AST.Primitive(name) => primitive(name)
-  case AST.TypeVar(variable) if variable == from => typeVar(to)
-  case AST.TypeVar(variable) => typeVar(variable)
-  case AST.Arrow(left, right) => arrow(renameTypeVar(from, to, left), renameTypeVar(from, to, right))
-  case AST.ForAll(variable, body) if variable == from => forallType(variable, body)
-  case AST.ForAll(variable, body) => forallType(variable, renameTypeVar(from, to, body))
-  case AST.TypeApp(function, argument) => typeApp(renameTypeVar(from, to, function), renameTypeVar(from, to, argument))
+def renameTypeVar(from: TypeVariable, to: TypeVariable, in: TypeRec[Type]): TypeRec[Type] = {
+  val algebra: HCofreeAlgebra[AST, TypeAnn, TypeRec] = [x] => (ann, node) => node match {
+    case AST.TypeVar(variable) if variable == from => typeVarT(to)
+    case AST.ForAll(variable, body) if variable == from => forallTypeT(to, body)
+    case ast => HCofree(ann, ast)
+  }
+  in.cataAnn(algebra)
 }
 
-def substType(target: TypeVariable, replacement: Rec[Type], in: Rec[Type]): Rec[Type] = in.unfix match {
-  case AST.Primitive(name) => primitive(name)
-  case AST.TypeVar(variable) if variable == target => replacement
-  case AST.TypeVar(variable) => typeVar(variable)
-  case AST.Arrow(left, right) => arrow(substType(target, replacement, left), substType(target, replacement, right))
-  case AST.ForAll(variable, body) if variable == target => forallType(variable, body)
-  case AST.ForAll(variable, body) =>
-    val replacementFreeVars = freeTypeVars(replacement)
-    if (replacementFreeVars.contains(variable)) {
-      val used = replacementFreeVars ++ freeTypeVars(body) + target + variable
-      val fresh = freshTypeVariable(variable, used)
-      val renamedBody = renameTypeVar(variable, fresh, body)
-      forallType(fresh, substType(target, replacement, renamedBody))
-    } else {
-      forallType(variable, substType(target, replacement, body))
-    }
-  case AST.TypeApp(function, argument) => typeApp(substType(target, replacement, function), substType(target, replacement, argument))
+def substType(target: TypeVariable, replace: TypeRec[Type], in: TypeRec[Type]): TypeRec[Type] = {
+  val algebra: HCofreeAlgebra[AST, TypeAnn, TypeRec] = [x] => (ann, node) => node match {
+    case AST.TypeVar(variable) if variable == target => replace
+    case AST.ForAll(variable, body) if variable != target =>
+      val replaceFreeVars = freeTypeVars(replace)
+      if (replaceFreeVars.contains(variable)) {
+        val used = replaceFreeVars ++ freeTypeVars(body) + target + variable
+        val fresh = freshTypeVariable(variable, used)
+        val renamedBody = renameTypeVar(variable, fresh, body)
+        forallTypeT(fresh, renamedBody)
+      } else forallTypeT(variable, body)
+    case ast => HCofree(ann, ast)
+  }
+  in.cataAnn(algebra)
 }
 
-def sameType(left: Rec[Type], right: Rec[Type]): Boolean = {
-  def loop(l: Rec[Type], r: Rec[Type], bound: Map[TypeVariable, TypeVariable]): Boolean = (l.unfix, r.unfix) match {
+def sameType(left: TypeRec[Type], right: TypeRec[Type]): Boolean = {
+  def loop(l: TypeRec[Type], r: TypeRec[Type], bound: Map[TypeVariable, TypeVariable]): Boolean = (l.projectT, r.projectT) match {
     case (AST.Primitive(ln), AST.Primitive(rn)) => ln == rn
     case (AST.TypeVar(lv), AST.TypeVar(rv)) =>
       bound.get(lv) match {
@@ -237,10 +243,20 @@ def sameType(left: Rec[Type], right: Rec[Type]): Boolean = {
   loop(left, right, Map.empty)
 }
 
-def isNumericType(t: Rec[Type]): Boolean = {
-  sameType(t, intType) || sameType(t, charType)
+def isNumericType(t: TypeRec[Type]): Boolean = {
+  sameType(t, intTypeT) || sameType(t, charTypeT)
 }
 
-def isEquatableType(t: Rec[Type]): Boolean = {
-  isNumericType(t) || sameType(t, boolType)
+def isEquatableType(t: TypeRec[Type]): Boolean = {
+  isNumericType(t) || sameType(t, boolTypeT)
 }
+
+def collectTypeApps(t: TypeRec[Type]): (TypeRec[Type], Seq[TypeRec[Type]]) = t.projectT match {
+  case AST.TypeApp(function, argument) =>
+    val (head, args) = collectTypeApps(function)
+    (head, args :+ argument)
+  case _ => (t, Seq.empty)
+}
+
+def applyTypeConstructor(head: TypeVariable, args: Seq[TypeRec[Type]]): TypeRec[Type] =
+  args.foldLeft(typeVarT(head)) { (acc, arg) => typeAppT(acc, arg) }

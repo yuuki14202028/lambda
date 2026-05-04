@@ -6,11 +6,11 @@ import cats.implicits.catsSyntaxTuple2Semigroupal
 
 object Analyser {
 
-  case class TypeAlias(params: Seq[TypeVariable], body: Rec[Type])
+  case class TypeAlias(params: Seq[TypeVariable], body: TypeRec[Type])
   case class DataTypeDef(params: Seq[TypeVariable], constructors: Seq[ConstructorDef])
-  case class ConstructorDef(owner: TypeVariable, fields: Seq[Rec[Type]], tag: Int)
+  case class ConstructorDef(owner: TypeVariable, fields: Seq[TypeRec[Type]], tag: Int)
   case class Env(
-      values: Map[Variable, Rec[Type]],
+      values: Map[Variable, TypeRec[Type]],
       typeVars: Set[TypeVariable],
       typeAliases: Map[TypeVariable, TypeAlias],
       dataTypes: Map[TypeVariable, DataTypeDef],
@@ -19,47 +19,37 @@ object Analyser {
   type EitherS[A] = Either[String, A]
   type TC[I] = ReaderT[EitherS, Env, TypeRec[I]]
 
-  private def expect(expected: Rec[Type], actual: Rec[Type]): EitherS[Unit] = {
+  private def expect(expected: TypeRec[Type], actual: TypeRec[Type]): EitherS[Unit] = {
     Either.cond(sameType(expected, actual), (), s"Type mismatch: expected ${expected.show}, actual ${actual.show}")
   }
 
-  private def expectNumeric(actual: Rec[Type]): EitherS[Unit] = {
-    Either.cond(isNumericType(actual), (), s"Type mismatch: expected Int or Char, actual $actual")
+  private def expectNumeric(actual: TypeRec[Type]): EitherS[Unit] = {
+    Either.cond(isNumericType(actual), (), s"Type mismatch: expected Int or Char, actual ${actual.show}")
   }
 
-  private def expectEquatable(actual: Rec[Type]): EitherS[Unit] = {
-    Either.cond(isEquatableType(actual), (), s"Type mismatch: expected Int, Char, or Bool, actual $actual")
+  private def expectEquatable(actual: TypeRec[Type]): EitherS[Unit] = {
+    Either.cond(isEquatableType(actual), (), s"Type mismatch: expected Int, Char, or Bool, actual ${actual.show}")
   }
 
-  private def expectForeignType(t: Rec[Type]): EitherS[Unit] = {
+  private def expectForeignType(t: TypeRec[Type]): EitherS[Unit] = {
     destructArrow(t) match {
       case Some((_, to)) if destructArrow(to).isEmpty => Right(())
       case _ => Left(s"Foreign function must have exactly one argument: ${t.show}")
     }
   }
 
-  private def collectTypeApps(t: Rec[Type]): (Rec[Type], Seq[Rec[Type]]) = t.unfix match {
-    case AST.TypeApp(function, argument) =>
-      val (head, args) = collectTypeApps(function)
-      (head, args :+ argument)
-    case _ => (t, Seq.empty)
-  }
+  private def dataResultType(owner: TypeVariable, params: Seq[TypeVariable]): TypeRec[Type] =
+    applyTypeConstructor(owner, params.map(typeVarT))
 
-  private def applyTypeConstructor(head: TypeVariable, args: Seq[Rec[Type]]): Rec[Type] =
-    args.foldLeft(typeVar(head))(typeApp)
-
-  private def dataResultType(owner: TypeVariable, params: Seq[TypeVariable]): Rec[Type] =
-    applyTypeConstructor(owner, params.map(typeVar))
-
-  private def constructorType(owner: TypeVariable, params: Seq[TypeVariable], fields: Seq[Rec[Type]]): Rec[Type] = {
+  private def constructorType(owner: TypeVariable, params: Seq[TypeVariable], fields: Seq[TypeRec[Type]]): TypeRec[Type] = {
     val result = dataResultType(owner, params)
-    val functionType = fields.foldRight(result)(arrow)
-    params.foldRight(functionType)(forallType)
+    val functionType = fields.foldRight(result)(arrowT)
+    params.foldRight(functionType)(forallTypeT)
   }
 
-  private def dataTypeApplication(t: Rec[Type], env: Env): EitherS[(TypeVariable, DataTypeDef, Seq[Rec[Type]])] = {
+  private def dataTypeApplication(t: TypeRec[Type], env: Env): EitherS[(TypeVariable, DataTypeDef, Seq[TypeRec[Type]])] = {
     val (head, args) = collectTypeApps(t)
-    head.unfix match {
+    head.projectT match {
       case AST.TypeVar(variable) =>
         env.dataTypes.get(variable) match {
           case Some(dataDef) if dataDef.params.length == args.length =>
@@ -74,22 +64,22 @@ object Analyser {
     }
   }
 
-  private def expandType(t: Rec[Type], env: Env): EitherS[Rec[Type]] = t.unfix match {
-    case AST.Primitive("Int") => Right(intType)
-    case AST.Primitive("Char") => Right(charType)
-    case AST.Primitive("String") => Right(stringType)
-    case AST.Primitive("Bool") => Right(boolType)
-    case AST.Primitive("Unit") => Right(unitType)
+  private def expandType(t: TypeRec[Type], env: Env): EitherS[TypeRec[Type]] = t.projectT match {
+    case AST.Primitive("Int") => Right(intTypeT)
+    case AST.Primitive("Char") => Right(charTypeT)
+    case AST.Primitive("String") => Right(stringTypeT)
+    case AST.Primitive("Bool") => Right(boolTypeT)
+    case AST.Primitive("Unit") => Right(unitTypeT)
     case AST.Primitive(name) => Left(s"Primitive type $name is not defined")
 
-    case AST.TypeVar(variable) if env.typeVars.contains(variable) => Right(typeVar(variable))
+    case AST.TypeVar(variable) if env.typeVars.contains(variable) => Right(typeVarT(variable))
     case AST.TypeVar(variable) =>
       env.typeAliases.get(variable) match {
         case Some(TypeAlias(params, body)) if params.isEmpty => expandType(body, env)
         case Some(TypeAlias(params, _)) => Left(s"Type alias ${variable.name} expects ${params.length} arguments, got 0")
         case None =>
           env.dataTypes.get(variable) match {
-            case Some(DataTypeDef(params, _)) if params.isEmpty => Right(typeVar(variable))
+            case Some(DataTypeDef(params, _)) if params.isEmpty => Right(typeVarT(variable))
             case Some(DataTypeDef(params, _)) => Left(s"Data type ${variable.name} expects ${params.length} arguments, got 0")
             case None => Left(s"Type variable ${variable.name} is not defined")
           }
@@ -98,16 +88,16 @@ object Analyser {
     case AST.Arrow(from, to) => for {
       expandedFrom <- expandType(from, env)
       expandedTo <- expandType(to, env)
-    } yield arrow(expandedFrom, expandedTo)
+    } yield arrowT(expandedFrom, expandedTo)
 
     case AST.ForAll(variable, body) => for {
       _ <- Either.cond(!env.typeVars.contains(variable), (), s"Type variable ${variable.name} is already defined")
       expandedBody <- expandType(body, env.copy(typeVars = env.typeVars + variable))
-    } yield forallType(variable, expandedBody)
+    } yield forallTypeT(variable, expandedBody)
 
     case AST.TypeApp(_, _) =>
       val (head, args) = collectTypeApps(t)
-      head.unfix match {
+      head.projectT match {
         case AST.TypeVar(variable) if !env.typeVars.contains(variable) =>
           env.typeAliases.get(variable) match {
             case Some(TypeAlias(params, body)) if params.length == args.length =>
@@ -135,9 +125,9 @@ object Analyser {
       }
   }
 
-  private def expandCheckedType(types: TypeRec[Type]): ReaderT[EitherS, Env, Rec[Type]] = for {
+  private def expandChecked(types: TypeRec[Type]): ReaderT[EitherS, Env, TypeRec[Type]] = for {
     env <- ReaderT.ask[EitherS, Env]
-    expanded <- ReaderT.liftF[EitherS, Env, Rec[Type]](expandType(eraseAnn[Type](types), env))
+    expanded <- ReaderT.liftF[EitherS, Env, TypeRec[Type]](expandType(types, env))
   } yield expanded
 
   private val tcAlg: Algebra[AST, TC] = [x] => (node: AST[TC, x]) => node match {
@@ -146,9 +136,9 @@ object Analyser {
 
     case AST.Abs(variable, types, body) => for {
       typedTypes <- types
-      paramType <- expandCheckedType(typedTypes)
+      paramType <- expandChecked(typedTypes)
       typedBody <- body.local((env: Env) => env.copy(values = env.values + (variable -> paramType)))
-      resultType = arrow(paramType, typeOf(typedBody))
+      resultType = arrowT(paramType, typeOf(typedBody))
     } yield absT(variable, resultType, typedTypes, typedBody)
 
     case AST.TyAbs(variable, body) => for {
@@ -157,12 +147,12 @@ object Analyser {
         Either.cond(!env.typeVars.contains(variable), (), s"Type variable ${variable.name} is already defined")
       )
       typedBody <- body.local((env: Env) => env.copy(typeVars = env.typeVars + variable))
-      resultType = forallType(variable, typeOf(typedBody))
+      resultType = forallTypeT(variable, typeOf(typedBody))
     } yield tyAbsT(variable, resultType, typedBody)
 
     case AST.Let(variable, types, value, body) => for {
       typedTypes <- types
-      declaredType <- expandCheckedType(typedTypes)
+      declaredType <- expandChecked(typedTypes)
       typedValue <- value
       _ <- ReaderT.liftF(expect(declaredType, typeOf(typedValue)))
       typedBody <- body.local((env: Env) => env.copy(values = env.values + (variable -> declaredType)))
@@ -171,7 +161,7 @@ object Analyser {
 
     case AST.LetRec(variable, types, value, body) => for {
       typedTypes <- types
-      declaredType <- expandCheckedType(typedTypes)
+      declaredType <- expandChecked(typedTypes)
       typedValue <- value.local((env: Env) => env.copy(values = env.values + (variable -> declaredType)))
       _ <- ReaderT.liftF(expect(declaredType, typeOf(typedValue)))
       typedBody <- body.local((env: Env) => env.copy(values = env.values + (variable -> declaredType)))
@@ -194,8 +184,8 @@ object Analyser {
         Either.cond(params.forall(p => !env.typeVars.contains(p)), (), s"Type alias ${variable.name} has a parameter that is already defined")
       )
       typedAlias <- alias.local((env: Env) => env.copy(typeVars = env.typeVars ++ params))
-      expandedAlias <- ReaderT.liftF[EitherS, Env, Rec[Type]](
-        expandType(eraseAnn[Type](typedAlias), env.copy(typeVars = env.typeVars ++ params))
+      expandedAlias <- ReaderT.liftF[EitherS, Env, TypeRec[Type]](
+        expandType(typedAlias, env.copy(typeVars = env.typeVars ++ params))
       )
       typedBody <- body.local((env: Env) =>
         env.copy(typeAliases = env.typeAliases + (variable -> TypeAlias(params, expandedAlias)))
@@ -238,7 +228,7 @@ object Analyser {
       }
       expandedConstructors <- ReaderT.liftF[EitherS, Env, Seq[ConstructorDef]] {
         typedConstructors.zipWithIndex.toList.traverse { case (constructor, tag) =>
-          constructor.fields.toList.traverse(field => expandType(eraseAnn[Type](field), fieldEnv)).map { fields =>
+          constructor.fields.toList.traverse(field => expandType(field, fieldEnv)).map { fields =>
             ConstructorDef(variable, fields, tag)
           }
         }
@@ -261,7 +251,7 @@ object Analyser {
     case AST.Match(scrutinee, cases) => for {
       env <- ReaderT.ask[EitherS, Env]
       typedScrutinee <- scrutinee
-      dataApp <- ReaderT.liftF[EitherS, Env, (TypeVariable, DataTypeDef, Seq[Rec[Type]])](
+      dataApp <- ReaderT.liftF[EitherS, Env, (TypeVariable, DataTypeDef, Seq[TypeRec[Type]])](
         dataTypeApplication(typeOf(typedScrutinee), env)
       )
       (dataName, dataDef, typeArgs) = dataApp
@@ -305,7 +295,7 @@ object Analyser {
           typedBody <- matchCase.body.local((env: Env) => env.copy(values = env.values ++ binderTypes))
         } yield MatchCase(matchCase.constructor, matchCase.binders, typedBody)
       }
-      resultType <- ReaderT.liftF[EitherS, Env, Rec[Type]] {
+      resultType <- ReaderT.liftF[EitherS, Env, TypeRec[Type]] {
         typedCases.headOption match {
           case Some(first) =>
             typedCases.tail.traverse(c => expect(typeOf(first.body), typeOf(c.body))).map(_ => typeOf(first.body))
@@ -318,7 +308,7 @@ object Analyser {
     case AST.App(function, argument) => for {
       typedFunction <- function
       typedArgument <- argument
-      resultType <- ReaderT.liftF[EitherS, Env, Rec[Type]] {
+      resultType <- ReaderT.liftF[EitherS, Env, TypeRec[Type]] {
         destructArrow(typeOf(typedFunction)) match {
           case Some((from, to)) if sameType(from, typeOf(typedArgument)) => Right(to)
           case Some((from, _)) => Left(s"Type mismatch: expected ${from.show}, actual ${typeOf(typedArgument).show}")
@@ -330,8 +320,8 @@ object Analyser {
     case AST.TyApp(function, argument) => for {
       typedFunction <- function
       typedArgument <- argument
-      argumentType <- expandCheckedType(typedArgument)
-      resultType <- ReaderT.liftF[EitherS, Env, Rec[Type]] {
+      argumentType <- expandChecked(typedArgument)
+      resultType <- ReaderT.liftF[EitherS, Env, TypeRec[Type]] {
         destructForAll(typeOf(typedFunction)) match {
           case Some((variable, bodyType)) => Right(substType(variable, argumentType, bodyType))
           case None => Left(s"Not a polymorphic function: ${typeOf(typedFunction).show}")
@@ -341,27 +331,27 @@ object Analyser {
 
     case AST.Foreign(value, types) => for {
       typedTypes <- types
-      declaredType <- expandCheckedType(typedTypes)
+      declaredType <- expandChecked(typedTypes)
       _ <- ReaderT.liftF(expectForeignType(declaredType))
     } yield foreignT(value, declaredType, typedTypes)
 
     case AST.Var(value) => for {
       env <- ReaderT.ask[EitherS, Env]
-      t <- ReaderT.liftF[EitherS, Env, Rec[Type]](
+      t <- ReaderT.liftF[EitherS, Env, TypeRec[Type]](
         env.values.get(value).toRight(s"Variable $value is not defined")
       )
     } yield varrType(value, t)
 
-    case AST.Num(value) => ReaderT.pure(numT(value, intType))
-    case AST.Char(value) => ReaderT.pure(charT(value, charType))
-    case AST.StringLit(value) => ReaderT.pure(stringLitT(value, stringType))
-    case AST.Bool(value) => ReaderT.pure(boolT(value, boolType))
-    case AST.UnitLit() => ReaderT.pure(unitLitT(unitType))
+    case AST.Num(value) => ReaderT.pure(numT(value, intTypeT))
+    case AST.Char(value) => ReaderT.pure(charT(value, charTypeT))
+    case AST.StringLit(value) => ReaderT.pure(stringLitT(value, stringTypeT))
+    case AST.Bool(value) => ReaderT.pure(boolT(value, boolTypeT))
+    case AST.UnitLit() => ReaderT.pure(unitLitT(unitTypeT))
 
     case AST.Block(discarded, result) => for {
       typedDiscarded <- discarded.toList.traverse(identity)
       typedResult <- result.traverse(identity)
-      resultType = typedResult.map(typeOf).getOrElse(unitType)
+      resultType = typedResult.map(typeOf).getOrElse(unitTypeT)
     } yield blockT(resultType, typedDiscarded, typedResult)
 
     case AST.BinOp(op, left, right) => for {
@@ -377,7 +367,7 @@ object Analyser {
       _ <- ReaderT.liftF(expect(leftType, rightType))
       resultType = op match {
         case BinOps.Add | BinOps.Sub | BinOps.Mul | BinOps.Div => leftType
-        case BinOps.Eq | BinOps.Neq | BinOps.Lt | BinOps.Leq | BinOps.Gt | BinOps.Geq => boolType
+        case BinOps.Eq | BinOps.Neq | BinOps.Lt | BinOps.Leq | BinOps.Gt | BinOps.Geq => boolTypeT
       }
     } yield binopT(op, resultType, typedLeft, typedRight)
 
@@ -386,7 +376,7 @@ object Analyser {
       bodyType = typeOf(typedBody)
       _ <- ReaderT.liftF(op match {
         case UnaryOps.Neg => expectNumeric(bodyType)
-        case UnaryOps.Not => expect(boolType, bodyType)
+        case UnaryOps.Not => expect(boolTypeT, bodyType)
       })
     } yield unopT(op, bodyType, typedBody)
 
@@ -397,7 +387,7 @@ object Analyser {
       condType = typeOf(typedCond)
       thenType = typeOf(typedThen)
       elseType = typeOf(typedElse)
-      _ <- ReaderT.liftF(expect(boolType, condType))
+      _ <- ReaderT.liftF(expect(boolTypeT, condType))
       _ <- ReaderT.liftF(expect(thenType, elseType))
     } yield ifT(thenType, typedCond, typedThen, typedElse)
 

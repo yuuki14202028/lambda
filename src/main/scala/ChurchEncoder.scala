@@ -4,7 +4,7 @@ import cats.syntax.traverse._
 
 object ChurchEncoder {
   case class DataDef(params: Seq[TypeVariable], constructors: Seq[ConstructorDef])
-  case class ConstructorDef(name: Variable, fields: Seq[Rec[Type]], tag: Int)
+  case class ConstructorDef(name: Variable, fields: Seq[TypeRec[Type]], tag: Int)
   case class Env(dataTypes: Map[TypeVariable, DataDef])
 
   type EitherS[A] = Either[String, A]
@@ -16,41 +16,23 @@ object ChurchEncoder {
     private def encoded(env: Env): EitherS[TypeRec[I]] = self._2(env)
   }
 
-  private def annotateType(t: Rec[Type]): TypeRec[Type] = t.unfix match {
-    case AST.Primitive(name) => primitiveT(name)
-    case AST.TypeVar(value) => typeVarT(value)
-    case AST.Arrow(from, to) => arrowT(annotateType(from), annotateType(to))
-    case AST.ForAll(variable, body) => forallTypeT(variable, annotateType(body))
-    case AST.TypeApp(function, argument) => annotateType(typeApp(function, argument))
-  }
-
-  private def collectTypeApps(t: Rec[Type]): (Rec[Type], Seq[Rec[Type]]) = t.unfix match {
-    case AST.TypeApp(function, argument) =>
-      val (head, args) = collectTypeApps(function)
-      (head, args :+ argument)
-    case _ => (t, Seq.empty)
-  }
-
-  private def applyTypeConstructor(head: TypeVariable, args: Seq[Rec[Type]]): Rec[Type] =
-    args.foldLeft(typeVar(head))(typeApp)
-
-  private def isDataApplicationOf(t: Rec[Type], owner: TypeVariable): Boolean = {
+  private def isDataApplicationOf(t: TypeRec[Type], owner: TypeVariable): Boolean = {
     val (head, _) = collectTypeApps(t)
-    head.unfix match {
+    head.projectT match {
       case AST.TypeVar(variable) => variable == owner
       case _ => false
     }
   }
 
-  private def substMany(params: Seq[TypeVariable], args: Seq[Rec[Type]], in: Rec[Type]): Rec[Type] =
+  private def substMany(params: Seq[TypeVariable], args: Seq[TypeRec[Type]], in: TypeRec[Type]): TypeRec[Type] =
     params.zip(args).foldLeft(in) { case (acc, (param, arg)) => substType(param, arg, acc) }
 
-  private def thunkIfNullary(fields: Seq[?], handlerT: Rec[Type], resultType: Rec[Type]): Rec[Type] =
-    if (fields.isEmpty) arrow(unitType, resultType) else handlerT
+  private def thunkIfNullary(fields: Seq[?], handlerT: TypeRec[Type], resultType: TypeRec[Type]): TypeRec[Type] =
+    if (fields.isEmpty) arrowT(unitTypeT, resultType) else handlerT
 
-  private def churchDataType(owner: TypeVariable, args: Seq[Rec[Type]], dataDef: DataDef, env: Env): EitherS[Rec[Type]] = {
+  private def churchDataType(owner: TypeVariable, args: Seq[TypeRec[Type]], dataDef: DataDef, env: Env): EitherS[TypeRec[Type]] = {
     val resultVar = TypeVariable("R")
-    val resultType = typeVar(resultVar)
+    val resultType = typeVarT(resultVar)
 
     dataDef.constructors.toList.traverse { constructor =>
       constructor.fields.toList.traverse { field =>
@@ -61,29 +43,29 @@ object ChurchEncoder {
           encodeType(substituted, env)
         }
       }.map { encodedFields =>
-        thunkIfNullary(constructor.fields, encodedFields.foldRight(resultType)(arrow), resultType)
+        thunkIfNullary(constructor.fields, encodedFields.foldRight(resultType)(arrowT), resultType)
       }
     }.map { handlers =>
-      forallType(resultVar, handlers.foldRight(resultType)(arrow))
+      forallTypeT(resultVar, handlers.foldRight(resultType)(arrowT))
     }
   }
 
-  private def encodeType(t: Rec[Type], env: Env): EitherS[Rec[Type]] = t.unfix match {
-    case AST.Primitive(name) => Right(primitive(name))
+  private def encodeType(t: TypeRec[Type], env: Env): EitherS[TypeRec[Type]] = t.projectT match {
+    case AST.Primitive(name) => Right(primitiveT(name))
     case AST.TypeVar(variable) =>
       env.dataTypes.get(variable) match {
         case Some(dataDef) if dataDef.params.isEmpty => churchDataType(variable, Nil, dataDef, env)
         case Some(dataDef) => Left(s"Data type ${variable.name} expects ${dataDef.params.length} arguments, got 0")
-        case None => Right(typeVar(variable))
+        case None => Right(typeVarT(variable))
       }
     case AST.Arrow(from, to) => for {
       encodedFrom <- encodeType(from, env)
       encodedTo <- encodeType(to, env)
-    } yield arrow(encodedFrom, encodedTo)
-    case AST.ForAll(variable, body) => encodeType(body, env).map(forallType(variable, _))
+    } yield arrowT(encodedFrom, encodedTo)
+    case AST.ForAll(variable, body) => encodeType(body, env).map(forallTypeT(variable, _))
     case AST.TypeApp(_, _) =>
       val (head, args) = collectTypeApps(t)
-      head.unfix match {
+      head.projectT match {
         case AST.TypeVar(variable) =>
           env.dataTypes.get(variable) match {
             case Some(dataDef) if dataDef.params.length == args.length =>
@@ -99,15 +81,15 @@ object ChurchEncoder {
         case _ => for {
           encodedFunction <- encodeType(head, env)
           encodedArgs <- args.toList.traverse(arg => encodeType(arg, env))
-        } yield encodedArgs.foldLeft(encodedFunction)(typeApp)
+        } yield encodedArgs.foldLeft(encodedFunction)(typeAppT)
       }
   }
 
   private def mkTyAbs(variable: TypeVariable, body: TypeRec[Expr]): TypeRec[Expr] =
-    tyAbsT(variable, forallType(variable, typeOf(body)), body)
+    tyAbsT(variable, forallTypeT(variable, typeOf(body)), body)
 
-  private def mkAbs(variable: Variable, paramType: Rec[Type], body: TypeRec[Expr]): TypeRec[Expr] =
-    absT(variable, arrow(paramType, typeOf(body)), annotateType(paramType), body)
+  private def mkAbs(variable: Variable, paramType: TypeRec[Type], body: TypeRec[Expr]): TypeRec[Expr] =
+    absT(variable, arrowT(paramType, typeOf(body)), paramType, body)
 
   private def mkApp(function: TypeRec[Expr], argument: TypeRec[Expr]): EitherS[TypeRec[Expr]] =
     destructArrow(typeOf(function)) match {
@@ -115,19 +97,19 @@ object ChurchEncoder {
       case None => Left(s"ChurchEncoder expected function type, got ${typeOf(function).show}")
     }
 
-  private def mkTyApp(function: TypeRec[Expr], argument: Rec[Type]): EitherS[TypeRec[Expr]] =
+  private def mkTyApp(function: TypeRec[Expr], argument: TypeRec[Type]): EitherS[TypeRec[Expr]] =
     destructForAll(typeOf(function)) match {
-      case Some((variable, body)) => Right(tyAppT(substType(variable, argument, body), function, annotateType(argument)))
+      case Some((variable, body)) => Right(tyAppT(substType(variable, argument, body), function, argument))
       case None => Left(s"ChurchEncoder expected polymorphic type, got ${typeOf(function).show}")
     }
 
-  private def constructorType(owner: TypeVariable, dataDef: DataDef, constructor: ConstructorDef, env: Env): EitherS[Rec[Type]] = {
-    val nominalResult = applyTypeConstructor(owner, dataDef.params.map(typeVar))
-    val nominalType = dataDef.params.foldRight(constructor.fields.foldRight(nominalResult)(arrow))(forallType)
+  private def constructorType(owner: TypeVariable, dataDef: DataDef, constructor: ConstructorDef, env: Env): EitherS[TypeRec[Type]] = {
+    val nominalResult = applyTypeConstructor(owner, dataDef.params.map(typeVarT))
+    val nominalType = dataDef.params.foldRight(constructor.fields.foldRight(nominalResult)(arrowT))(forallTypeT)
     encodeType(nominalType, env)
   }
 
-  private def handlerType(owner: TypeVariable, args: Seq[Rec[Type]], dataDef: DataDef, constructor: ConstructorDef, resultType: Rec[Type], env: Env): EitherS[Rec[Type]] =
+  private def handlerType(owner: TypeVariable, args: Seq[TypeRec[Type]], dataDef: DataDef, constructor: ConstructorDef, resultType: TypeRec[Type], env: Env): EitherS[TypeRec[Type]] =
     constructor.fields.toList.traverse { field =>
       val substituted = substMany(dataDef.params, args, field)
       if (isDataApplicationOf(substituted, owner)) {
@@ -136,13 +118,13 @@ object ChurchEncoder {
         encodeType(substituted, env)
       }
     }.map { encodedFields =>
-      thunkIfNullary(constructor.fields, encodedFields.foldRight(resultType)(arrow), resultType)
+      thunkIfNullary(constructor.fields, encodedFields.foldRight(resultType)(arrowT), resultType)
     }
 
   private def constructorValue(owner: TypeVariable, dataDef: DataDef, constructor: ConstructorDef, env: Env): EitherS[TypeRec[Expr]] = {
-    val typeArgs = dataDef.params.map(typeVar)
+    val typeArgs = dataDef.params.map(typeVarT)
     val resultVar = TypeVariable("R")
-    val resultType = typeVar(resultVar)
+    val resultType = typeVarT(resultVar)
     val fieldVars = constructor.fields.indices.map(i => Variable(s"__${constructor.name.name}_field_$i"))
     val handlerVars = dataDef.constructors.indices.map(i => Variable(s"__${constructor.name.name}_case_$i"))
 
@@ -150,7 +132,7 @@ object ChurchEncoder {
       fieldTypes <- constructor.fields.toList.traverse(field => encodeType(substMany(dataDef.params, typeArgs, field), env))
       handlerTypes <- dataDef.constructors.toList.traverse(c => handlerType(owner, typeArgs, dataDef, c, resultType, env))
       selectedHandler = varrType(handlerVars(constructor.tag), handlerTypes(constructor.tag))
-      thunkedHandler <- if (constructor.fields.isEmpty) mkApp(selectedHandler, unitLitT(unitType)) else Right(selectedHandler)
+      thunkedHandler <- if (constructor.fields.isEmpty) mkApp(selectedHandler, unitLitT(unitTypeT)) else Right(selectedHandler)
       appliedHandler <- fieldVars.zip(fieldTypes).foldLeft[EitherS[TypeRec[Expr]]](Right(thunkedHandler)) {
         case (acc, (fieldVar, fieldType)) =>
           acc.flatMap(handler => mkApp(handler, varrType(fieldVar, fieldType)))
@@ -166,9 +148,9 @@ object ChurchEncoder {
     } yield withTypeParams
   }
 
-  private def dataApplication(t: Rec[Type], env: Env): EitherS[(TypeVariable, DataDef, Seq[Rec[Type]])] = {
+  private def dataApplication(t: TypeRec[Type], env: Env): EitherS[(TypeVariable, DataDef, Seq[TypeRec[Type]])] = {
     val (head, args) = collectTypeApps(t)
-    head.unfix match {
+    head.projectT match {
       case AST.TypeVar(variable) =>
         env.dataTypes.get(variable) match {
           case Some(dataDef) if dataDef.params.length == args.length => Right((variable, dataDef, args))
@@ -181,9 +163,9 @@ object ChurchEncoder {
 
   private def encodeMatchCase(
       owner: TypeVariable,
-      args: Seq[Rec[Type]],
+      args: Seq[TypeRec[Type]],
       dataDef: DataDef,
-      resultType: Rec[Type],
+      resultType: TypeRec[Type],
       matchCase: MatchCase[Child],
       env: Env
   ): EitherS[TypeRec[Expr]] = {
@@ -204,8 +186,8 @@ object ChurchEncoder {
         innerHandler = matchCase.binders.zip(fieldTypes).foldRight(encodedBody) { case ((binder, fieldType), body) =>
           mkAbs(binder, fieldType, body)
         }
-        handler = if (constructor.fields.isEmpty) mkAbs(Variable("__unit"), unitType, innerHandler) else innerHandler
-        expectedType = thunkIfNullary(constructor.fields, fieldTypes.foldRight(resultType)(arrow), resultType)
+        handler = if (constructor.fields.isEmpty) mkAbs(Variable("__unit"), unitTypeT, innerHandler) else innerHandler
+        expectedType = thunkIfNullary(constructor.fields, fieldTypes.foldRight(resultType)(arrowT), resultType)
         _ <- Either.cond(sameType(typeOf(handler), expectedType), (), s"Match case ${matchCase.constructor.name} has unexpected handler type")
       } yield handler
     }
@@ -217,13 +199,13 @@ object ChurchEncoder {
         case AST.Program(body) =>
           body.toList.traverse(child => child.encoded(env)).map(programT)
       }
-      case TypeAnn => encodeType(eraseAnn[Type]((node: @unchecked) match {
+      case TypeAnn => encodeType((node: @unchecked) match {
         case AST.Primitive(name) => primitiveT(name)
         case AST.TypeVar(variable) => typeVarT(variable)
         case AST.Arrow(from, to) => arrowT(from.original, to.original)
         case AST.ForAll(variable, body) => forallTypeT(variable, body.original)
         case AST.TypeApp(function, argument) => typeAppT(function.original, argument.original)
-      }), env).map(annotateType)
+      }, env)
       case ExprAnn(t) => encodeType(t, env).flatMap { encodedTypeAnn =>
         (node: @unchecked) match {
           case AST.Abs(variable, types, body) => for {
@@ -251,7 +233,7 @@ object ChurchEncoder {
             val dataDef = DataDef(
               params,
               constructors.zipWithIndex.map { case (constructor, tag) =>
-                ConstructorDef(constructor.name, constructor.fields.map(field => eraseAnn[Type](field.original)), tag)
+                ConstructorDef(constructor.name, constructor.fields.map(_.original), tag)
               }
             )
             val extendedEnv = env.copy(dataTypes = env.dataTypes + (variable -> dataDef))
@@ -262,7 +244,7 @@ object ChurchEncoder {
                   bodyExpr <- acc
                   constructorT <- constructorType(variable, dataDef, constructor, extendedEnv)
                   value <- constructorValue(variable, dataDef, constructor, extendedEnv)
-                } yield letT(constructor.name, typeOf(bodyExpr), annotateType(constructorT), value, bodyExpr)
+                } yield letT(constructor.name, typeOf(bodyExpr), constructorT, value, bodyExpr)
               }
             } yield encoded
           case AST.Match(scrutinee, cases) =>
