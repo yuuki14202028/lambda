@@ -5,6 +5,7 @@ import cats.parse.Rfc5234.{alpha, digit}
 object ParserAST {
   private val sp: Parser0[Unit]  = Parser.charIn(" \t\n\r").rep0.void
   private val sp1: Parser0[Unit] = Parser.charIn(" \t").rep0.void
+  private val gap: Parser[Unit] = Parser.charIn(" \t\n\r").rep.void
   private val identStart: Parser[Char] = alpha
   private val identChar: Parser[Char] =
     alpha | digit | Parser.char('_').as('_')
@@ -14,7 +15,7 @@ object ParserAST {
     }
 
   lazy val expr: Parser[Rec[Expr]] =
-    Parser.defer(typeLetP | tyAbsP | absP | letSeriesP | ifP | equitive)
+    Parser.defer(dataLetP | matchP | typeLetP | tyAbsP | absP | letSeriesP | ifP | equitive)
 
   private lazy val letSeriesP: Parser[Rec[Expr]] =
     Parser.defer(letRecFunP.backtrack | letRecPolyP.backtrack | letFunP.backtrack | letPolyP.backtrack | letRecP.backtrack | letP)
@@ -130,7 +131,6 @@ object ParserAST {
   }
 
   lazy val typeLetP: Parser[Rec[Expr]] = {
-    val gap = Parser.charIn(" \t").rep.void
     val name = Parser.string("type") *> gap *> identifier
     val param = Parser.char('[') *> sp *> identifier <* sp <* Parser.char(']')
     val params = param.rep0
@@ -138,6 +138,31 @@ object ParserAST {
     val body = sp *> Parser.string("in") *> sp *> Parser.defer(expr)
     (name ~ params ~ alias ~ body).map { case (((name, params), alias), body) =>
       typeLet(TypeVariable(name), params.map(TypeVariable(_)), alias, body)
+    }
+  }
+
+  private lazy val commaTypesP: Parser[List[Rec[Type]]] = {
+    val item = typeP <* sp
+    val tail = (Parser.char(',') *> sp *> item).rep0
+    (item ~ tail).map { case (head, tail) => head :: tail.toList }
+  }
+
+  private lazy val dataConstructorP: Parser[DataConstructor[[x] =>> Rec[x]]] = {
+    val name = Parser.char('|') *> sp *> identifier
+    val fields = Parser.char('(') *> sp *> commaTypesP <* sp <* Parser.char(')')
+    ((name ~ fields).backtrack | name.map(_ -> Nil)).map { case (name, fields) =>
+      DataConstructor(Variable(name), fields)
+    }
+  }
+
+  lazy val dataLetP: Parser[Rec[Expr]] = {
+    val name = Parser.string("data") *> gap *> identifier
+    val param = Parser.char('[') *> sp *> identifier <* sp <* Parser.char(']')
+    val params = param.rep0
+    val constructors = sp *> Parser.char('=') *> sp *> dataConstructorP.repSep(gap)
+    val body = sp *> Parser.string("in") *> sp *> Parser.defer(expr)
+    (name ~ params ~ constructors ~ body).map { case (((name, params), constructors), body) =>
+      dataLet(TypeVariable(name), params.map(TypeVariable(_)), constructors.toList, body)
     }
   }
 
@@ -187,6 +212,29 @@ object ParserAST {
     val elseBranch = sp *> Parser.string("else") *> sp *> expr
     (cond ~ trueBranch ~ elseBranch).map { case ((cond, tr), el) =>
       iff(cond, tr, el)
+    }
+  }
+
+  private lazy val commaIdentifiersP: Parser[List[String]] = {
+    val item = identifier <* sp
+    val tail = (Parser.char(',') *> sp *> item).rep0
+    (item ~ tail).map { case (head, tail) => head :: tail.toList }
+  }
+
+  private lazy val matchCaseP: Parser[MatchCase[[x] =>> Rec[x]]] = {
+    val name = Parser.char('|') *> sp *> identifier
+    val binders = Parser.char('(') *> sp *> commaIdentifiersP <* sp <* Parser.char(')')
+    val body = sp *> Parser.string("->") *> sp *> Parser.defer(expr)
+    (((name ~ binders).backtrack | name.map(_ -> Nil)) ~ body).map { case ((name, binders), body) =>
+      MatchCase(Variable(name), binders.map(Variable(_)), body)
+    }
+  }
+
+  lazy val matchP: Parser[Rec[Expr]] = {
+    val scrutinee = Parser.string("match") *> gap *> expr
+    val cases = sp *> Parser.string("with") *> sp *> matchCaseP.repSep(gap)
+    (scrutinee ~ cases).map { case (scrutinee, cases) =>
+      matchExpr(scrutinee, cases.toList)
     }
   }
 

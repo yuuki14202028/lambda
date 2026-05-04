@@ -14,6 +14,10 @@ given HFunctor[AST] with {
     case AST.Let(varr, types, vall, body) => AST.Let(varr, f(types), f(vall), f(body))
     case AST.LetRec(varr, types, vall, body) => AST.LetRec(varr, f(types), f(vall), f(body))
     case AST.TypeLet(varr, params, alias, body) => AST.TypeLet(varr, params, f(alias), f(body))
+    case AST.DataLet(varr, params, constructors, body) =>
+      AST.DataLet(varr, params, constructors.map(c => DataConstructor(c.name, c.fields.map(f.apply))), f(body))
+    case AST.Match(scrutinee, cases) =>
+      AST.Match(f(scrutinee), cases.map(c => MatchCase(c.constructor, c.binders, f(c.body))))
     case AST.App(func, arg) => AST.App(f(func), f(arg))
     case AST.TyApp(func, arg) => AST.TyApp(f(func), f(arg))
     case AST.Foreign(v, types) => AST.Foreign(v, f(types))

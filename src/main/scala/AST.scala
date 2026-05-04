@@ -16,6 +16,8 @@ enum AST[R[_], I] {
   case Let(variable: Variable, types: R[Type], value: R[Expr], body: R[Expr]) extends AST[R, Expr]
   case LetRec(variable: Variable, types: R[Type], value: R[Expr], body: R[Expr]) extends AST[R, Expr]
   case TypeLet(variable: TypeVariable, params: Seq[TypeVariable], alias: R[Type], body: R[Expr]) extends AST[R, Expr]
+  case DataLet(variable: TypeVariable, params: Seq[TypeVariable], constructors: Seq[DataConstructor[R]], body: R[Expr]) extends AST[R, Expr]
+  case Match(scrutinee: R[Expr], cases: Seq[MatchCase[R]]) extends AST[R, Expr]
   case App(function: R[Expr], argument: R[Expr]) extends AST[R, Expr]
   case TyApp(function: R[Expr], argument: R[Type]) extends AST[R, Expr]
   case Foreign(value: Variable, types: R[Type]) extends AST[R, Expr]
@@ -35,6 +37,9 @@ enum AST[R[_], I] {
   case ForAll(variable: TypeVariable, body: R[Type]) extends AST[R, Type]
   case TypeApp(function: R[Type], argument: R[Type]) extends AST[R, Type]
 }
+
+case class DataConstructor[R[_]](name: Variable, fields: Seq[R[Type]])
+case class MatchCase[R[_]](constructor: Variable, binders: Seq[Variable], body: R[Expr])
 
 enum BinOps {
   case Add, Sub, Mul, Div, Eq, Neq, Lt, Leq, Gt, Geq
@@ -77,6 +82,10 @@ def let(variable: Variable, types: Rec[Type], value: Rec[Expr], body: Rec[Expr])
 def letRec(variable: Variable, types: Rec[Type], value: Rec[Expr], body: Rec[Expr]): Rec[Expr] = HFix(AST.LetRec(variable, types, value, body))
 def typeLet(variable: TypeVariable, params: Seq[TypeVariable], alias: Rec[Type], body: Rec[Expr]): Rec[Expr] =
   HFix(AST.TypeLet(variable, params, alias, body))
+def dataLet(variable: TypeVariable, params: Seq[TypeVariable], constructors: Seq[DataConstructor[[x] =>> Rec[x]]], body: Rec[Expr]): Rec[Expr] =
+  HFix(AST.DataLet(variable, params, constructors, body))
+def matchExpr(scrutinee: Rec[Expr], cases: Seq[MatchCase[[x] =>> Rec[x]]]): Rec[Expr] =
+  HFix(AST.Match(scrutinee, cases))
 def app(function: Rec[Expr], argument: Rec[Expr]): Rec[Expr] = HFix(AST.App(function, argument))
 def tyApp(function: Rec[Expr], argument: Rec[Type]): Rec[Expr] = HFix(AST.TyApp(function, argument))
 def foreign(variable: Variable, types: Rec[Type]): Rec[Expr] = HFix(AST.Foreign(variable, types))
@@ -121,6 +130,10 @@ def letRecT(variable: Variable, t: Rec[Type], types: TypeRec[Type], value: TypeR
   HCofree(ExprAnn(t), AST.LetRec(variable, types, value, body))
 def typeLetT(variable: TypeVariable, params: Seq[TypeVariable], t: Rec[Type], alias: TypeRec[Type], body: TypeRec[Expr]): TypeRec[Expr] =
   HCofree(ExprAnn(t), AST.TypeLet(variable, params, alias, body))
+def dataLetT(variable: TypeVariable, params: Seq[TypeVariable], t: Rec[Type], constructors: Seq[DataConstructor[TypeRec]], body: TypeRec[Expr]): TypeRec[Expr] =
+  HCofree(ExprAnn(t), AST.DataLet(variable, params, constructors, body))
+def matchExprT(t: Rec[Type], scrutinee: TypeRec[Expr], cases: Seq[MatchCase[TypeRec]]): TypeRec[Expr] =
+  HCofree(ExprAnn(t), AST.Match(scrutinee, cases))
 def appT(t: Rec[Type], function: TypeRec[Expr], argument: TypeRec[Expr]): TypeRec[Expr] =
   HCofree(ExprAnn(t), AST.App(function, argument))
 def tyAppT(t: Rec[Type], function: TypeRec[Expr], argument: TypeRec[Type]): TypeRec[Expr] =
