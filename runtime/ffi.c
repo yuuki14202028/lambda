@@ -6,6 +6,12 @@ int print_int(int value) {
     return value;
 }
 
+char *int_to_string(int value) {
+    char *buffer = malloc(32);
+    snprintf(buffer, 32, "%d", value);
+    return buffer;
+}
+
 int put_char(int value) {
     putchar(value);
     return value;

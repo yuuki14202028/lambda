@@ -8,7 +8,9 @@ Scala 3 で実装された、小さな型付きラムダ計算系言語のコン
 - 単純型付きラムダ抽象 `λx: T. ...`
 - 型抽象 `ΛA. ...`
 - 型適用 `f[T]`
-- 型別名 `type Option[A] = ... in ...`
+- 型別名 `type X[T] = ... in ...`
+- データ型定義 `data X[T] = | XA | XB(T) in ...`
+- データ型のパターンマッチ `match x with | XA → ... | XB(t) -> ...`
 - 関数適用 `f(x)`
 - Unit 引数の関数定義・適用 `f()`
 - ブロック式 `{ expr; ...; result }`
@@ -48,6 +50,8 @@ F[T]
 型別名は `type Option[A] = ... in ...` のように定義でき、 `Option[Int]` のように単項の型適用を連ねます。  
 複数引数の型別名は `type Result[A][E] = ...`、利用側は `Result[Int][Char]` です。
 あくまでも型別名であり、`Result[Int]`のように利用することは出来ません。  
+データ型も `data Option[A] = ... in ...` のように `in` 付きのスコープで定義します。型別名と違い、データ型は透明には展開されない名目的な型です。
+コンストラクタは通常の値として導入され、型引数は明示的に適用します。たとえば `None[Int]` や `Some[Int](42)` のように書きます。  
 ブロック式は `{ expr; ...; result }` のように書き、セミコロン付きの式を順に評価して捨て、最後の式をブロック全体の結果にします。
 最後の式を省略した空ブロックや副作用だけのブロックの結果は `Unit` です。  
 
@@ -71,7 +75,61 @@ in
 none[Int]
 ```
 
-関数束縛、再帰関数束縛は糖衣構文になっています。。  
+## データ型と match
+
+`data` では複数のコンストラクタと、それぞれのフィールド型を定義できます。
+
+```ocaml
+data Option[A] =
+  | None
+  | Some(A)
+in
+
+let value: Option[Int] =
+  Some[Int](42)
+in
+
+match value with
+  | None -> 0
+  | Some(n) -> n
+```
+
+コンストラクタの型は、定義した型パラメータを持つ通常の関数として扱われます。
+
+```text
+None : ∀A. Option[A]
+Some : ∀A. A → Option[A]
+```
+
+複数フィールドのコンストラクタはカリー化された関数になります。
+
+```ocaml
+data Pair[A][B] =
+  | Pair(A)(B)
+in
+Pair[Int][String](1)("x")
+```
+
+`match` は対象のデータ型の全コンストラクタを網羅する必要があります。
+各分岐の束縛数はコンストラクタのフィールド数と一致している必要があり、すべての分岐の結果型も一致している必要があります。
+現在はネストパターン、ワイルドカード、guard、部分的な `match` はありません。
+
+```ocaml
+let unwrapOrZero(option: Option[Int]): Int =
+  match option with
+    | None -> 0
+    | Some(n) -> n
+in
+unwrapOrZero(Some[Int](42))
+```
+
+データ型は型検査上は opaque な名目的型ですが、現在のバックエンドでは Generator に渡す前に Church encoding へ変換しています。
+そのためユーザーコードから `Option[Int]` を直接 `∀R. R → (Int → R) → R` として呼び出すことはできません。
+また、現時点では自身を直接フィールドに含む再帰データ型は Church encoding の対象外です。
+
+関数束縛、再帰関数束縛は糖衣構文になっています。  
+
+## 糖衣構文
 
 ```ocaml
 let choose[A](x: A)(y: A): A = x in
@@ -104,9 +162,10 @@ puts("hello")
 
 1. `main.lam` をパースする
 2. 型検査を行う
-3. `build/out.s` を生成する
-4. `clang` で実行ファイルを作成する
-5. 実行して終了コードを表示する
+3. `data` / `match` を Church encoding へ変換する
+4. `build/out.s` を生成する
+5. `clang` で実行ファイルを作成する
+6. 実行して終了コードを表示する
 
 ```bash
 ./run.sh
@@ -124,13 +183,23 @@ puts("hello")
 
 ```ocaml
 let print: Int → Int = foreign[Int → Int] print_int in
-let rec loop(n: Int)(acc: Int): Int =
-  if n <= 0 then acc else loop(n - 1)(acc + n)
+let puts: String → Int = foreign[String → Int] puts in
+
+data Option[A] =
+  | None
+  | Some(A)
 in
-print(loop(100)(0))
+
+let printOption(option: Option[Int]): Int =
+  match option with
+    | None -> puts("None!")
+    | Some(n) -> print(n)
+in
+
+printOption(Some[Int](42))
 ```
 
-この例では、`loop` が `1` から `100` までの合計を計算し、`print_int` 経由で結果を表示します。
+この例では、`Option[Int]` の値を `match` で分岐し、`Some` の中身を `print_int` 経由で表示します。
 
 ## クロージャと環境
 

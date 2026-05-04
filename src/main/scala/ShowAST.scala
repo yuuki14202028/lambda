@@ -12,6 +12,20 @@ val showAlg: Algebra[AST, ShowResult] = [x] => node => node match {
     val suffix = params.map(param => s"[${param.name}]").mkString
     val head = s"${v.name}$suffix"
     s"type $head = $alias in $body"
+  case AST.DataLet(v, params, constructors, body) =>
+    val suffix = params.map(param => s"[${param.name}]").mkString
+    val head = s"${v.name}$suffix"
+    val ctorText = constructors.map { ctor =>
+      val fields = ctor.fields.map(field => s"($field)").mkString
+      s"| ${ctor.name.name}$fields"
+    }.mkString(" ")
+    s"data $head = $ctorText in $body"
+  case AST.Match(scrutinee, cases) =>
+    val caseText = cases.map { c =>
+      val binders = c.binders.map(binder => s"(${binder.name})").mkString
+      s"| ${c.constructor.name}$binders -> ${c.body}"
+    }.mkString(" ")
+    s"match $scrutinee with $caseText"
   case AST.App(func, arg)          => s"$func($arg)"
   case AST.TyApp(func, arg)        => s"$func[$arg]"
   case AST.Foreign(v, types)       => s"foreign[$types] ${v.name}"
