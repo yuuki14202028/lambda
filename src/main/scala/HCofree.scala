@@ -19,6 +19,20 @@ type HCofreeParaAlgebra[H[_[_], _], A[_], B[_]] =
 type HCofreeParaAlgebraM[H[_[_], _], G[_], A[_], B[_]] =
   [x] => (A[x], H[[y] =>> (HCofree[H, A, y], B[y]), x]) => G[B[x]]
 
+def paraOriginals[H[_[_], _], A[_], B[_], I](
+  node: H[[y] =>> (HCofree[H, A, y], B[y]), I]
+)(using hf: HFunctor[H]): H[[y] =>> HCofree[H, A, y], I] =
+  hf.map(node)(new FunctionK[[y] =>> (HCofree[H, A, y], B[y]), [y] =>> HCofree[H, A, y]] {
+    def apply[Y](p: (HCofree[H, A, Y], B[Y])): HCofree[H, A, Y] = p._1
+  })
+
+def paraRecursed[H[_[_], _], A[_], B[_], I](
+  node: H[[y] =>> (HCofree[H, A, y], B[y]), I]
+)(using hf: HFunctor[H]): H[B, I] =
+  hf.map(node)(new FunctionK[[y] =>> (HCofree[H, A, y], B[y]), B] {
+    def apply[Y](p: (HCofree[H, A, Y], B[Y])): B[Y] = p._2
+  })
+
 extension [H[_[_], _], A[_], I](self: HCofree[H, A, I]) {
   def cataAnn[B[_]](alg: HCofreeAlgebra[H, A, B])(using hf: HFunctor[H]): B[I] = {
     val mapped = hf.map(self.tail)(new FunctionK[[x] =>> HCofree[H, A, x], B] {

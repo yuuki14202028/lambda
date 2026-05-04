@@ -183,12 +183,16 @@ def destructForAll(t: TypeRec[Type]): Option[(TypeVariable, TypeRec[Type])] = t.
   case _ => None
 }
 
-def freeTypeVars(t: TypeRec[Type]): Set[TypeVariable] = t.projectT match {
-  case AST.Primitive(_) => Set.empty
-  case AST.TypeVar(variable) => Set(variable)
-  case AST.Arrow(from, to) => freeTypeVars(from) ++ freeTypeVars(to)
-  case AST.ForAll(variable, body) => freeTypeVars(body) - variable
-  case AST.TypeApp(function, argument) => freeTypeVars(function) ++ freeTypeVars(argument)
+def freeTypeVars(t: TypeRec[Type]): Set[TypeVariable] = {
+  type FV[I] = Set[TypeVariable]
+  val alg: HCofreeAlgebra[AST, TypeAnn, FV] = [x] => (_, node) => node match {
+    case AST.TypeVar(v) => Set(v)
+    case AST.ForAll(v, body) => body - v
+    case AST.Arrow(from, to) => from ++ to
+    case AST.TypeApp(f, a) => f ++ a
+    case _ => Set.empty
+  }
+  t.cataAnn(alg)
 }
 
 private def freshTypeVariable(base: TypeVariable, used: Set[TypeVariable]): TypeVariable = {
@@ -227,20 +231,21 @@ def substType(target: TypeVariable, replace: TypeRec[Type], in: TypeRec[Type]): 
 }
 
 def sameType(left: TypeRec[Type], right: TypeRec[Type]): Boolean = {
-  def loop(l: TypeRec[Type], r: TypeRec[Type], bound: Map[TypeVariable, TypeVariable]): Boolean = (l.projectT, r.projectT) match {
-    case (AST.Primitive(ln), AST.Primitive(rn)) => ln == rn
-    case (AST.TypeVar(lv), AST.TypeVar(rv)) =>
-      bound.get(lv) match {
-        case Some(boundRight) => boundRight == rv
-        case None => !bound.values.toSet.contains(rv) && lv == rv
-      }
-    case (AST.Arrow(lf, lt), AST.Arrow(rf, rt)) => loop(lf, rf, bound) && loop(lt, rt, bound)
-    case (AST.ForAll(lv, lb), AST.ForAll(rv, rb)) => loop(lb, rb, bound + (lv -> rv))
-    case (AST.TypeApp(lf, la), AST.TypeApp(rf, ra)) => loop(lf, rf, bound) && loop(la, ra, bound)
-    case _ => false
-  }
-
-  loop(left, right, Map.empty)
+  type Eq[I] = Map[TypeVariable, TypeVariable] => TypeRec[I] => Boolean
+  val alg: HCofreeAlgebra[AST, TypeAnn, Eq] = [x] => (_, node) => bound => other =>
+    (node, other.tail) match {
+      case (AST.Primitive(ln), AST.Primitive(rn)) => ln == rn
+      case (AST.TypeVar(lv), AST.TypeVar(rv)) =>
+        bound.get(lv) match {
+          case Some(b) => b == rv
+          case None => !bound.values.toSet.contains(rv) && lv == rv
+        }
+      case (AST.Arrow(lf, lt), AST.Arrow(rf, rt)) => lf(bound)(rf) && lt(bound)(rt)
+      case (AST.ForAll(lv, lb), AST.ForAll(rv, rb)) => lb(bound + (lv -> rv))(rb)
+      case (AST.TypeApp(lf, la), AST.TypeApp(rf, ra)) => lf(bound)(rf) && la(bound)(ra)
+      case _ => false
+    }
+  left.cataAnn(alg)(Map.empty)(right)
 }
 
 def isNumericType(t: TypeRec[Type]): Boolean = {
@@ -251,11 +256,18 @@ def isEquatableType(t: TypeRec[Type]): Boolean = {
   isNumericType(t) || sameType(t, boolTypeT)
 }
 
-def collectTypeApps(t: TypeRec[Type]): (TypeRec[Type], Seq[TypeRec[Type]]) = t.projectT match {
-  case AST.TypeApp(function, argument) =>
-    val (head, args) = collectTypeApps(function)
-    (head, args :+ argument)
-  case _ => (t, Seq.empty)
+def collectTypeApps(t: TypeRec[Type]): (TypeRec[Type], Seq[TypeRec[Type]]) = {
+  type Collected[I] = (TypeRec[I], Seq[TypeRec[Type]])
+  val alg: HCofreeParaAlgebra[AST, TypeAnn, Collected] = [x] => (ann, node) => node match {
+    case AST.TypeApp(function, argument) =>
+      val (_, (head, args)) = function
+      val (origArg, _) = argument
+      (head, args :+ origArg)
+    case _ =>
+      val self = HCofree[AST, TypeAnn, x](ann, paraOriginals[AST, TypeAnn, Collected, x](node))
+      (self, Seq.empty)
+  }
+  t.paraAnn(alg)
 }
 
 def applyTypeConstructor(head: TypeVariable, args: Seq[TypeRec[Type]]): TypeRec[Type] =
