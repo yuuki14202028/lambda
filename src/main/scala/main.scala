@@ -14,13 +14,20 @@ def main(): Unit = {
 
     case Right(ast) =>
       println(ast.show)
-      Analyser.validate(ast) match {
+      val typed = Analyser.validate(ast) match {
         case Left(err) =>
           Console.err.println(s"Type error: $err")
           sys.exit(1)
-        case Right(_) => ()
+        case Right(typed) => typed
       }
-      val asm = Generator.generate(ast)
+      val encoded = ChurchEncoder.encode(typed) match {
+        case Left(err) =>
+          Console.err.println(s"Encode error: $err")
+          sys.exit(1)
+        case Right(encoded) => encoded
+      }
+      println(eraseAnn(encoded).show)
+      val asm = Generator.generate(eraseAnn[AST.Program.type](encoded))
       val outDir = Paths.get("build")
       Files.createDirectories(outDir)
       Files.writeString(outDir.resolve("out.s"), asm)

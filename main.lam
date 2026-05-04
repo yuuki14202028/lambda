@@ -2,36 +2,35 @@ let put: Int → Int = foreign[Int → Int] put_char in
 let print: Int → Int = foreign[Int → Int] print_int in
 let puts: String → Int = foreign[String → Int] puts in
 
-type Option[A] = ∀R. R → (A → R) → R in
-
-let none[A]: Option[A] =
-  let run[R](fst: R)(snd: A → R): R = fst in
-  run
-in
-
-let some[A](v: A): Option[A] =
-  let run[R](fst: R)(snd: A → R): R = snd(v) in
-  run
+data Option[A] =
+  | None
+  | Some(A)
 in
 
 let printOption(option: Option[Int]): Int =
-  let l(): Int = puts("None") in
-  let r(value: Int)(): Int =
-    print(value)
-  in
-  option[() → Int](l)(r)()
+  match option with
+    | None -> puts("None!")
+    | Some(n) -> print(n)
 in
 
+let map[T][U](option: Option[T])(f: T → U): Option[U] =
+  match option with
+    | None -> None[U]
+    | Some(n) -> Some[U](f(n))
+in
+
+let add(x: Int)(y: Int): Int = x + y in
+
 let someValue: Option[Int] =
-  some[Int](42)
+  Some[Int](42)
 in
 
 let noneValue: Option[Int] =
-  none[Int]
+  None[Int]
 in
 
 {
-  printOption(someValue);
-  printOption(noneValue);
+  printOption(map[Int][Int](someValue)(add(1)));
+  printOption(map[Int][Int](noneValue)(add(1)));
   0
 }

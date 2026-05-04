@@ -1,206 +1,293 @@
 package com.yuuki14202028
 
-import cats.syntax.traverse._
+import cats.syntax.all._
 import cats.data.ReaderT
-import cats.implicits.catsSyntaxTuple2Semigroupal
 
 object Analyser {
 
-  case class TypeAlias(params: Seq[TypeVariable], body: Rec[Type])
-  case class Env(values: Map[Variable, Rec[Type]], typeVars: Set[TypeVariable], typeAliases: Map[TypeVariable, TypeAlias])
-  type EitherS[A] = Either[String, A]
-  type TC[I] = ReaderT[EitherS, Env, TypeRec[I]]
+  case class TypeAlias(params: Seq[TypeVariable], body: TypeRec[Type])
+  case class Env(
+      values: Map[Variable, TypeRec[Type]],
+      typeVars: Set[TypeVariable],
+      typeAliases: Map[TypeVariable, TypeAlias],
+      dataTypes: Map[TypeVariable, DataDef],
+      constructors: Map[Variable, ConstructorDef]
+  )
+  private type EitherS[A] = Either[String, A]
+  private type Check[A] = ReaderT[EitherS, Env, A]
+  private type TC[I] = Check[TypeRec[I]]
 
-  private def expect(expected: Rec[Type], actual: Rec[Type]): EitherS[Unit] = {
-    Either.cond(sameType(expected, actual), (), s"Type mismatch: expected ${expected.show}, actual ${actual.show}")
+  private def fail[A](msg: String): Check[A] = ReaderT.liftF(Left(msg))
+  private def guard(cond: Boolean, msg: => String): Check[Unit] = ReaderT.liftF(Either.cond(cond, (), msg))
+  private def lift[A](e: EitherS[A]): Check[A] = ReaderT.liftF(e)
+  private val ask: Check[Env] = ReaderT.ask[EitherS, Env]
+  private def okT[I](t: TypeRec[I]): TC[I] = ReaderT.pure(t)
+
+  private def expect(expected: TypeRec[Type], actual: TypeRec[Type]): Check[Unit] =
+    guard(sameType(expected, actual), s"Type mismatch: expected ${expected.show}, actual ${actual.show}")
+
+  private def expectNumeric(actual: TypeRec[Type]): Check[Unit] =
+    guard(isNumericType(actual), s"Type mismatch: expected Int or Char, actual ${actual.show}")
+
+  private def expectEquatable(actual: TypeRec[Type]): Check[Unit] =
+    guard(isEquatableType(actual), s"Type mismatch: expected Int, Char, or Bool, actual ${actual.show}")
+
+  private def expectForeignType(t: TypeRec[Type]): Check[Unit] = destructArrow(t) match {
+    case Some((_, to)) if destructArrow(to).isEmpty => ReaderT.pure(())
+    case _ => fail(s"Foreign function must have exactly one argument: ${t.show}")
   }
 
-  private def expectNumeric(actual: Rec[Type]): EitherS[Unit] = {
-    Either.cond(isNumericType(actual), (), s"Type mismatch: expected Int or Char, actual $actual")
+  private def dataResultType(owner: TypeVariable, params: Seq[TypeVariable]): TypeRec[Type] =
+    applyTypeConstructor(owner, params.map(typeVarT))
+
+  private def constructorType(owner: TypeVariable, params: Seq[TypeVariable], fields: Seq[TypeRec[Type]]): TypeRec[Type] = {
+    val result = dataResultType(owner, params)
+    val functionType = fields.foldRight(result)(arrowT)
+    params.foldRight(functionType)(forallTypeT)
   }
 
-  private def expectEquatable(actual: Rec[Type]): EitherS[Unit] = {
-    Either.cond(isEquatableType(actual), (), s"Type mismatch: expected Int, Char, or Bool, actual $actual")
+  private case class TypeSpine(head: TypeRec[Type], args: Seq[Expand[Type]]) {
+    def append(arg: Expand[Type]): TypeSpine = copy(args = args :+ arg)
   }
+  private case class TypeExpansion[I](value: EitherS[TypeRec[I]], spine: Option[TypeSpine] = None)
+  private type Expand[I] = Env => TypeExpansion[I]
 
-  private def expectForeignType(t: Rec[Type]): EitherS[Unit] = {
-    destructArrow(t) match {
-      case Some((_, to)) if destructArrow(to).isEmpty => Right(())
-      case _ => Left(s"Foreign function must have exactly one argument: ${t.show}")
-    }
-  }
+  private def rebuild[I](ann: TypeAnn[I], node: AST[[y] =>> (TypeRec[y], Expand[y]), I], env: Env): EitherS[TypeRec[I]] =
+    summon[HTraverse[AST]]
+      .traverse(node)([y] => (child: (TypeRec[y], Expand[y])) => child._2(env).value)
+      .map(HCofree(ann, _))
 
-  private def collectTypeApps(t: Rec[Type]): (Rec[Type], Seq[Rec[Type]]) = t.unfix match {
-    case AST.TypeApp(function, argument) =>
-      val (head, args) = collectTypeApps(function)
-      (head, args :+ argument)
-    case _ => (t, Seq.empty)
-  }
+  private def typeNameSpine(variable: TypeVariable): TypeSpine =
+    TypeSpine(typeVarT(variable), Seq.empty)
 
-  private def expandType(t: Rec[Type], env: Env): EitherS[Rec[Type]] = t.unfix match {
-    case AST.Primitive("Int") => Right(intType)
-    case AST.Primitive("Char") => Right(charType)
-    case AST.Primitive("String") => Right(stringType)
-    case AST.Primitive("Bool") => Right(boolType)
-    case AST.Primitive("Unit") => Right(unitType)
-    case AST.Primitive(name) => Left(s"Primitive type $name is not defined")
+  private def arityError(kind: String, variable: TypeVariable, expected: Int, actual: Int): EitherS[Nothing] =
+    Left(s"$kind ${variable.name} expects $expected arguments, got $actual")
 
-    case AST.TypeVar(variable) if env.typeVars.contains(variable) => Right(typeVar(variable))
-    case AST.TypeVar(variable) =>
-      env.typeAliases.get(variable) match {
-        case Some(TypeAlias(params, body)) if params.isEmpty => expandType(body, env)
-        case Some(TypeAlias(params, _)) => Left(s"Type alias ${variable.name} expects ${params.length} arguments, got 0")
+  private def expectArity[A](kind: String, variable: TypeVariable, expected: Int, actual: Int)(value: => EitherS[A]): EitherS[A] =
+    if (expected == actual) value else arityError(kind, variable, expected, actual)
+
+  private def expandDefinedType(variable: TypeVariable, args: Seq[Expand[Type]], env: Env): EitherS[TypeRec[Type]] =
+    env.typeAliases.get(variable) match {
+      case Some(TypeAlias(params, body)) => expectArity("Type alias", variable, params.length, args.length) {
+        args.toList.traverse(arg => arg(env).value).map(expandedArgs => substMany(params, expandedArgs, body))
+      }
+      case None => env.dataTypes.get(variable) match {
+        case Some(DataDef(params, _)) => expectArity("Data type", variable, params.length, args.length) {
+          args.toList.traverse(arg => arg(env).value).map(expandedArgs => applyTypeConstructor(variable, expandedArgs))
+        }
         case None => Left(s"Type variable ${variable.name} is not defined")
       }
+    }
 
-    case AST.Arrow(from, to) => for {
-      expandedFrom <- expandType(from, env)
-      expandedTo <- expandType(to, env)
-    } yield arrow(expandedFrom, expandedTo)
+  private def expandTypeName(variable: TypeVariable, env: Env): EitherS[TypeRec[Type]] =
+    if (env.typeVars.contains(variable)) Right(typeVarT(variable))
+    else expandDefinedType(variable, Seq.empty, env)
 
-    case AST.ForAll(variable, body) => for {
-      _ <- Either.cond(!env.typeVars.contains(variable), (), s"Type variable ${variable.name} is already defined")
-      expandedBody <- expandType(body, env.copy(typeVars = env.typeVars + variable))
-    } yield forallType(variable, expandedBody)
-
-    case AST.TypeApp(_, _) =>
-      val (head, args) = collectTypeApps(t)
-      head.unfix match {
-        case AST.TypeVar(variable) if !env.typeVars.contains(variable) =>
-          env.typeAliases.get(variable) match {
-            case Some(TypeAlias(params, body)) if params.length == args.length =>
-              for {
-                expandedArgs <- args.toList.traverse(arg => expandType(arg, env))
-                substituted = params.zip(expandedArgs).foldLeft(body) { case (acc, (param, arg)) =>
-                  substType(param, arg, acc)
-                }
-                expanded <- expandType(substituted, env)
-              } yield expanded
-            case Some(TypeAlias(params, _)) =>
-              Left(s"Type alias ${variable.name} expects ${params.length} arguments, got ${args.length}")
-            case None =>
-              Left(s"Type variable ${variable.name} is not defined")
-          }
-        case _ =>
-          Left(s"Type application is not supported: ${t.show}")
+  private def expandTypeSpine(spine: Option[TypeSpine], self: TypeRec[Type], env: Env): EitherS[TypeRec[Type]] =
+    spine match {
+      case Some(TypeSpine(head, args)) => head.projectT match {
+        case AST.TypeVar(variable) if !env.typeVars.contains(variable) => expandDefinedType(variable, args, env)
+        case _ => Left(s"Type application is not supported: ${self.show}")
       }
+      case None => Left(s"Type application is not supported: ${self.show}")
+    }
+
+  private val expandAlg: HCofreeParaAlgebra[AST, TypeAnn, Expand] = [x] => (ann, node) => env => node match {
+    case AST.TypeVar(variable) =>
+      TypeExpansion(expandTypeName(variable, env), Some(typeNameSpine(variable)))
+
+    case AST.ForAll(variable, body) =>
+      val value = for {
+        _ <- Either.cond(!env.typeVars.contains(variable), (), s"Type variable ${variable.name} is already defined")
+        eb <- body._2(env.copy(typeVars = env.typeVars + variable)).value
+      } yield forallTypeT(variable, eb)
+      TypeExpansion(value)
+
+    case AST.TypeApp(function, argument) =>
+      val self = HCofree(ann, paraOriginals(node))
+      val spine = function._2(env).spine.map(_.append(argument._2))
+      TypeExpansion(expandTypeSpine(spine, self, env), spine)
+
+    case ast => TypeExpansion(rebuild(ann, ast, env))
   }
 
-  private def expandCheckedType(types: TypeRec[Type]): ReaderT[EitherS, Env, Rec[Type]] = for {
-    env <- ReaderT.ask[EitherS, Env]
-    expanded <- ReaderT.liftF[EitherS, Env, Rec[Type]](expandType(eraseAnn[Type](types), env))
-  } yield expanded
+  private def expandType(t: TypeRec[Type], env: Env): EitherS[TypeRec[Type]] = {
+    t.paraAnn(expandAlg)(env).value
+  }
+
+  private def expandChecked(types: TypeRec[Type]): Check[TypeRec[Type]] =
+    ask.flatMap(env => lift(expandType(types, env)))
 
   private val tcAlg: Algebra[AST, TC] = [x] => (node: AST[TC, x]) => node match {
 
-    case AST.Program(body) => body.traverse(identity).map(programT)
+    case AST.Program(body) => body.toList.traverse(identity).map(programT)
 
     case AST.Abs(variable, types, body) => for {
       typedTypes <- types
-      paramType <- expandCheckedType(typedTypes)
-      typedBody <- body.local((env: Env) => env.copy(values = env.values + (variable -> paramType)))
-      resultType = arrow(paramType, typeOf(typedBody))
+      paramType <- expandChecked(typedTypes)
+      typedBody <- body.local((e: Env) => e.copy(values = e.values + (variable -> paramType)))
+      resultType = arrowT(paramType, typeOf(typedBody))
     } yield absT(variable, resultType, typedTypes, typedBody)
 
     case AST.TyAbs(variable, body) => for {
-      env <- ReaderT.ask[EitherS, Env]
-      _ <- ReaderT.liftF[EitherS, Env, Unit](
-        Either.cond(!env.typeVars.contains(variable), (), s"Type variable ${variable.name} is already defined")
-      )
-      typedBody <- body.local((env: Env) => env.copy(typeVars = env.typeVars + variable))
-      resultType = forallType(variable, typeOf(typedBody))
+      env <- ask
+      _ <- guard(!env.typeVars.contains(variable), s"Type variable ${variable.name} is already defined")
+      typedBody <- body.local((e: Env) => e.copy(typeVars = e.typeVars + variable))
+      resultType = forallTypeT(variable, typeOf(typedBody))
     } yield tyAbsT(variable, resultType, typedBody)
 
     case AST.Let(variable, types, value, body) => for {
       typedTypes <- types
-      declaredType <- expandCheckedType(typedTypes)
+      declaredType <- expandChecked(typedTypes)
       typedValue <- value
-      _ <- ReaderT.liftF(expect(declaredType, typeOf(typedValue)))
-      typedBody <- body.local((env: Env) => env.copy(values = env.values + (variable -> declaredType)))
+      _ <- expect(declaredType, typeOf(typedValue))
+      typedBody <- body.local((e: Env) => e.copy(values = e.values + (variable -> declaredType)))
       resultType = typeOf(typedBody)
     } yield letT(variable, resultType, typedTypes, typedValue, typedBody)
 
     case AST.LetRec(variable, types, value, body) => for {
       typedTypes <- types
-      declaredType <- expandCheckedType(typedTypes)
-      typedValue <- value.local((env: Env) => env.copy(values = env.values + (variable -> declaredType)))
-      _ <- ReaderT.liftF(expect(declaredType, typeOf(typedValue)))
-      typedBody <- body.local((env: Env) => env.copy(values = env.values + (variable -> declaredType)))
+      declaredType <- expandChecked(typedTypes)
+      typedValue <- value.local((e: Env) => e.copy(values = e.values + (variable -> declaredType)))
+      _ <- expect(declaredType, typeOf(typedValue))
+      typedBody <- body.local((e: Env) => e.copy(values = e.values + (variable -> declaredType)))
       resultType = typeOf(typedBody)
     } yield letRecT(variable, resultType, typedTypes, typedValue, typedBody)
 
     case AST.TypeLet(variable, params, alias, body) => for {
-      env <- ReaderT.ask[EitherS, Env]
-      _ <- ReaderT.liftF[EitherS, Env, Unit](
-        Either.cond(
-          !env.typeVars.contains(variable) && !env.typeAliases.contains(variable),
-          (),
-          s"Type alias ${variable.name} is already defined"
-        )
+      env <- ask
+      _ <- guard(
+        !env.typeVars.contains(variable) && !env.typeAliases.contains(variable) && !env.dataTypes.contains(variable),
+        s"Type alias ${variable.name} is already defined"
       )
-      _ <- ReaderT.liftF[EitherS, Env, Unit](
-        Either.cond(params.distinct.length == params.length, (), s"Type alias ${variable.name} has duplicate parameters")
-      )
-      _ <- ReaderT.liftF[EitherS, Env, Unit](
-        Either.cond(params.forall(p => !env.typeVars.contains(p)), (), s"Type alias ${variable.name} has a parameter that is already defined")
-      )
-      typedAlias <- alias.local((env: Env) => env.copy(typeVars = env.typeVars ++ params))
-      expandedAlias <- ReaderT.liftF[EitherS, Env, Rec[Type]](
-        expandType(eraseAnn[Type](typedAlias), env.copy(typeVars = env.typeVars ++ params))
-      )
-      typedBody <- body.local((env: Env) =>
-        env.copy(typeAliases = env.typeAliases + (variable -> TypeAlias(params, expandedAlias)))
-      )
+      _ <- guard(params.distinct.length == params.length, s"Type alias ${variable.name} has duplicate parameters")
+      _ <- guard(params.forall(p => !env.typeVars.contains(p)), s"Type alias ${variable.name} has a parameter that is already defined")
+      typedAlias <- alias.local((e: Env) => e.copy(typeVars = e.typeVars ++ params))
+      expandedAlias <- lift(expandType(typedAlias, env.copy(typeVars = env.typeVars ++ params)))
+      typedBody <- body.local((e: Env) => e.copy(typeAliases = e.typeAliases + (variable -> TypeAlias(params, expandedAlias))))
       resultType = typeOf(typedBody)
     } yield typeLetT(variable, params, resultType, typedAlias, typedBody)
+
+    case AST.DataLet(variable, params, constructors, body) => for {
+      env <- ask
+      _ <- guard(
+        !env.typeVars.contains(variable) && !env.typeAliases.contains(variable) && !env.dataTypes.contains(variable),
+        s"Data type ${variable.name} is already defined"
+      )
+      _ <- guard(params.distinct.length == params.length, s"Data type ${variable.name} has duplicate parameters")
+      _ <- guard(params.forall(p => !env.typeVars.contains(p)), s"Data type ${variable.name} has a parameter that is already defined")
+      constructorNames = constructors.map(_.name)
+      _ <- guard(constructorNames.distinct.length == constructorNames.length, s"Data type ${variable.name} has duplicate constructors")
+      _ <- guard(
+        constructorNames.forall(name => !env.values.contains(name) && !env.constructors.contains(name)),
+        s"Data type ${variable.name} has a constructor that is already defined"
+      )
+      placeholder = DataDef(params, Seq.empty)
+      fieldEnv = env.copy(typeVars = env.typeVars ++ params, dataTypes = env.dataTypes + (variable -> placeholder))
+      typedConstructors <- constructors.toList.traverse { c =>
+        c.fields.toList.traverse(field => field.local((_: Env) => fieldEnv)).map(fs => DataConstructor(c.name, fs))
+      }
+      expandedConstructors <- lift {
+        typedConstructors.zipWithIndex.toList.traverse { case (c, tag) =>
+          c.fields.toList.traverse(field => expandType(field, fieldEnv)).map(fs => ConstructorDef(c.name, variable, fs, tag))
+        }
+      }
+      dataDef = DataDef(params, expandedConstructors)
+      constructorDefs = constructorNames.zip(expandedConstructors).toMap
+      constructorTypes = constructorNames.zip(expandedConstructors).map { case (name, c) =>
+        name -> constructorType(variable, params, c.fields)
+      }.toMap
+      typedBody <- body.local((e: Env) => e.copy(
+        values = e.values ++ constructorTypes,
+        dataTypes = e.dataTypes + (variable -> dataDef),
+        constructors = e.constructors ++ constructorDefs
+      ))
+      resultType = typeOf(typedBody)
+    } yield dataLetT(variable, params, resultType, typedConstructors, typedBody)
+
+    case AST.Match(scrutinee, cases) => for {
+      env <- ask
+      typedScrutinee <- scrutinee
+      dataApp <- lift(dataTypeApplication(typeOf(typedScrutinee), env.dataTypes)(_.params))
+      (dataName, dataDef, typeArgs) = dataApp
+      caseNames = cases.map(_.constructor)
+      _ <- guard(caseNames.distinct.length == caseNames.length, s"Match has duplicate cases")
+      expectedConstructors <- lift {
+        dataDef.constructors.toList.traverse { cdef =>
+          env.constructors.collectFirst { case (name, c) if c == cdef => name }
+            .toRight(s"Constructor for data type ${dataName.name} is not defined")
+        }
+      }
+      _ <- {
+        val missing = expectedConstructors.filterNot(caseNames.contains)
+        val extra = caseNames.filterNot(expectedConstructors.contains)
+        guard(
+          missing.isEmpty && extra.isEmpty,
+          s"Non-exhaustive or invalid match: missing ${missing.map(_.name).mkString(", ")}, invalid ${extra.map(_.name).mkString(", ")}"
+        )
+      }
+      typedCases <- cases.toList.traverse { matchCase =>
+        val cdef = env.constructors(matchCase.constructor)
+        val fieldTypes = dataDef.params.zip(typeArgs).foldLeft(cdef.fields) { case (fields, (param, arg)) =>
+          fields.map(field => substType(param, arg, field))
+        }
+        for {
+          _ <- guard(
+            matchCase.binders.length == fieldTypes.length,
+            s"Constructor ${matchCase.constructor.name} expects ${fieldTypes.length} binders, got ${matchCase.binders.length}"
+          )
+          _ <- guard(matchCase.binders.distinct.length == matchCase.binders.length, s"Match case ${matchCase.constructor.name} has duplicate binders")
+          binderTypes = matchCase.binders.zip(fieldTypes).toMap
+          typedBody <- matchCase.body.local((e: Env) => e.copy(values = e.values ++ binderTypes))
+        } yield MatchCase(matchCase.constructor, matchCase.binders, typedBody)
+      }
+      resultType <- typedCases.headOption match {
+        case Some(first) => typedCases.tail.traverse(c => expect(typeOf(first.body), typeOf(c.body))).as(typeOf(first.body))
+        case None => fail("Match must have at least one case")
+      }
+    } yield matchExprT(resultType, typedScrutinee, typedCases)
 
     case AST.App(function, argument) => for {
       typedFunction <- function
       typedArgument <- argument
-      resultType <- ReaderT.liftF[EitherS, Env, Rec[Type]] {
-        destructArrow(typeOf(typedFunction)) match {
-          case Some((from, to)) if sameType(from, typeOf(typedArgument)) => Right(to)
-          case Some((from, _)) => Left(s"Type mismatch: expected ${from.show}, actual ${typeOf(typedArgument).show}")
-          case None => Left(s"Not a function: ${typeOf(typedFunction).show}")
-        }
+      resultType <- destructArrow(typeOf(typedFunction)) match {
+        case Some((from, to)) if sameType(from, typeOf(typedArgument)) => okT(to)
+        case Some((from, _)) => fail(s"Type mismatch: expected ${from.show}, actual ${typeOf(typedArgument).show}")
+        case None => fail(s"Not a function: ${typeOf(typedFunction).show}")
       }
     } yield appT(resultType, typedFunction, typedArgument)
 
     case AST.TyApp(function, argument) => for {
       typedFunction <- function
       typedArgument <- argument
-      argumentType <- expandCheckedType(typedArgument)
-      resultType <- ReaderT.liftF[EitherS, Env, Rec[Type]] {
-        destructForAll(typeOf(typedFunction)) match {
-          case Some((variable, bodyType)) => Right(substType(variable, argumentType, bodyType))
-          case None => Left(s"Not a polymorphic function: ${typeOf(typedFunction).show}")
-        }
+      argumentType <- expandChecked(typedArgument)
+      resultType <- destructForAll(typeOf(typedFunction)) match {
+        case Some((variable, bodyType)) => okT(substType(variable, argumentType, bodyType))
+        case None => fail(s"Not a polymorphic function: ${typeOf(typedFunction).show}")
       }
     } yield tyAppT(resultType, typedFunction, typedArgument)
 
     case AST.Foreign(value, types) => for {
       typedTypes <- types
-      declaredType <- expandCheckedType(typedTypes)
-      _ <- ReaderT.liftF(expectForeignType(declaredType))
+      declaredType <- expandChecked(typedTypes)
+      _ <- expectForeignType(declaredType)
     } yield foreignT(value, declaredType, typedTypes)
 
     case AST.Var(value) => for {
-      env <- ReaderT.ask[EitherS, Env]
-      t <- ReaderT.liftF[EitherS, Env, Rec[Type]](
-        env.values.get(value).toRight(s"Variable $value is not defined")
-      )
+      env <- ask
+      t <- lift(env.values.get(value).toRight(s"Variable $value is not defined"))
     } yield varrType(value, t)
 
-    case AST.Num(value) => ReaderT.pure(numT(value, intType))
-    case AST.Char(value) => ReaderT.pure(charT(value, charType))
-    case AST.StringLit(value) => ReaderT.pure(stringLitT(value, stringType))
-    case AST.Bool(value) => ReaderT.pure(boolT(value, boolType))
-    case AST.UnitLit() => ReaderT.pure(unitLitT(unitType))
+    case AST.Num(value) => okT(numT(value, intTypeT))
+    case AST.Char(value) => okT(charT(value, charTypeT))
+    case AST.StringLit(value) => okT(stringLitT(value, stringTypeT))
+    case AST.Bool(value) => okT(boolT(value, boolTypeT))
+    case AST.UnitLit() => okT(unitLitT(unitTypeT))
 
     case AST.Block(discarded, result) => for {
       typedDiscarded <- discarded.toList.traverse(identity)
       typedResult <- result.traverse(identity)
-      resultType = typedResult.map(typeOf).getOrElse(unitType)
+      resultType = typedResult.map(typeOf).getOrElse(unitTypeT)
     } yield blockT(resultType, typedDiscarded, typedResult)
 
     case AST.BinOp(op, left, right) => for {
@@ -208,25 +295,25 @@ object Analyser {
       typedRight <- right
       leftType = typeOf(typedLeft)
       rightType = typeOf(typedRight)
-      _ <- ReaderT.liftF(op match {
+      _ <- op match {
         case BinOps.Add | BinOps.Sub | BinOps.Mul | BinOps.Div => expectNumeric(leftType)
         case BinOps.Eq | BinOps.Neq => expectEquatable(leftType)
         case BinOps.Lt | BinOps.Leq | BinOps.Gt | BinOps.Geq => expectNumeric(leftType)
-      })
-      _ <- ReaderT.liftF(expect(leftType, rightType))
+      }
+      _ <- expect(leftType, rightType)
       resultType = op match {
         case BinOps.Add | BinOps.Sub | BinOps.Mul | BinOps.Div => leftType
-        case BinOps.Eq | BinOps.Neq | BinOps.Lt | BinOps.Leq | BinOps.Gt | BinOps.Geq => boolType
+        case BinOps.Eq | BinOps.Neq | BinOps.Lt | BinOps.Leq | BinOps.Gt | BinOps.Geq => boolTypeT
       }
     } yield binopT(op, resultType, typedLeft, typedRight)
 
     case AST.UnaryOp(op, body) => for {
       typedBody <- body
       bodyType = typeOf(typedBody)
-      _ <- ReaderT.liftF(op match {
+      _ <- op match {
         case UnaryOps.Neg => expectNumeric(bodyType)
-        case UnaryOps.Not => expect(boolType, bodyType)
-      })
+        case UnaryOps.Not => expect(boolTypeT, bodyType)
+      }
     } yield unopT(op, bodyType, typedBody)
 
     case AST.If(cond, thenBranch, elseBranch) => for {
@@ -236,39 +323,32 @@ object Analyser {
       condType = typeOf(typedCond)
       thenType = typeOf(typedThen)
       elseType = typeOf(typedElse)
-      _ <- ReaderT.liftF(expect(boolType, condType))
-      _ <- ReaderT.liftF(expect(thenType, elseType))
+      _ <- expect(boolTypeT, condType)
+      _ <- expect(thenType, elseType)
     } yield ifT(thenType, typedCond, typedThen, typedElse)
 
-    case AST.Primitive("Int") => ReaderT.pure(primitiveT("Int"))
-    case AST.Primitive("Char") => ReaderT.pure(primitiveT("Char"))
-    case AST.Primitive("String") => ReaderT.pure(primitiveT("String"))
-    case AST.Primitive("Bool") => ReaderT.pure(primitiveT("Bool"))
-    case AST.Primitive("Unit") => ReaderT.pure(primitiveT("Unit"))
-    case AST.Primitive(name) => ReaderT.liftF(Left(s"Primitive type $name is not defined"))
+    case AST.Primitive(name) => name match {
+      case "Int" | "Char" | "String" | "Bool" | "Unit" => okT(primitiveT(name))
+      case _ => fail(s"Primitive type $name is not defined")
+    }
     case AST.TypeVar(variable) => for {
-      env <- ReaderT.ask[EitherS, Env]
-      _ <- ReaderT.liftF[EitherS, Env, Unit](
-        Either.cond(
-          env.typeVars.contains(variable) || env.typeAliases.contains(variable),
-          (),
-          s"Type variable ${variable.name} is not defined"
-        )
+      env <- ask
+      _ <- guard(
+        env.typeVars.contains(variable) || env.typeAliases.contains(variable) || env.dataTypes.contains(variable),
+        s"Type variable ${variable.name} is not defined"
       )
     } yield typeVarT(variable)
     case AST.Arrow(from, to) => (from, to).mapN(arrowT)
     case AST.ForAll(variable, body) => for {
-      env <- ReaderT.ask[EitherS, Env]
-      _ <- ReaderT.liftF[EitherS, Env, Unit](
-        Either.cond(!env.typeVars.contains(variable), (), s"Type variable ${variable.name} is already defined")
-      )
-      typedBody <- body.local((env: Env) => env.copy(typeVars = env.typeVars + variable))
+      env <- ask
+      _ <- guard(!env.typeVars.contains(variable), s"Type variable ${variable.name} is already defined")
+      typedBody <- body.local((e: Env) => e.copy(typeVars = e.typeVars + variable))
     } yield forallTypeT(variable, typedBody)
     case AST.TypeApp(function, argument) => (function, argument).mapN(typeAppT)
   }
 
   def validate(prog: Rec[AST.Program.type]): EitherS[TypeRec[AST.Program.type]] = {
-    prog.cata(tcAlg).run(Env(Map.empty, Set.empty, Map.empty))
+    prog.cata(tcAlg).run(Env(Map.empty, Set.empty, Map.empty, Map.empty, Map.empty))
   }
 
 }
