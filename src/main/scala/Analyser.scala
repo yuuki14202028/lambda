@@ -15,9 +15,9 @@ object Analyser {
       dataTypes: Map[TypeVariable, DataTypeDef],
       constructors: Map[Variable, ConstructorDef]
   )
-  type EitherS[A] = Either[String, A]
-  type Check[A] = ReaderT[EitherS, Env, A]
-  type TC[I] = Check[TypeRec[I]]
+  private type EitherS[A] = Either[String, A]
+  private type Check[A] = ReaderT[EitherS, Env, A]
+  private type TC[I] = Check[TypeRec[I]]
 
   private def fail[A](msg: String): Check[A] = ReaderT.liftF(Left(msg))
   private def guard(cond: Boolean, msg: => String): Check[Unit] = ReaderT.liftF(Either.cond(cond, (), msg))
@@ -46,19 +46,6 @@ object Analyser {
     val result = dataResultType(owner, params)
     val functionType = fields.foldRight(result)(arrowT)
     params.foldRight(functionType)(forallTypeT)
-  }
-
-  private def dataTypeApplication(t: TypeRec[Type], env: Env): EitherS[(TypeVariable, DataTypeDef, Seq[TypeRec[Type]])] = {
-    val (head, args) = collectTypeApps(t)
-    head.projectT match {
-      case AST.TypeVar(variable) =>
-        env.dataTypes.get(variable) match {
-          case Some(dataDef) if dataDef.params.length == args.length => Right((variable, dataDef, args))
-          case Some(dataDef) => Left(s"Data type ${variable.name} expects ${dataDef.params.length} arguments, got ${args.length}")
-          case None => Left(s"Not a data type: ${t.show}")
-        }
-      case _ => Left(s"Not a data type: ${t.show}")
-    }
   }
 
   private def expandType(t: TypeRec[Type], env: Env): EitherS[TypeRec[Type]] = t.projectT match {
@@ -100,9 +87,7 @@ object Analyser {
             case Some(TypeAlias(params, body)) if params.length == args.length =>
               for {
                 expandedArgs <- args.toList.traverse(arg => expandType(arg, env))
-                substituted = params.zip(expandedArgs).foldLeft(body) { case (acc, (param, arg)) =>
-                  substType(param, arg, acc)
-                }
+                substituted = substMany(params, expandedArgs, body)
                 expanded <- expandType(substituted, env)
               } yield expanded
             case Some(TypeAlias(params, _)) =>
@@ -215,7 +200,7 @@ object Analyser {
     case AST.Match(scrutinee, cases) => for {
       env <- ask
       typedScrutinee <- scrutinee
-      dataApp <- lift(dataTypeApplication(typeOf(typedScrutinee), env))
+      dataApp <- lift(dataTypeApplication(typeOf(typedScrutinee), env.dataTypes)(_.params))
       (dataName, dataDef, typeArgs) = dataApp
       caseNames = cases.map(_.constructor)
       _ <- guard(caseNames.distinct.length == caseNames.length, s"Match has duplicate cases")

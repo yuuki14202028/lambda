@@ -230,6 +230,10 @@ def substType(target: TypeVariable, replace: TypeRec[Type], in: TypeRec[Type]): 
   in.cataAnn(algebra)
 }
 
+private def substMany(params: Seq[TypeVariable], args: Seq[TypeRec[Type]], in: TypeRec[Type]): TypeRec[Type] = {
+  params.zip(args).foldLeft(in) { case (acc, (param, arg)) => substType(param, arg, acc) }
+}
+
 def sameType(left: TypeRec[Type], right: TypeRec[Type]): Boolean = {
   type Eq[I] = Map[TypeVariable, TypeVariable] => TypeRec[I] => Boolean
   val alg: HCofreeAlgebra[AST, TypeAnn, Eq] = [x] => (_, node) => bound => other =>
@@ -268,6 +272,21 @@ def collectTypeApps(t: TypeRec[Type]): (TypeRec[Type], Seq[TypeRec[Type]]) = {
       (self, Seq.empty)
   }
   t.paraAnn(alg)
+}
+
+def dataTypeApplication[D](
+    t: TypeRec[Type],
+    dataTypes: Map[TypeVariable, D]
+)(paramsOf: D => Seq[TypeVariable]): Either[String, (TypeVariable, D, Seq[TypeRec[Type]])] = {
+  val (head, args) = collectTypeApps(t)
+  head.projectT match {
+    case AST.TypeVar(variable) => dataTypes.get(variable) match {
+      case Some(dataDef) if paramsOf(dataDef).length == args.length => Right((variable, dataDef, args))
+      case Some(dataDef) => Left(s"Data type ${variable.name} expects ${paramsOf(dataDef).length} arguments, got ${args.length}")
+      case None => Left(s"Not a data type: ${t.show}")
+    }
+    case _ => Left(s"Not a data type: ${t.show}")
+  }
 }
 
 def applyTypeConstructor(head: TypeVariable, args: Seq[TypeRec[Type]]): TypeRec[Type] =
