@@ -46,63 +46,68 @@ object Analyser {
     params.foldRight(functionType)(forallTypeT)
   }
 
-  private def expandType(t: TypeRec[Type], env: Env): EitherS[TypeRec[Type]] = t.projectT match {
-    case AST.Primitive("Int") => Right(intTypeT)
-    case AST.Primitive("Char") => Right(charTypeT)
-    case AST.Primitive("String") => Right(stringTypeT)
-    case AST.Primitive("Bool") => Right(boolTypeT)
-    case AST.Primitive("Unit") => Right(unitTypeT)
-    case AST.Primitive(name) => Left(s"Primitive type $name is not defined")
+  private case class TypeSpine(head: TypeRec[Type], args: Seq[Expand[Type]])
+  private case class TypeExpansion[I](value: EitherS[TypeRec[I]], spine: Option[TypeSpine] = None)
+  private type Expand[I] = Env => TypeExpansion[I]
 
-    case AST.TypeVar(variable) if env.typeVars.contains(variable) => Right(typeVarT(variable))
+  private def rebuild[I](ann: TypeAnn[I], node: AST[[y] =>> (TypeRec[y], Expand[y]), I], env: Env): EitherS[TypeRec[I]] =
+    summon[HTraverse[AST]]
+      .traverse(node)([y] => (child: (TypeRec[y], Expand[y])) => child._2(env).value)
+      .map(HCofree(ann, _))
+
+  private val expandAlg: HCofreeParaAlgebra[AST, TypeAnn, Expand] = [x] => (ann, node) => env => node match {
+    case AST.TypeVar(variable) if env.typeVars.contains(variable) =>
+      TypeExpansion(Right(typeVarT(variable)), Some(TypeSpine(typeVarT(variable), Seq.empty)))
     case AST.TypeVar(variable) =>
-      env.typeAliases.get(variable) match {
-        case Some(TypeAlias(params, body)) if params.isEmpty => expandType(body, env)
+      val value = env.typeAliases.get(variable) match {
+        case Some(TypeAlias(params, body)) if params.isEmpty => Right(body)
         case Some(TypeAlias(params, _)) => Left(s"Type alias ${variable.name} expects ${params.length} arguments, got 0")
-        case None =>
-          env.dataTypes.get(variable) match {
-            case Some(DataDef(params, _)) if params.isEmpty => Right(typeVarT(variable))
-            case Some(DataDef(params, _)) => Left(s"Data type ${variable.name} expects ${params.length} arguments, got 0")
-            case None => Left(s"Type variable ${variable.name} is not defined")
-          }
+        case None => env.dataTypes.get(variable) match {
+          case Some(DataDef(params, _)) if params.isEmpty => Right(typeVarT(variable))
+          case Some(DataDef(params, _)) => Left(s"Data type ${variable.name} expects ${params.length} arguments, got 0")
+          case None => Left(s"Type variable ${variable.name} is not defined")
+        }
       }
+      TypeExpansion(value, Some(TypeSpine(typeVarT(variable), Seq.empty)))
 
-    case AST.Arrow(from, to) => for {
-      ef <- expandType(from, env)
-      et <- expandType(to, env)
-    } yield arrowT(ef, et)
+    case AST.ForAll(variable, body) =>
+      val value = for {
+        _ <- Either.cond(!env.typeVars.contains(variable), (), s"Type variable ${variable.name} is already defined")
+        eb <- body._2(env.copy(typeVars = env.typeVars + variable)).value
+      } yield forallTypeT(variable, eb)
+      TypeExpansion(value)
 
-    case AST.ForAll(variable, body) => for {
-      _ <- Either.cond(!env.typeVars.contains(variable), (), s"Type variable ${variable.name} is already defined")
-      eb <- expandType(body, env.copy(typeVars = env.typeVars + variable))
-    } yield forallTypeT(variable, eb)
-
-    case AST.TypeApp(_, _) =>
-      val (head, args) = collectTypeApps(t)
-      head.projectT match {
-        case AST.TypeVar(variable) if !env.typeVars.contains(variable) =>
-          env.typeAliases.get(variable) match {
-            case Some(TypeAlias(params, body)) if params.length == args.length =>
-              for {
-                expandedArgs <- args.toList.traverse(arg => expandType(arg, env))
-                substituted = substMany(params, expandedArgs, body)
-                expanded <- expandType(substituted, env)
-              } yield expanded
-            case Some(TypeAlias(params, _)) =>
-              Left(s"Type alias ${variable.name} expects ${params.length} arguments, got ${args.length}")
-            case None =>
-              env.dataTypes.get(variable) match {
+    case AST.TypeApp(function, argument) =>
+      val self = HCofree(ann, paraOriginals(node))
+      val spine = function._2(env).spine.map(s => s.copy(args = s.args :+ argument._2))
+      val value = spine match {
+        case Some(TypeSpine(head, args)) => head.projectT match {
+          case AST.TypeVar(variable) if !env.typeVars.contains(variable) =>
+            env.typeAliases.get(variable) match {
+              case Some(TypeAlias(params, body)) if params.length == args.length =>
+                args.toList.traverse(arg => arg(env).value).map(expandedArgs => substMany(params, expandedArgs, body))
+              case Some(TypeAlias(params, _)) =>
+                Left(s"Type alias ${variable.name} expects ${params.length} arguments, got ${args.length}")
+              case None => env.dataTypes.get(variable) match {
                 case Some(DataDef(params, _)) if params.length == args.length =>
-                  args.toList.traverse(arg => expandType(arg, env)).map(es => applyTypeConstructor(variable, es))
+                  args.toList.traverse(arg => arg(env).value).map(es => applyTypeConstructor(variable, es))
                 case Some(DataDef(params, _)) =>
                   Left(s"Data type ${variable.name} expects ${params.length} arguments, got ${args.length}")
                 case None =>
                   Left(s"Type variable ${variable.name} is not defined")
               }
-          }
-        case _ =>
-          Left(s"Type application is not supported: ${t.show}")
+            }
+          case _ => Left(s"Type application is not supported: ${self.show}")
+        }
+        case None => Left(s"Type application is not supported: ${self.show}")
       }
+      TypeExpansion(value, spine)
+
+    case ast => TypeExpansion(rebuild(ann, ast, env))
+  }
+
+  private def expandType(t: TypeRec[Type], env: Env): EitherS[TypeRec[Type]] = {
+    t.paraAnn(expandAlg)(env).value
   }
 
   private def expandChecked(types: TypeRec[Type]): Check[TypeRec[Type]] =
