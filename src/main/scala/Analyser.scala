@@ -46,7 +46,9 @@ object Analyser {
     params.foldRight(functionType)(forallTypeT)
   }
 
-  private case class TypeSpine(head: TypeRec[Type], args: Seq[Expand[Type]])
+  private case class TypeSpine(head: TypeRec[Type], args: Seq[Expand[Type]]) {
+    def append(arg: Expand[Type]): TypeSpine = copy(args = args :+ arg)
+  }
   private case class TypeExpansion[I](value: EitherS[TypeRec[I]], spine: Option[TypeSpine] = None)
   private type Expand[I] = Env => TypeExpansion[I]
 
@@ -55,20 +57,44 @@ object Analyser {
       .traverse(node)([y] => (child: (TypeRec[y], Expand[y])) => child._2(env).value)
       .map(HCofree(ann, _))
 
-  private val expandAlg: HCofreeParaAlgebra[AST, TypeAnn, Expand] = [x] => (ann, node) => env => node match {
-    case AST.TypeVar(variable) if env.typeVars.contains(variable) =>
-      TypeExpansion(Right(typeVarT(variable)), Some(TypeSpine(typeVarT(variable), Seq.empty)))
-    case AST.TypeVar(variable) =>
-      val value = env.typeAliases.get(variable) match {
-        case Some(TypeAlias(params, body)) if params.isEmpty => Right(body)
-        case Some(TypeAlias(params, _)) => Left(s"Type alias ${variable.name} expects ${params.length} arguments, got 0")
-        case None => env.dataTypes.get(variable) match {
-          case Some(DataDef(params, _)) if params.isEmpty => Right(typeVarT(variable))
-          case Some(DataDef(params, _)) => Left(s"Data type ${variable.name} expects ${params.length} arguments, got 0")
-          case None => Left(s"Type variable ${variable.name} is not defined")
-        }
+  private def typeNameSpine(variable: TypeVariable): TypeSpine =
+    TypeSpine(typeVarT(variable), Seq.empty)
+
+  private def arityError(kind: String, variable: TypeVariable, expected: Int, actual: Int): EitherS[Nothing] =
+    Left(s"$kind ${variable.name} expects $expected arguments, got $actual")
+
+  private def expectArity[A](kind: String, variable: TypeVariable, expected: Int, actual: Int)(value: => EitherS[A]): EitherS[A] =
+    if (expected == actual) value else arityError(kind, variable, expected, actual)
+
+  private def expandDefinedType(variable: TypeVariable, args: Seq[Expand[Type]], env: Env): EitherS[TypeRec[Type]] =
+    env.typeAliases.get(variable) match {
+      case Some(TypeAlias(params, body)) => expectArity("Type alias", variable, params.length, args.length) {
+        args.toList.traverse(arg => arg(env).value).map(expandedArgs => substMany(params, expandedArgs, body))
       }
-      TypeExpansion(value, Some(TypeSpine(typeVarT(variable), Seq.empty)))
+      case None => env.dataTypes.get(variable) match {
+        case Some(DataDef(params, _)) => expectArity("Data type", variable, params.length, args.length) {
+          args.toList.traverse(arg => arg(env).value).map(expandedArgs => applyTypeConstructor(variable, expandedArgs))
+        }
+        case None => Left(s"Type variable ${variable.name} is not defined")
+      }
+    }
+
+  private def expandTypeName(variable: TypeVariable, env: Env): EitherS[TypeRec[Type]] =
+    if (env.typeVars.contains(variable)) Right(typeVarT(variable))
+    else expandDefinedType(variable, Seq.empty, env)
+
+  private def expandTypeSpine(spine: Option[TypeSpine], self: TypeRec[Type], env: Env): EitherS[TypeRec[Type]] =
+    spine match {
+      case Some(TypeSpine(head, args)) => head.projectT match {
+        case AST.TypeVar(variable) if !env.typeVars.contains(variable) => expandDefinedType(variable, args, env)
+        case _ => Left(s"Type application is not supported: ${self.show}")
+      }
+      case None => Left(s"Type application is not supported: ${self.show}")
+    }
+
+  private val expandAlg: HCofreeParaAlgebra[AST, TypeAnn, Expand] = [x] => (ann, node) => env => node match {
+    case AST.TypeVar(variable) =>
+      TypeExpansion(expandTypeName(variable, env), Some(typeNameSpine(variable)))
 
     case AST.ForAll(variable, body) =>
       val value = for {
@@ -79,29 +105,8 @@ object Analyser {
 
     case AST.TypeApp(function, argument) =>
       val self = HCofree(ann, paraOriginals(node))
-      val spine = function._2(env).spine.map(s => s.copy(args = s.args :+ argument._2))
-      val value = spine match {
-        case Some(TypeSpine(head, args)) => head.projectT match {
-          case AST.TypeVar(variable) if !env.typeVars.contains(variable) =>
-            env.typeAliases.get(variable) match {
-              case Some(TypeAlias(params, body)) if params.length == args.length =>
-                args.toList.traverse(arg => arg(env).value).map(expandedArgs => substMany(params, expandedArgs, body))
-              case Some(TypeAlias(params, _)) =>
-                Left(s"Type alias ${variable.name} expects ${params.length} arguments, got ${args.length}")
-              case None => env.dataTypes.get(variable) match {
-                case Some(DataDef(params, _)) if params.length == args.length =>
-                  args.toList.traverse(arg => arg(env).value).map(es => applyTypeConstructor(variable, es))
-                case Some(DataDef(params, _)) =>
-                  Left(s"Data type ${variable.name} expects ${params.length} arguments, got ${args.length}")
-                case None =>
-                  Left(s"Type variable ${variable.name} is not defined")
-              }
-            }
-          case _ => Left(s"Type application is not supported: ${self.show}")
-        }
-        case None => Left(s"Type application is not supported: ${self.show}")
-      }
-      TypeExpansion(value, spine)
+      val spine = function._2(env).spine.map(_.append(argument._2))
+      TypeExpansion(expandTypeSpine(spine, self, env), spine)
 
     case ast => TypeExpansion(rebuild(ann, ast, env))
   }
