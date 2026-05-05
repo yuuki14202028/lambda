@@ -21,6 +21,14 @@
     </dict>
     <dict>
       <key>include</key>
+      <string>#patterns</string>
+    </dict>
+    <dict>
+      <key>include</key>
+      <string>#constructors</string>
+    </dict>
+    <dict>
+      <key>include</key>
       <string>#types</string>
     </dict>
     <dict>
@@ -50,6 +58,95 @@
     <dict>
       <key>patterns</key>
       <array>
+        <dict>
+          <key>name</key>
+          <string>meta.declaration.data.lambda</string>
+          <key>begin</key>
+          <string>\b(data)\s+([A-Za-z][A-Za-z0-9_]*)</string>
+          <key>beginCaptures</key>
+          <dict>
+            <key>1</key>
+            <dict>
+              <key>name</key>
+              <string>keyword.declaration.data.lambda</string>
+            </dict>
+            <key>2</key>
+            <dict>
+              <key>name</key>
+              <string>entity.name.class</string>
+            </dict>
+          </dict>
+          <key>end</key>
+          <string>(?=^\s*(?:let|type|data)\b|\z)</string>
+          <key>patterns</key>
+          <array>
+            <dict>
+              <key>include</key>
+              <string>#type-parameters</string>
+            </dict>
+            <dict>
+              <key>include</key>
+              <string>#patterns</string>
+            </dict>
+            <dict>
+              <key>include</key>
+              <string>#types</string>
+            </dict>
+            <dict>
+              <key>include</key>
+              <string>#operators</string>
+            </dict>
+            <dict>
+              <key>include</key>
+              <string>#punctuation</string>
+            </dict>
+          </array>
+        </dict>
+        <dict>
+          <key>name</key>
+          <string>meta.declaration.function.main.lambda</string>
+          <key>begin</key>
+          <string>\b(let)\s+(?:(rec)\s+)?(main)(?=\s*\(\s*\)\s*:)</string>
+          <key>beginCaptures</key>
+          <dict>
+            <key>1</key>
+            <dict>
+              <key>name</key>
+              <string>keyword.declaration.let.lambda</string>
+            </dict>
+            <key>2</key>
+            <dict>
+              <key>name</key>
+              <string>keyword.declaration.recursive.lambda</string>
+            </dict>
+            <key>3</key>
+            <dict>
+              <key>name</key>
+              <string>entity.name.function.main.lambda</string>
+            </dict>
+          </dict>
+          <key>end</key>
+          <string>(?==)</string>
+          <key>patterns</key>
+          <array>
+            <dict>
+              <key>include</key>
+              <string>#value-parameters</string>
+            </dict>
+            <dict>
+              <key>include</key>
+              <string>#types</string>
+            </dict>
+            <dict>
+              <key>include</key>
+              <string>#operators</string>
+            </dict>
+            <dict>
+              <key>include</key>
+              <string>#punctuation</string>
+            </dict>
+          </array>
+        </dict>
         <dict>
           <key>name</key>
           <string>meta.declaration.function.lambda</string>
@@ -192,6 +289,33 @@
       <array>
         <dict>
           <key>name</key>
+          <string>meta.match.lambda</string>
+          <key>match</key>
+          <string>\b(match)\b|\b(with)\b</string>
+          <key>captures</key>
+          <dict>
+            <key>1</key>
+            <dict>
+              <key>name</key>
+              <string>keyword.control.match.lambda</string>
+            </dict>
+            <key>2</key>
+            <dict>
+              <key>name</key>
+              <string>keyword.control.match.with.lambda</string>
+            </dict>
+          </dict>
+        </dict>
+        <dict>
+          <key>include</key>
+          <string>#patterns</string>
+        </dict>
+        <dict>
+          <key>include</key>
+          <string>#constructors</string>
+        </dict>
+        <dict>
+          <key>name</key>
           <string>meta.abstraction.value.lambda</string>
           <key>match</key>
           <string>(λ)\s*([A-Za-z][A-Za-z0-9_]*)</string>
@@ -250,33 +374,96 @@
         <dict>
           <key>name</key>
           <string>meta.foreign.lambda</string>
-          <key>match</key>
-          <string>\b(foreign)\s+([A-Za-z][A-Za-z0-9_]*)</string>
-          <key>captures</key>
+          <key>begin</key>
+          <string>\b(foreign)(?=\s*\[)</string>
+          <key>beginCaptures</key>
           <dict>
             <key>1</key>
             <dict>
               <key>name</key>
               <string>keyword.other.foreign.lambda</string>
             </dict>
-            <key>2</key>
+          </dict>
+          <key>end</key>
+          <string>(?&lt;=\])\s*([A-Za-z][A-Za-z0-9_]*)</string>
+          <key>endCaptures</key>
+          <dict>
+            <key>1</key>
             <dict>
               <key>name</key>
               <string>support.function.external.lambda</string>
             </dict>
           </dict>
+          <key>patterns</key>
+          <array>
+            <dict>
+              <key>include</key>
+              <string>#types</string>
+            </dict>
+            <dict>
+              <key>include</key>
+              <string>#operators</string>
+            </dict>
+            <dict>
+              <key>include</key>
+              <string>#punctuation</string>
+            </dict>
+          </array>
         </dict>
         <dict>
           <key>name</key>
           <string>variable.function.lambda</string>
           <key>match</key>
-          <string>\b(?!(?:if|then|else|let|rec|type|in|foreign|true|false)\b)[a-z][A-Za-z0-9_]*\b(?=\s*(?:\[|\())</string>
+          <string>\b(?!(?:if|then|else|let|rec|type|data|in|match|with|foreign|true|false)\b)[a-z][A-Za-z0-9_]*\b(?=\s*(?:\[|\())</string>
         </dict>
         <dict>
           <key>name</key>
           <string>variable.other.lambda</string>
           <key>match</key>
-          <string>\b(?!(?:if|then|else|let|rec|type|in|foreign|true|false)\b)[a-z][A-Za-z0-9_]*\b</string>
+          <string>\b(?!(?:if|then|else|let|rec|type|data|in|match|with|foreign|true|false)\b)[a-z][A-Za-z0-9_]*\b</string>
+        </dict>
+      </array>
+    </dict>
+    <key>patterns</key>
+    <dict>
+      <key>patterns</key>
+      <array>
+        <dict>
+          <key>name</key>
+          <string>meta.pattern.constructor.lambda</string>
+          <key>match</key>
+          <string>(\|)\s*([A-Za-z][A-Za-z0-9_]*)(?=\s*(?:\(|-&gt;|$))</string>
+          <key>captures</key>
+          <dict>
+            <key>1</key>
+            <dict>
+              <key>name</key>
+              <string>punctuation.separator.pattern.lambda</string>
+            </dict>
+            <key>2</key>
+            <dict>
+              <key>name</key>
+              <string>entity.name.function.constructor.lambda</string>
+            </dict>
+          </dict>
+        </dict>
+      </array>
+    </dict>
+    <key>constructors</key>
+    <dict>
+      <key>patterns</key>
+      <array>
+        <dict>
+          <key>name</key>
+          <string>entity.name.function.constructor.lambda</string>
+          <key>match</key>
+          <string>\b(?!(?:Int|Char|Bool|String|Unit)\b)[A-Z][A-Za-z0-9_]*\b(?=\s*(?:\[|\())</string>
+        </dict>
+        <dict>
+          <key>name</key>
+          <string>constant.language.constructor.lambda</string>
+          <key>match</key>
+          <string>\b(?!(?:Int|Char|Bool|String|Unit)\b)[A-Z][A-Za-z0-9_]*\b</string>
         </dict>
       </array>
     </dict>
@@ -363,6 +550,12 @@
             </dict>
           </array>
         </dict>
+        <dict>
+          <key>name</key>
+          <string>meta.parameter.unit.lambda</string>
+          <key>match</key>
+          <string>\(\s*\)</string>
+        </dict>
       </array>
     </dict>
     <key>types</key>
@@ -373,7 +566,7 @@
           <key>name</key>
           <string>storage.type.primitive.lambda</string>
           <key>match</key>
-          <string>\b(?:Int|Char|Bool|Unit)\b</string>
+          <string>\b(?:Int|Char|Bool|String|Unit)\b</string>
         </dict>
         <dict>
           <key>name</key>
@@ -416,6 +609,39 @@
           <string>constant.numeric.integer.lambda</string>
           <key>match</key>
           <string>\b[0-9]+\b</string>
+        </dict>
+        <dict>
+          <key>name</key>
+          <string>string.quoted.double.lambda</string>
+          <key>begin</key>
+          <string>"</string>
+          <key>beginCaptures</key>
+          <dict>
+            <key>0</key>
+            <dict>
+              <key>name</key>
+              <string>punctuation.definition.string.begin.lambda</string>
+            </dict>
+          </dict>
+          <key>end</key>
+          <string>"</string>
+          <key>endCaptures</key>
+          <dict>
+            <key>0</key>
+            <dict>
+              <key>name</key>
+              <string>punctuation.definition.string.end.lambda</string>
+            </dict>
+          </dict>
+          <key>patterns</key>
+          <array>
+            <dict>
+              <key>name</key>
+              <string>constant.character.escape.lambda</string>
+              <key>match</key>
+              <string>\\(?:[\\'"nrt0]|[0-7]{3})</string>
+            </dict>
+          </array>
         </dict>
         <dict>
           <key>name</key>
@@ -478,7 +704,19 @@
           <key>name</key>
           <string>keyword.declaration.lambda</string>
           <key>match</key>
-          <string>\b(?:let|rec|type)\b</string>
+          <string>\b(?:let|rec|type|data)\b</string>
+        </dict>
+        <dict>
+          <key>name</key>
+          <string>keyword.control.match.lambda</string>
+          <key>match</key>
+          <string>\bmatch\b</string>
+        </dict>
+        <dict>
+          <key>name</key>
+          <string>keyword.control.match.with.lambda</string>
+          <key>match</key>
+          <string>\bwith\b</string>
         </dict>
         <dict>
           <key>name</key>
@@ -503,6 +741,12 @@
           <string>keyword.operator.comparison.lambda</string>
           <key>match</key>
           <string>==|!=|&lt;=|&gt;=|&lt;|&gt;</string>
+        </dict>
+        <dict>
+          <key>name</key>
+          <string>keyword.operator.match.arrow.lambda</string>
+          <key>match</key>
+          <string>-&gt;</string>
         </dict>
         <dict>
           <key>name</key>

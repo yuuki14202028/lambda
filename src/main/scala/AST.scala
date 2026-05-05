@@ -5,12 +5,18 @@ import cats.~>
 sealed trait NodeType
 case object ExprNode extends NodeType
 case object TypeNode extends NodeType
+case object DeclNode extends NodeType
 
 type Expr = ExprNode.type
 type Type = TypeNode.type
+type Decl = DeclNode.type
 
 enum AST[R[_], I] {
-  case Program(body: Seq[R[Expr]]) extends AST[R, Program.type]
+  case Program(decls: Seq[R[Decl]]) extends AST[R, Program.type]
+  case TopLet(variable: Variable, types: R[Type], value: R[Expr]) extends AST[R, Decl]
+  case TopLetRec(variable: Variable, types: R[Type], value: R[Expr]) extends AST[R, Decl]
+  case TopType(variable: TypeVariable, params: Seq[TypeVariable], alias: R[Type]) extends AST[R, Decl]
+  case TopData(variable: TypeVariable, params: Seq[TypeVariable], constructors: Seq[DataConstructor[R]]) extends AST[R, Decl]
   case Abs(variable: Variable, types: R[Type], body: R[Expr]) extends AST[R, Expr]
   case TyAbs(variable: TypeVariable, body: R[Expr]) extends AST[R, Expr]
   case Let(variable: Variable, types: R[Type], value: R[Expr], body: R[Expr]) extends AST[R, Expr]
@@ -75,7 +81,13 @@ case class TypeVariable(name: String) {
 case class HFix[H[_[_], _], I](unfix: H[[x] =>> HFix[H, x], I])
 type Rec[I] = HFix[AST, I]
 
-def program(defines: Seq[Rec[Expr]]): Rec[AST.Program.type] = HFix(AST.Program(defines))
+def program(decls: Seq[Rec[Decl]]): Rec[AST.Program.type] = HFix(AST.Program(decls))
+def topLet(variable: Variable, types: Rec[Type], value: Rec[Expr]): Rec[Decl] = HFix(AST.TopLet(variable, types, value))
+def topLetRec(variable: Variable, types: Rec[Type], value: Rec[Expr]): Rec[Decl] = HFix(AST.TopLetRec(variable, types, value))
+def topType(variable: TypeVariable, params: Seq[TypeVariable], alias: Rec[Type]): Rec[Decl] =
+  HFix(AST.TopType(variable, params, alias))
+def topData(variable: TypeVariable, params: Seq[TypeVariable], constructors: Seq[DataConstructor[[x] =>> Rec[x]]]): Rec[Decl] =
+  HFix(AST.TopData(variable, params, constructors))
 def abs(variable: Variable, types: Rec[Type], body: Rec[Expr]): Rec[Expr] = HFix(AST.Abs(variable, types, body))
 def tyAbs(variable: TypeVariable, body: Rec[Expr]): Rec[Expr] = HFix(AST.TyAbs(variable, body))
 def let(variable: Variable, types: Rec[Type], value: Rec[Expr], body: Rec[Expr]): Rec[Expr] = HFix(AST.Let(variable, types, value, body))
@@ -119,7 +131,15 @@ private val eraseAnn: TypeRec ~> Rec = new (TypeRec ~> Rec) {
   }
 }
 
-def programT(defines: Seq[TypeRec[Expr]]): TypeRec[AST.Program.type] = HCofree(ProgramAnn, AST.Program(defines))
+def programT(decls: Seq[TypeRec[Decl]]): TypeRec[AST.Program.type] = HCofree(ProgramAnn, AST.Program(decls))
+def topLetT(variable: Variable, types: TypeRec[Type], value: TypeRec[Expr]): TypeRec[Decl] =
+  HCofree(DeclAnn, AST.TopLet(variable, types, value))
+def topLetRecT(variable: Variable, types: TypeRec[Type], value: TypeRec[Expr]): TypeRec[Decl] =
+  HCofree(DeclAnn, AST.TopLetRec(variable, types, value))
+def topTypeT(variable: TypeVariable, params: Seq[TypeVariable], alias: TypeRec[Type]): TypeRec[Decl] =
+  HCofree(DeclAnn, AST.TopType(variable, params, alias))
+def topDataT(variable: TypeVariable, params: Seq[TypeVariable], constructors: Seq[DataConstructor[TypeRec]]): TypeRec[Decl] =
+  HCofree(DeclAnn, AST.TopData(variable, params, constructors))
 def absT(variable: Variable, t: TypeRec[Type], types: TypeRec[Type], body: TypeRec[Expr]): TypeRec[Expr] =
   HCofree(ExprAnn(t), AST.Abs(variable, types, body))
 def tyAbsT(variable: TypeVariable, t: TypeRec[Type], body: TypeRec[Expr]): TypeRec[Expr] =

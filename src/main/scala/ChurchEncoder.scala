@@ -182,6 +182,7 @@ object ChurchEncoder {
 
   private val encoderAlg: HCofreeParaAlgebra[AST, TypeAnn, Encoded] = [x] => (ann, node) => (ann, node) match {
     case (ProgramAnn, _) => rebuildNode(ProgramAnn, node)
+    case (DeclAnn, _) => rebuildNode(DeclAnn, node)
     case (TypeAnn, _) => encodeType(originalNode(TypeAnn, node))
     case (ExprAnn(t), AST.DataLet(variable, params, constructors, body)) =>
       val taggedConstructors = constructors.zipWithIndex.map { case (constructor, tag) =>
@@ -218,7 +219,29 @@ object ChurchEncoder {
     case (ExprAnn(t), _) => rebuildExprNode(t, node)
   }
 
-  def encode(program: TypeRec[AST.Program.type]): EitherS[TypeRec[AST.Program.type]] =
-    program.paraAnn(encoderAlg).run(Env(Map.empty))
+  private def encodeDecl(decl: TypeRec[Decl], env: Env): EitherS[(Seq[TypeRec[Decl]], Env)] = decl.tail match {
+    case AST.TopData(variable, params, constructors) =>
+      val taggedConstructors = constructors.zipWithIndex.map { case (constructor, tag) =>
+        ConstructorDef(constructor.name, variable, constructor.fields, tag)
+      }
+      val dataDef = DataDef(params, taggedConstructors)
+      val nextEnv = env.copy(dataTypes = env.dataTypes + (variable -> dataDef))
+      taggedConstructors.toList.traverse { constructor => for {
+        constructorT <- constructorType(variable, dataDef, constructor).run(nextEnv)
+        value <- constructorValue(variable, dataDef, constructor).run(nextEnv)
+      } yield topLetT(constructor.name, constructorT, value) }.map(_ -> nextEnv)
+
+    case _ =>
+      decl.paraAnn(encoderAlg).run(env).map(encodedDecl => (Seq(encodedDecl), env))
+  }
+
+  def encode(program: TypeRec[AST.Program.type]): EitherS[TypeRec[AST.Program.type]] = program.tail match {
+    case AST.Program(decls) =>
+      decls.foldLeft(Right((Vector.empty[TypeRec[Decl]], Env(Map.empty))): EitherS[(Vector[TypeRec[Decl]], Env)]) {
+        case (acc, decl) => acc.flatMap { case (encodedDecls, env) =>
+          encodeDecl(decl, env).map { case (newDecls, nextEnv) => (encodedDecls ++ newDecls, nextEnv) }
+        }
+      }.map { case (encodedDecls, _) => programT(encodedDecls) }
+  }
 
 }

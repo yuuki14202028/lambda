@@ -18,6 +18,7 @@ Scala 3 で実装された、小さな型付きラムダ計算系言語のコン
 - 関数束縛 `let f[A](x: T)(y: U): R = ... in ...`
 - 再帰束縛 `let rec f: T = ... in ...`
 - 再帰関数束縛 `let rec f(x: T): R = ... in ...`
+- トップレベルの `type` / `data` / `let` / `let rec` 宣言
 - 外部 C 関数の参照 `foreign[T → U] name`
 - 整数リテラル `0`, `2`, `11`
 - 文字リテラル `'a'`, `'z'`
@@ -128,6 +129,27 @@ unwrapOrZero(Some[Int](42))
 また、現時点では自身を直接フィールドに含む再帰データ型は Church encoding の対象外です。
 
 関数束縛、再帰関数束縛は糖衣構文になっています。  
+
+## トップレベル宣言
+
+ファイル先頭には `in` でネストせずに、`type` / `data` / `let` / `let rec` を並べられます。
+トップレベルの `main(): Int` がプログラム本体として呼び出されます。
+
+```ocaml
+let print: Int → Int = foreign[Int → Int] print_int
+
+data Option[A] =
+  | None
+  | Some(A)
+
+let unwrapOrZero(option: Option[Int]): Int =
+  match option with
+    | None -> 0
+    | Some(n) -> n
+
+let main(): Int =
+  unwrapOrZero(Some[Int](42))
+```
 
 ## 糖衣構文
 

@@ -120,7 +120,53 @@ object Analyser {
 
   private val tcAlg: Algebra[AST, TC] = [x] => (node: AST[TC, x]) => node match {
 
-    case AST.Program(body) => body.toList.traverse(identity).map(programT)
+    case AST.Program(decls) => decls.toList.traverse(identity).map(programT)
+
+    case AST.TopLet(variable, types, value) => for {
+      typedTypes <- types
+      declaredType <- expandChecked(typedTypes)
+      typedValue <- value
+      _ <- expect(declaredType, typeOf(typedValue))
+    } yield topLetT(variable, typedTypes, typedValue)
+
+    case AST.TopLetRec(variable, types, value) => for {
+      typedTypes <- types
+      declaredType <- expandChecked(typedTypes)
+      typedValue <- value.local((e: Env) => e.copy(values = e.values + (variable -> declaredType)))
+      _ <- expect(declaredType, typeOf(typedValue))
+    } yield topLetRecT(variable, typedTypes, typedValue)
+
+    case AST.TopType(variable, params, alias) => for {
+      env <- ask
+      _ <- guard(
+        !env.typeVars.contains(variable) && !env.typeAliases.contains(variable) && !env.dataTypes.contains(variable),
+        s"Type alias ${variable.name} is already defined"
+      )
+      _ <- guard(params.distinct.length == params.length, s"Type alias ${variable.name} has duplicate parameters")
+      _ <- guard(params.forall(p => !env.typeVars.contains(p)), s"Type alias ${variable.name} has a parameter that is already defined")
+      typedAlias <- alias.local((e: Env) => e.copy(typeVars = e.typeVars ++ params))
+    } yield topTypeT(variable, params, typedAlias)
+
+    case AST.TopData(variable, params, constructors) => for {
+      env <- ask
+      _ <- guard(
+        !env.typeVars.contains(variable) && !env.typeAliases.contains(variable) && !env.dataTypes.contains(variable),
+        s"Data type ${variable.name} is already defined"
+      )
+      _ <- guard(params.distinct.length == params.length, s"Data type ${variable.name} has duplicate parameters")
+      _ <- guard(params.forall(p => !env.typeVars.contains(p)), s"Data type ${variable.name} has a parameter that is already defined")
+      constructorNames = constructors.map(_.name)
+      _ <- guard(constructorNames.distinct.length == constructorNames.length, s"Data type ${variable.name} has duplicate constructors")
+      _ <- guard(
+        constructorNames.forall(name => !env.values.contains(name) && !env.constructors.contains(name)),
+        s"Data type ${variable.name} has a constructor that is already defined"
+      )
+      placeholder = DataDef(params, Seq.empty)
+      fieldEnv = env.copy(typeVars = env.typeVars ++ params, dataTypes = env.dataTypes + (variable -> placeholder))
+      typedConstructors <- constructors.toList.traverse { c =>
+        c.fields.toList.traverse(field => field.local((_: Env) => fieldEnv)).map(fs => DataConstructor(c.name, fs))
+      }
+    } yield topDataT(variable, params, typedConstructors)
 
     case AST.Abs(variable, types, body) => for {
       typedTypes <- types
@@ -347,8 +393,84 @@ object Analyser {
     case AST.TypeApp(function, argument) => (function, argument).mapN(typeAppT)
   }
 
-  def validate(prog: Rec[AST.Program.type]): EitherS[TypeRec[AST.Program.type]] = {
-    prog.cata(tcAlg).run(Env(Map.empty, Set.empty, Map.empty, Map.empty, Map.empty))
+  private def checkDecl(decl: Rec[Decl], env: Env): EitherS[(TypeRec[Decl], Env)] = decl.unfix match {
+    case AST.TopLet(variable, types, value) => for {
+      typedTypes <- types.cata(tcAlg).run(env)
+      declaredType <- expandType(typedTypes, env)
+      typedValue <- value.cata(tcAlg).run(env)
+      _ <- Either.cond(sameType(declaredType, typeOf(typedValue)), (), s"Type mismatch: expected ${declaredType.show}, actual ${typeOf(typedValue).show}")
+    } yield (topLetT(variable, typedTypes, typedValue), env.copy(values = env.values + (variable -> declaredType)))
+
+    case AST.TopLetRec(variable, types, value) => for {
+      typedTypes <- types.cata(tcAlg).run(env)
+      declaredType <- expandType(typedTypes, env)
+      valueEnv = env.copy(values = env.values + (variable -> declaredType))
+      typedValue <- value.cata(tcAlg).run(valueEnv)
+      _ <- Either.cond(sameType(declaredType, typeOf(typedValue)), (), s"Type mismatch: expected ${declaredType.show}, actual ${typeOf(typedValue).show}")
+    } yield (topLetRecT(variable, typedTypes, typedValue), valueEnv)
+
+    case AST.TopType(variable, params, alias) => for {
+      _ <- Either.cond(
+        !env.typeVars.contains(variable) && !env.typeAliases.contains(variable) && !env.dataTypes.contains(variable),
+        (),
+        s"Type alias ${variable.name} is already defined"
+      )
+      _ <- Either.cond(params.distinct.length == params.length, (), s"Type alias ${variable.name} has duplicate parameters")
+      _ <- Either.cond(params.forall(p => !env.typeVars.contains(p)), (), s"Type alias ${variable.name} has a parameter that is already defined")
+      aliasEnv = env.copy(typeVars = env.typeVars ++ params)
+      typedAlias <- alias.cata(tcAlg).run(aliasEnv)
+      expandedAlias <- expandType(typedAlias, aliasEnv)
+    } yield (topTypeT(variable, params, typedAlias), env.copy(typeAliases = env.typeAliases + (variable -> TypeAlias(params, expandedAlias))))
+
+    case AST.TopData(variable, params, constructors) => for {
+      _ <- Either.cond(
+        !env.typeVars.contains(variable) && !env.typeAliases.contains(variable) && !env.dataTypes.contains(variable),
+        (),
+        s"Data type ${variable.name} is already defined"
+      )
+      _ <- Either.cond(params.distinct.length == params.length, (), s"Data type ${variable.name} has duplicate parameters")
+      _ <- Either.cond(params.forall(p => !env.typeVars.contains(p)), (), s"Data type ${variable.name} has a parameter that is already defined")
+      constructorNames = constructors.map(_.name)
+      _ <- Either.cond(constructorNames.distinct.length == constructorNames.length, (), s"Data type ${variable.name} has duplicate constructors")
+      _ <- Either.cond(
+        constructorNames.forall(name => !env.values.contains(name) && !env.constructors.contains(name)),
+        (),
+        s"Data type ${variable.name} has a constructor that is already defined"
+      )
+      placeholder = DataDef(params, Seq.empty)
+      fieldEnv = env.copy(typeVars = env.typeVars ++ params, dataTypes = env.dataTypes + (variable -> placeholder))
+      typedConstructors <- constructors.toList.traverse { c =>
+        c.fields.toList.traverse(field => field.cata(tcAlg).run(fieldEnv)).map(fs => DataConstructor(c.name, fs))
+      }
+      expandedConstructors <- typedConstructors.zipWithIndex.toList.traverse { case (c, tag) =>
+        c.fields.toList.traverse(field => expandType(field, fieldEnv)).map(fs => ConstructorDef(c.name, variable, fs, tag))
+      }
+      dataDef = DataDef(params, expandedConstructors)
+      constructorDefs = constructorNames.zip(expandedConstructors).toMap
+      constructorTypes = constructorNames.zip(expandedConstructors).map { case (name, c) =>
+        name -> constructorType(variable, params, c.fields)
+      }.toMap
+      nextEnv = env.copy(
+        values = env.values ++ constructorTypes,
+        dataTypes = env.dataTypes + (variable -> dataDef),
+        constructors = env.constructors ++ constructorDefs
+      )
+    } yield (topDataT(variable, params, typedConstructors), nextEnv)
+  }
+
+  def validate(prog: Rec[AST.Program.type]): EitherS[TypeRec[AST.Program.type]] = prog.unfix match {
+    case AST.Program(decls) =>
+      decls.foldLeft(Right((Vector.empty[TypeRec[Decl]], Env(Map.empty, Set.empty, Map.empty, Map.empty, Map.empty))): EitherS[(Vector[TypeRec[Decl]], Env)]) {
+        case (acc, decl) => acc.flatMap { case (typedDecls, env) =>
+          checkDecl(decl, env).map { case (typedDecl, nextEnv) => (typedDecls :+ typedDecl, nextEnv) }
+        }
+      }.flatMap { case (typedDecls, env) =>
+        env.values.get(Variable("main")) match {
+          case Some(t) if sameType(t, arrowT(unitTypeT, intTypeT)) => Right(programT(typedDecls))
+          case Some(t) => Left(s"Top-level main must have type Unit → Int, actual ${t.show}")
+          case None => Left("Top-level main is not defined")
+        }
+      }
   }
 
 }

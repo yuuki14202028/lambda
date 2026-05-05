@@ -259,6 +259,8 @@ object Generator {
     )
 
     case AST.TypeLet(_, _, _, body) => body
+    case AST.DataLet(_, _, _, _) => pure(sys.error("DataLet must be Church encoded before code generation"))
+    case AST.Match(_, _) => pure(sys.error("Match must be Church encoded before code generation"))
 
     case AST.App(f, a) => for {
       fc <- f
@@ -287,9 +289,14 @@ object Generator {
       )
     } yield cond ++ ct ++ trB ++ te ++ elB ++ end
 
-    case AST.Program(seq) => {
-      seq.toList.sequence.map(parts => mainWrapper(parts.flatten))
+    case AST.Program(_) => {
+      pure(Nil)
     }
+
+    case AST.TopLet(_, _, _) => pure(Nil)
+    case AST.TopLetRec(_, _, _) => pure(Nil)
+    case AST.TopType(_, _, _) => pure(Nil)
+    case AST.TopData(_, _, _) => pure(Nil)
 
     case AST.Primitive(_) => pure(Nil)
     case AST.TypeVar(_) => pure(Nil)
@@ -298,8 +305,65 @@ object Generator {
     case AST.TypeApp(_, _) => pure(Nil)
   }
 
+  private def genExpr(expr: Rec[Expr]): Gen[Expr] = expr.cata(genAlg)
+
+  private def bindTop(valueCode: List[String]): List[String] =
+    valueCode ++ List(
+      "    ldr x9, [x29, #-16]",
+      "    str x9, [sp, #-16]!",
+      "    str x0, [sp, #-16]!",
+      "    mov x0, #16",
+      "    bl _malloc",
+      "    ldr x1, [sp], #16",
+      "    str x1, [x0]",
+      "    ldr x9, [sp], #16",
+      "    str x9, [x0, #8]",
+      "    str x0, [x29, #-16]"
+    )
+
+  private def genDecl(decl: Rec[Decl], env: Env): GenS[(List[String], Env)] = decl.unfix match {
+    case AST.TopLet(Variable(param), _, value) =>
+      genExpr(value).run(env).map(code => (bindTop(code), param :: env))
+
+    case AST.TopLetRec(Variable(param), _, value) =>
+      val valueEnv = param :: env
+      genExpr(value).run(valueEnv).map { vc =>
+        val code = List(
+          "    ldr x9, [x29, #-16]",
+          "    str x9, [sp, #-16]!",
+          "    mov x0, #16",
+          "    bl _malloc",
+          "    ldr x9, [sp], #16",
+          "    str x9, [x0, #8]",
+          "    mov x9, #0",
+          "    str x9, [x0]",
+          "    str x0, [x29, #-16]"
+        ) ++ vc ++ List(
+          "    ldr x9, [x29, #-16]",
+          "    str x0, [x9]"
+        )
+        (code, valueEnv)
+      }
+
+    case AST.TopType(_, _, _) => State.pure((Nil, env))
+    case AST.TopData(_, _, _) => State.pure((Nil, env))
+  }
+
+  private def genProgram(decls: Seq[Rec[Decl]]): GenR[List[String]] = ReaderT { initialEnv =>
+    decls.foldLeft(State.pure[GenState, (List[String], Env)]((Nil, initialEnv))) { (acc, decl) =>
+      acc.flatMap { case (code, env) =>
+        genDecl(decl, env).map { case (declCode, nextEnv) => (code ++ declCode, nextEnv) }
+      }
+    }.flatMap { case (declCode, env) =>
+      val main = app(varr(Variable("main")), unitLit)
+      genExpr(main).run(env).map(mainCode => mainWrapper(declCode ++ mainCode))
+    }
+  }
+
   def generate(prog: Rec[AST.Program.type]): String = {
-    val gen = prog.cata(genAlg)
+    val gen = prog.unfix match {
+      case AST.Program(decls) => genProgram(decls)
+    }
     val (finalSt, mainCode) = gen.run(Nil).run(GenState(Vector.empty, 0, Set.empty, Vector.empty)).value
     val externs = finalSt.externs.toList.sorted.map(sym => s".extern _$sym")
     val strings = if (finalSt.strings.isEmpty) Nil

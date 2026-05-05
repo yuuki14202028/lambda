@@ -81,6 +81,38 @@ object ParserAST {
     }
   }
 
+  private lazy val topLetFunP: Parser[Rec[Decl]] = {
+    val name = Parser.string("let") *> sp *> identifier
+    val typeParams = (sp *> typeParamsP).?.map(_.getOrElse(Nil))
+    val params = sp *> functionParamsP
+    val returnType = sp *> Parser.char(':') *> sp *> typeP
+    val value = sp *> Parser.char('=') *> sp *> expr
+    (name ~ typeParams ~ params ~ returnType ~ value).map { case ((((name, typeParams), params), returnType), value) =>
+      val valueType = polymorphicType(typeParams, functionType(params, returnType))
+      val valueExpr = polymorphicValue(typeParams, functionValue(params, value))
+      topLet(Variable(name), valueType, valueExpr)
+    }
+  }
+
+  private lazy val topLetPolyP: Parser[Rec[Decl]] = {
+    val name = Parser.string("let") *> sp *> identifier
+    val typeParams = sp *> typeParamsP
+    val returnType = sp *> Parser.char(':') *> sp *> typeP
+    val value = sp *> Parser.char('=') *> sp *> expr
+    (name ~ typeParams ~ returnType ~ value).map { case (((name, typeParams), returnType), value) =>
+      topLet(Variable(name), polymorphicType(typeParams, returnType), polymorphicValue(typeParams, value))
+    }
+  }
+
+  private lazy val topLetP: Parser[Rec[Decl]] = {
+    val name = Parser.string("let") *> sp *> identifier
+    val types = sp *> Parser.char(':') *> sp *> typeP
+    val value = sp *> Parser.char('=') *> sp *> expr
+    (name ~ types ~ value).map { case ((name, types), value) =>
+      topLet(Variable(name), types, value)
+    }
+  }
+
   lazy val letPolyP: Parser[Rec[Expr]] = {
     val name = Parser.string("let") *> sp *> identifier
     val typeParams = sp *> typeParamsP
@@ -118,6 +150,41 @@ object ParserAST {
     }
   }
 
+  private lazy val topLetRecFunP: Parser[Rec[Decl]] = {
+    val gap = Parser.charIn(" \t").rep.void
+    val name = Parser.string("let") *> gap *> Parser.string("rec") *> gap *> identifier
+    val typeParams = (sp *> typeParamsP).?.map(_.getOrElse(Nil))
+    val params = sp *> functionParamsP
+    val returnType = sp *> Parser.char(':') *> sp *> typeP
+    val value = sp *> Parser.char('=') *> sp *> expr
+    (name ~ typeParams ~ params ~ returnType ~ value).map { case ((((name, typeParams), params), returnType), value) =>
+      val valueType = polymorphicType(typeParams, functionType(params, returnType))
+      val valueExpr = polymorphicValue(typeParams, functionValue(params, value))
+      topLetRec(Variable(name), valueType, valueExpr)
+    }
+  }
+
+  private lazy val topLetRecPolyP: Parser[Rec[Decl]] = {
+    val gap = Parser.charIn(" \t").rep.void
+    val name = Parser.string("let") *> gap *> Parser.string("rec") *> gap *> identifier
+    val typeParams = sp *> typeParamsP
+    val returnType = sp *> Parser.char(':') *> sp *> typeP
+    val value = sp *> Parser.char('=') *> sp *> expr
+    (name ~ typeParams ~ returnType ~ value).map { case (((name, typeParams), returnType), value) =>
+      topLetRec(Variable(name), polymorphicType(typeParams, returnType), polymorphicValue(typeParams, value))
+    }
+  }
+
+  private lazy val topLetRecP: Parser[Rec[Decl]] = {
+    val gap = Parser.charIn(" \t").rep.void
+    val name = Parser.string("let") *> gap *> Parser.string("rec") *> gap *> identifier
+    val types = sp *> Parser.char(':') *> sp *> typeP
+    val value = sp *> Parser.char('=') *> sp *> expr
+    (name ~ types ~ value).map { case ((name, types), value) =>
+      topLetRec(Variable(name), types, value)
+    }
+  }
+
   lazy val letRecPolyP: Parser[Rec[Expr]] = {
     val gap = Parser.charIn(" \t").rep.void
     val name = Parser.string("let") *> gap *> Parser.string("rec") *> gap *> identifier
@@ -141,6 +208,16 @@ object ParserAST {
     }
   }
 
+  private lazy val topTypeP: Parser[Rec[Decl]] = {
+    val name = Parser.string("type") *> gap *> identifier
+    val param = Parser.char('[') *> sp *> identifier <* sp <* Parser.char(']')
+    val params = param.rep0
+    val alias = sp *> Parser.char('=') *> sp *> typeP
+    (name ~ params ~ alias).map { case ((name, params), alias) =>
+      topType(TypeVariable(name), params.map(TypeVariable(_)), alias)
+    }
+  }
+
   private lazy val dataConstructorP: Parser[DataConstructor[[x] =>> Rec[x]]] = {
     val name = Parser.char('|') *> sp *> identifier
     val field = Parser.char('(') *> sp *> typeP <* sp <* Parser.char(')')
@@ -159,6 +236,19 @@ object ParserAST {
       dataLet(TypeVariable(name), params.map(TypeVariable(_)), constructors.toList, body)
     }
   }
+
+  private lazy val topDataP: Parser[Rec[Decl]] = {
+    val name = Parser.string("data") *> gap *> identifier
+    val param = Parser.char('[') *> sp *> identifier <* sp <* Parser.char(']')
+    val params = param.rep0
+    val constructors = sp *> Parser.char('=') *> sp *> dataConstructorP.repSep(gap)
+    (name ~ params ~ constructors).map { case ((name, params), constructors) =>
+      topData(TypeVariable(name), params.map(TypeVariable(_)), constructors.toList)
+    }
+  }
+
+  private lazy val topDeclP: Parser[Rec[Decl]] =
+    Parser.defer(topDataP.backtrack | topTypeP.backtrack | topLetRecFunP.backtrack | topLetRecPolyP.backtrack | topLetRecP.backtrack | topLetFunP.backtrack | topLetPolyP.backtrack | topLetP)
 
   lazy val typeP: Parser[Rec[Type]] = Parser.defer(forAllP | arrowTypeP)
 
@@ -335,6 +425,6 @@ object ParserAST {
 
   val programParser: Parser0[Rec[AST.Program.type]] = {
     val sep: Parser[Unit] = (sp1.with1 *> Parser.charIn("\n;").rep <* sp).void
-    (sp *> expr.repSep(sep) <* sp).map(nel => program(nel.toList))
+    sp *> topDeclP.repSep(sep).map(decls => program(decls.toList)) <* sp
   }
 }

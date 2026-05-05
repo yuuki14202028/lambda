@@ -15,8 +15,18 @@ trait HTraverse[H[_[_], _]] extends HFunctor[H]:
 
 given HTraverse[AST] with {
   def traverse[G[_]: Applicative, R[_], S[_], I](fa: AST[R, I])(f: [x] => R[x] => G[S[x]]): G[AST[S, I]] = fa match {
-    case AST.Program(body) =>
-      body.toList.traverse(e => f(e)).map(AST.Program(_))
+    case AST.Program(decls) =>
+      decls.toList.traverse(d => f(d)).map(AST.Program(_))
+    case AST.TopLet(v, types, value) =>
+      (f(types), f(value)).mapN(AST.TopLet(v, _, _))
+    case AST.TopLetRec(v, types, value) =>
+      (f(types), f(value)).mapN(AST.TopLetRec(v, _, _))
+    case AST.TopType(v, params, alias) =>
+      f(alias).map(AST.TopType(v, params, _))
+    case AST.TopData(v, params, ctors) =>
+      ctors.toList.traverse { c =>
+        c.fields.toList.traverse(field => f(field)).map(fs => DataConstructor[S](c.name, fs))
+      }.map(AST.TopData(v, params, _))
     case AST.Abs(v, types, body) =>
       (f(types), f(body)).mapN(AST.Abs(v, _, _))
     case AST.TyAbs(v, body) =>
