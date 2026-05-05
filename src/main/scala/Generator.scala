@@ -10,6 +10,12 @@ object Generator {
   type GenS[A] = State[GenState, A]
   type GenR[A] = ReaderT[GenS, Env, A]
   type Gen[I]  = GenR[List[String]]
+  private type Child[I] = (TypeRec[I], Gen[I])
+
+  extension [I](self: Child[I]) {
+    private def original: TypeRec[I] = self._1
+    private def code: Gen[I] = self._2
+  }
 
   private def fresh(prefix: String): GenS[String] = {
     State { st =>
@@ -45,7 +51,12 @@ object Generator {
   private def pure[A](a: A): GenR[A] = ReaderT.pure[GenS, Env, A](a)
   private val ask: GenR[Env] = ReaderT.ask[GenS, Env]
 
-  private def loadImm(n: Int): List[String] = {
+  private def sequenceExprCode(values: List[Gen[Expr]]): GenR[List[List[String]]] =
+    values.foldRight(pure[List[List[String]]](Nil)) { (value, acc) =>
+      value.flatMap(code => acc.map(code :: _))
+    }
+
+  private def loadImm32(n: Int): List[String] = {
     if (n >= 0 && n <= 0xFFFF) List(s"    mov w0, #$n")
     else {
       val low  = n & 0xFFFF
@@ -53,6 +64,25 @@ object Generator {
       val first = s"    movz w0, #$low"
       if (high != 0) List(first, s"    movk w0, #$high, lsl #16") else List(first)
     }
+  }
+
+  private def loadImm64(n: Long): List[String] = {
+    val parts = (0 until 4).map(i => (n >>> (i * 16)) & 0xFFFFL)
+    val firstIdx = parts.indexWhere(_ != 0)
+    if (firstIdx < 0) List("    mov x0, #0")
+    else {
+      val first = s"    movz x0, #${parts(firstIdx)}, lsl #${firstIdx * 16}"
+      first :: parts.zipWithIndex.toList.collect {
+        case (part, idx) if idx != firstIdx && part != 0 => s"    movk x0, #$part, lsl #${idx * 16}"
+      }
+    }
+  }
+
+  private def loadNum(value: String, typeName: String): List[String] = typeName match {
+    case "i64" | "u64" | "isize" | "usize" => loadImm64(java.lang.Long.parseUnsignedLong(value))
+    case "f32" => loadImm32(java.lang.Float.floatToRawIntBits(value.toFloat))
+    case "f64" => loadImm64(java.lang.Double.doubleToRawLongBits(value.toDouble))
+    case _ => loadImm32(java.lang.Integer.parseUnsignedInt(value))
   }
 
   private def varLookup(name: String, env: Env): List[String] = {
@@ -63,17 +93,60 @@ object Generator {
       List("    ldr x0, [x0]")
   }
 
-  private def binInstr(op: BinOps): String = op match {
-    case BinOps.Add => "    add  w0, w1, w0"
-    case BinOps.Sub => "    sub  w0, w1, w0"
-    case BinOps.Mul => "    mul  w0, w1, w0"
-    case BinOps.Div => "    sdiv w0, w1, w0"
-    case BinOps.Eq  => "    cmp  w1, w0\n    cset w0, eq"
-    case BinOps.Neq => "    cmp  w1, w0\n    cset w0, ne"
-    case BinOps.Lt  => "    cmp  w1, w0\n    cset w0, lt"
-    case BinOps.Leq => "    cmp  w1, w0\n    cset w0, le"
-    case BinOps.Gt  => "    cmp  w1, w0\n    cset w0, gt"
-    case BinOps.Geq => "    cmp  w1, w0\n    cset w0, ge"
+  private def primitiveName(t: TypeRec[Type]): Option[String] = t.projectT match {
+    case AST.Primitive(name) => Some(name)
+    case AST.TypeApp(function, _) => primitiveName(function)
+    case _ => None
+  }
+
+  private def is64BitScalar(name: String): Boolean =
+    Set("i64", "u64", "isize", "usize", BuiltinTypes.CString, BuiltinTypes.VoidPtr, BuiltinTypes.Ptr).contains(name)
+
+  private def isUnsigned(name: String): Boolean =
+    Set("u8", "u16", "u32", "u64", "usize").contains(name)
+
+  private def binInstr(op: BinOps, operandType: TypeRec[Type]): List[String] = primitiveName(operandType) match {
+    case Some("f32") =>
+      val opInstr = op match {
+        case BinOps.Add => List("    fmov s1, w1", "    fmov s0, w0", "    fadd s0, s1, s0", "    fmov w0, s0")
+        case BinOps.Sub => List("    fmov s1, w1", "    fmov s0, w0", "    fsub s0, s1, s0", "    fmov w0, s0")
+        case BinOps.Mul => List("    fmov s1, w1", "    fmov s0, w0", "    fmul s0, s1, s0", "    fmov w0, s0")
+        case BinOps.Div => List("    fmov s1, w1", "    fmov s0, w0", "    fdiv s0, s1, s0", "    fmov w0, s0")
+        case BinOps.Eq  => List("    fmov s1, w1", "    fmov s0, w0", "    fcmp s1, s0", "    cset w0, eq")
+        case BinOps.Neq => List("    fmov s1, w1", "    fmov s0, w0", "    fcmp s1, s0", "    cset w0, ne")
+        case BinOps.Lt  => List("    fmov s1, w1", "    fmov s0, w0", "    fcmp s1, s0", "    cset w0, lt")
+        case BinOps.Leq => List("    fmov s1, w1", "    fmov s0, w0", "    fcmp s1, s0", "    cset w0, le")
+        case BinOps.Gt  => List("    fmov s1, w1", "    fmov s0, w0", "    fcmp s1, s0", "    cset w0, gt")
+        case BinOps.Geq => List("    fmov s1, w1", "    fmov s0, w0", "    fcmp s1, s0", "    cset w0, ge")
+      }
+      opInstr
+    case Some("f64") =>
+      op match {
+        case BinOps.Add => List("    fmov d1, x1", "    fmov d0, x0", "    fadd d0, d1, d0", "    fmov x0, d0")
+        case BinOps.Sub => List("    fmov d1, x1", "    fmov d0, x0", "    fsub d0, d1, d0", "    fmov x0, d0")
+        case BinOps.Mul => List("    fmov d1, x1", "    fmov d0, x0", "    fmul d0, d1, d0", "    fmov x0, d0")
+        case BinOps.Div => List("    fmov d1, x1", "    fmov d0, x0", "    fdiv d0, d1, d0", "    fmov x0, d0")
+        case BinOps.Eq  => List("    fmov d1, x1", "    fmov d0, x0", "    fcmp d1, d0", "    cset w0, eq")
+        case BinOps.Neq => List("    fmov d1, x1", "    fmov d0, x0", "    fcmp d1, d0", "    cset w0, ne")
+        case BinOps.Lt  => List("    fmov d1, x1", "    fmov d0, x0", "    fcmp d1, d0", "    cset w0, lt")
+        case BinOps.Leq => List("    fmov d1, x1", "    fmov d0, x0", "    fcmp d1, d0", "    cset w0, le")
+        case BinOps.Gt  => List("    fmov d1, x1", "    fmov d0, x0", "    fcmp d1, d0", "    cset w0, gt")
+        case BinOps.Geq => List("    fmov d1, x1", "    fmov d0, x0", "    fcmp d1, d0", "    cset w0, ge")
+      }
+    case Some(name) =>
+      val r = if (is64BitScalar(name)) "x" else "w"
+      val signedCond = Map(BinOps.Lt -> "lt", BinOps.Leq -> "le", BinOps.Gt -> "gt", BinOps.Geq -> "ge")
+      val unsignedCond = Map(BinOps.Lt -> "lo", BinOps.Leq -> "ls", BinOps.Gt -> "hi", BinOps.Geq -> "hs")
+      op match {
+        case BinOps.Add => List(s"    add  ${r}0, ${r}1, ${r}0")
+        case BinOps.Sub => List(s"    sub  ${r}0, ${r}1, ${r}0")
+        case BinOps.Mul => List(s"    mul  ${r}0, ${r}1, ${r}0")
+        case BinOps.Div => List(s"    ${if (isUnsigned(name)) "udiv" else "sdiv"} ${r}0, ${r}1, ${r}0")
+        case BinOps.Eq  => List(s"    cmp  ${r}1, ${r}0", "    cset w0, eq")
+        case BinOps.Neq => List(s"    cmp  ${r}1, ${r}0", "    cset w0, ne")
+        case cmp        => List(s"    cmp  ${r}1, ${r}0", s"    cset w0, ${if (isUnsigned(name)) unsignedCond(cmp) else signedCond(cmp)}")
+      }
+    case None => sys.error(s"Unsupported binary operand type: ${operandType.show}")
   }
 
   private def asmString(value: String): String =
@@ -109,15 +182,29 @@ object Generator {
     )
   }
 
-  private def foreignWrapper(label: String, symbol: String): List[String] = List(
-    "", ".p2align 2", s"$label:",
-    "    stp x29, x30, [sp, #-16]!",
-    "    mov x29, sp",
-    "    mov x0, x1",
-    s"    bl _$symbol",
-    "    ldp x29, x30, [sp], #16",
-    "    ret"
-  )
+  private def foreignArgMove(t: TypeRec[Type]): List[String] = primitiveName(t) match {
+    case Some("f32") => List("    fmov s0, w1")
+    case Some("f64") => List("    fmov d0, x1")
+    case _ => List("    mov x0, x1")
+  }
+
+  private def foreignReturnMove(t: TypeRec[Type]): List[String] = primitiveName(t) match {
+    case Some("f32") => List("    fmov w0, s0")
+    case Some("f64") => List("    fmov x0, d0")
+    case _ => Nil
+  }
+
+  private def foreignWrapper(label: String, symbol: String, argType: TypeRec[Type], returnType: TypeRec[Type]): List[String] =
+    List(
+      "", ".p2align 2", s"$label:",
+      "    stp x29, x30, [sp, #-16]!",
+      "    mov x29, sp"
+    ) ++ foreignArgMove(argType) ++ List(
+      s"    bl _$symbol"
+    ) ++ foreignReturnMove(returnType) ++ List(
+      "    ldp x29, x30, [sp], #16",
+      "    ret"
+    )
 
   private def closureAlloc(label: String): List[String] = List(
     "    mov x0, #16",
@@ -149,41 +236,46 @@ object Generator {
     "    ret"
   )
 
-  private val genAlg: Algebra[AST, Gen] = [x] => (node: AST[Gen, x]) => node match {
-    case AST.Num(v) => pure(loadImm(v))
-    case AST.Char(v) => pure(loadImm(v.toInt))
+  private val genAlg: HCofreeParaAlgebra[AST, TypeAnn, Gen] = [x] => (ann, node) => node match {
+    case AST.Num(v, t) => pure(loadNum(v, t))
+    case AST.Char(v) => pure(loadImm32(v.toInt))
     case AST.StringLit(v) => for {
       lbl <- liftS(addString(v))
     } yield List(
       s"    adrp x0, $lbl@PAGE",
       s"    add x0, x0, $lbl@PAGEOFF"
     )
-    case AST.Bool(v) => pure(loadImm(if (v) 1 else 0))
-    case AST.UnitLit() => pure(loadImm(0))
+    case AST.Bool(v) => pure(loadImm32(if (v) 1 else 0))
+    case AST.UnitLit() => pure(loadImm32(0))
 
     case AST.Block(discarded, result) => for {
-      discardedCode <- discarded.toList.sequence
+      discardedCode <- sequenceExprCode(discarded.toList.map(_.code))
       resultCode <- result match {
-        case Some(expr) => expr
-        case None => pure(loadImm(0))
+        case Some(expr) => expr.code
+        case None => pure(loadImm32(0))
       }
     } yield discardedCode.flatten ++ resultCode
 
     case AST.UnaryOp(UnaryOps.Neg, body) => {
-      body.map(_ ++ List("    neg w0, w0"))
+      body.code.map(_ ++ (primitiveName(typeOf(body.original)) match {
+        case Some("f32") => List("    fmov s0, w0", "    fneg s0, s0", "    fmov w0, s0")
+        case Some("f64") => List("    fmov d0, x0", "    fneg d0, d0", "    fmov x0, d0")
+        case Some(name) if is64BitScalar(name) => List("    neg x0, x0")
+        case _ => List("    neg w0, w0")
+      }))
     }
     case AST.UnaryOp(UnaryOps.Not, body) => {
-      body.map(_ ++ List(
+      body.code.map(_ ++ List(
         "    cmp w0, #0",
         "    cset w0, eq"
       ))
     }
 
     case AST.BinOp(op, l, r) => for {
-      lc <- l
+      lc <- l.code
       str = List("    str x0, [sp, #-16]!")
-      rc <- r
-      ldr = List("    ldr x1, [sp], #16", binInstr(op))
+      rc <- r.code
+      ldr = "    ldr x1, [sp], #16" :: binInstr(op, typeOf(l.original))
     } yield lc ++ str ++ rc ++ ldr
 
     case AST.Var(Variable(name)) =>
@@ -191,8 +283,12 @@ object Generator {
 
     case AST.Foreign(Variable(name), _) => for {
       lbl <- liftS(fresh(s"foreign_$name"))
+      (argType, returnType) = ann match {
+        case ExprAnn(t) => destructArrow(t).getOrElse(sys.error(s"Foreign must have function type: ${t.show}"))
+        case _ => sys.error("Foreign node must have expression annotation")
+      }
       _   <- liftS(addExtern(name))
-      _   <- liftS(addFunc(foreignWrapper(lbl, name)))
+      _   <- liftS(addFunc(foreignWrapper(lbl, name, argType, returnType)))
     } yield List(
       "    mov x0, #16",
       "    bl _malloc",
@@ -205,15 +301,15 @@ object Generator {
 
     case AST.Abs(Variable(param), types, body) => for {
       lbl <- liftS(fresh("lambda"))
-      bc  <- body.local((env: Env) => param :: env)
+      bc  <- body.code.local((env: Env) => param :: env)
       _   <- liftS(addFunc(liftedFn(lbl, bc)))
     } yield closureAlloc(lbl)
 
-    case AST.TyAbs(_, body) => body
+    case AST.TyAbs(_, body) => body.code
 
     case AST.Let(Variable(param), types, value, body) => for {
-      vc <- value
-      bc <- body.local((env: Env) => param :: env)
+      vc <- value.code
+      bc <- body.code.local((env: Env) => param :: env)
     } yield vc ++ List(
       "    ldr x9, [x29, #-16]",
       "    str x9, [sp, #-16]!",
@@ -234,8 +330,8 @@ object Generator {
     )
 
     case AST.LetRec(Variable(param), types, value, body) => for {
-      vc <- value.local((env: Env) => param :: env)
-      bc <- body.local((env: Env) => param :: env)
+      vc <- value.code.local((env: Env) => param :: env)
+      bc <- body.code.local((env: Env) => param :: env)
     } yield List(
       "    ldr x9, [x29, #-16]",
       "    str x9, [sp, #-16]!",
@@ -257,32 +353,32 @@ object Generator {
       "    mov x0, x9"
     )
 
-    case AST.TypeLet(_, _, _, body) => body
+    case AST.TypeLet(_, _, _, body) => body.code
     case AST.DataLet(_, _, _, _) => pure(sys.error("DataLet must be Church encoded before code generation"))
     case AST.Match(_, _) => pure(sys.error("Match must be Church encoded before code generation"))
 
     case AST.App(f, a) => for {
-      fc <- f
+      fc <- f.code
       str = List("    str x0, [sp, #-16]!")
-      ac <- a
+      ac <- a.code
     } yield fc ++ str ++ ac ++ appSeq
 
-    case AST.TyApp(f, _) => f
+    case AST.TyApp(f, _) => f.code
 
     case AST.If(c, t, e) => for {
       l <- liftS(label())
-      cond <- c
+      cond <- c.code
       ct = List(
         s"    cbnz w0, .${l}true",
         s"    b .${l}false",
         s".${l}true:"
       )
-      trB <- t
+      trB <- t.code
       te = List(
         s"    b .${l}end",
         s".${l}false:"
       )
-      elB <- e
+      elB <- e.code
       end = List(
         s".${l}end:"
       )
@@ -304,7 +400,7 @@ object Generator {
     case AST.TypeApp(_, _) => pure(Nil)
   }
 
-  private def genExpr(expr: Rec[Expr]): Gen[Expr] = expr.cata(genAlg)
+  private def genExpr(expr: TypeRec[Expr]): Gen[Expr] = expr.paraAnn(genAlg)
 
   private def bindTop(valueCode: List[String]): List[String] =
     valueCode ++ List(
@@ -320,7 +416,7 @@ object Generator {
       "    str x0, [x29, #-16]"
     )
 
-  private def genDecl(decl: Rec[Decl], env: Env): GenS[(List[String], Env)] = decl.unfix match {
+  private def genDecl(decl: TypeRec[Decl], env: Env): GenS[(List[String], Env)] = decl.tail match {
     case AST.TopLet(Variable(param), _, value) =>
       genExpr(value).run(env).map(code => (bindTop(code), param :: env))
 
@@ -348,19 +444,19 @@ object Generator {
     case AST.TopData(_, _, _) => State.pure((Nil, env))
   }
 
-  private def genProgram(decls: Seq[Rec[Decl]]): GenR[List[String]] = ReaderT { initialEnv =>
+  private def genProgram(decls: Seq[TypeRec[Decl]]): GenR[List[String]] = ReaderT { initialEnv =>
     decls.foldLeft(State.pure[GenState, (List[String], Env)]((Nil, initialEnv))) { (acc, decl) =>
       acc.flatMap { case (code, env) =>
         genDecl(decl, env).map { case (declCode, nextEnv) => (code ++ declCode, nextEnv) }
       }
     }.flatMap { case (declCode, env) =>
-      val main = app(varr(Variable("main")), unitLit)
+      val main = appT(intTypeT, varrType(Variable("main"), arrowT(unitTypeT, intTypeT)), unitLitT(unitTypeT))
       genExpr(main).run(env).map(mainCode => mainWrapper(declCode ++ mainCode))
     }
   }
 
-  def generate(prog: Rec[AST.Program.type]): String = {
-    val gen = prog.unfix match {
+  def generate(prog: TypeRec[AST.Program.type]): String = {
+    val gen = prog.tail match {
       case AST.Program(decls) => genProgram(decls)
     }
     val (finalSt, mainCode) = gen.run(Nil).run(GenState(Vector.empty, 0, Set.empty, Vector.empty)).value

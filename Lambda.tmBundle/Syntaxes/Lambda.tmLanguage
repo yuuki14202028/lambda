@@ -457,13 +457,13 @@
           <key>name</key>
           <string>entity.name.function.constructor.lambda</string>
           <key>match</key>
-          <string>\b(?!(?:Int|Char|Bool|String|Unit)\b)[A-Z][A-Za-z0-9_]*\b(?=\s*(?:\[|\())</string>
+          <string>\b[A-Z][A-Za-z0-9_]*\b(?=\s*(?:\[|\())</string>
         </dict>
         <dict>
           <key>name</key>
           <string>constant.language.constructor.lambda</string>
           <key>match</key>
-          <string>\b(?!(?:Int|Char|Bool|String|Unit)\b)[A-Z][A-Za-z0-9_]*\b</string>
+          <string>\b[A-Z][A-Za-z0-9_]*\b</string>
         </dict>
       </array>
     </dict>
@@ -566,13 +566,13 @@
           <key>name</key>
           <string>storage.type.primitive.lambda</string>
           <key>match</key>
-          <string>\b(?:Int|Char|Bool|String|Unit)\b</string>
+          <string>\b(?:i8|i16|i32|i64|u8|u16|u32|u64|f32|f64|isize|usize|char|bool|unit|foreign\.C\.(?:String|VoidPtr|Ptr))\b</string>
         </dict>
         <dict>
           <key>name</key>
           <string>entity.name.class</string>
           <key>match</key>
-          <string>\b[A-Z][A-Za-z0-9_]*\b(?=\s*\[)</string>
+          <string>\b[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*\b(?=\s*\[)</string>
         </dict>
         <dict>
           <key>name</key>
@@ -584,7 +584,7 @@
           <key>name</key>
           <string>entity.name.class</string>
           <key>match</key>
-          <string>\b[A-Z][A-Za-z0-9_]*\b</string>
+          <string>\b[A-Z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*\b</string>
         </dict>
         <dict>
           <key>name</key>
@@ -606,9 +606,15 @@
         </dict>
         <dict>
           <key>name</key>
+          <string>constant.numeric.float.lambda</string>
+          <key>match</key>
+          <string>\b[0-9]+\.[0-9]+(?:[eE][+-]?[0-9]+)?(?:f32|f64)?\b</string>
+        </dict>
+        <dict>
+          <key>name</key>
           <string>constant.numeric.integer.lambda</string>
           <key>match</key>
-          <string>\b[0-9]+\b</string>
+          <string>\b[0-9]+(?:i8|i16|i32|i64|isize|u8|u16|u32|u64|usize)?\b</string>
         </dict>
         <dict>
           <key>name</key>

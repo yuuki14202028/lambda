@@ -27,7 +27,7 @@ def main(): Unit = {
         case Right(encoded) => encoded
       }
       println(eraseAnn(encoded).show)
-      val asm = Generator.generate(eraseAnn[AST.Program.type](encoded))
+      val asm = Generator.generate(encoded)
       val outDir = Paths.get("build")
       Files.createDirectories(outDir)
       Files.writeString(outDir.resolve("out.s"), asm)

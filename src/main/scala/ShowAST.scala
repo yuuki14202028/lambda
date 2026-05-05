@@ -42,7 +42,7 @@ val showAlg: Algebra[AST, ShowResult] = [x] => node => node match {
   case AST.TyApp(func, arg)        => s"$func[$arg]"
   case AST.Foreign(v, types)       => s"foreign[$types] ${v.name}"
   case AST.Var(v)                  => s"${v.name}"
-  case AST.Num(v)                  => s"$v"
+  case AST.Num(v, t)               => if (t == "i32" || t == "f64" && v.exists(ch => ch == '.' || ch == 'e' || ch == 'E')) v else s"$v$t"
   case AST.Char(v)                 => s"$v"
   case AST.StringLit(v)            => "\"" + v.flatMap {
     case '"' => "\\\""

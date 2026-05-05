@@ -54,7 +54,7 @@ given HTraverse[AST] with {
     case AST.Foreign(v, types) =>
       f(types).map(AST.Foreign(v, _))
     case AST.Var(v) => Applicative[G].pure(AST.Var(v))
-    case AST.Num(v) => Applicative[G].pure(AST.Num(v))
+    case AST.Num(v, t) => Applicative[G].pure(AST.Num(v, t))
     case AST.Char(v) => Applicative[G].pure(AST.Char(v))
     case AST.StringLit(v) => Applicative[G].pure(AST.StringLit(v))
     case AST.Bool(v) => Applicative[G].pure(AST.Bool(v))

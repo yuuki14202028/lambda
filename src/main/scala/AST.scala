@@ -28,7 +28,7 @@ enum AST[R[_], I] {
   case TyApp(function: R[Expr], argument: R[Type]) extends AST[R, Expr]
   case Foreign(value: Variable, types: R[Type]) extends AST[R, Expr]
   case Var(value: Variable) extends AST[R, Expr]
-  case Num(value: Int) extends AST[R, Expr]
+  case Num(value: String, typeName: String) extends AST[R, Expr]
   case Char(value: scala.Char) extends AST[R, Expr]
   case StringLit(value: String) extends AST[R, Expr]
   case Bool(value: Boolean) extends AST[R, Expr]
@@ -78,6 +78,51 @@ case class Variable(name: String) {
 case class TypeVariable(name: String) {
 }
 
+object BuiltinTypes {
+  val Ptr: String = "foreign.C.Ptr"
+  val CString: String = "foreign.C.String"
+  val VoidPtr: String = "foreign.C.VoidPtr"
+
+  val primitiveArities: Map[String, Int] = Map(
+    "i8" -> 0,
+    "i16" -> 0,
+    "i32" -> 0,
+    "i64" -> 0,
+    "u8" -> 0,
+    "u16" -> 0,
+    "u32" -> 0,
+    "u64" -> 0,
+    "f32" -> 0,
+    "f64" -> 0,
+    "isize" -> 0,
+    "usize" -> 0,
+    "char" -> 0,
+    "bool" -> 0,
+    "unit" -> 0,
+    CString -> 0,
+    VoidPtr -> 0,
+    Ptr -> 1
+  )
+
+  val integerTypes: Set[String] =
+    Set("i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64", "isize", "usize")
+
+  val floatTypes: Set[String] =
+    Set("f32", "f64")
+
+  val numericTypes: Set[String] =
+    integerTypes ++ floatTypes
+
+  val equatableTypes: Set[String] =
+    numericTypes ++ Set("char", "bool")
+
+  def isPrimitive(name: String): Boolean =
+    primitiveArities.contains(name)
+
+  def arity(name: String): Option[Int] =
+    primitiveArities.get(name)
+}
+
 case class HFix[H[_[_], _], I](unfix: H[[x] =>> HFix[H, x], I])
 type Rec[I] = HFix[AST, I]
 
@@ -102,7 +147,7 @@ def app(function: Rec[Expr], argument: Rec[Expr]): Rec[Expr] = HFix(AST.App(func
 def tyApp(function: Rec[Expr], argument: Rec[Type]): Rec[Expr] = HFix(AST.TyApp(function, argument))
 def foreign(variable: Variable, types: Rec[Type]): Rec[Expr] = HFix(AST.Foreign(variable, types))
 def varr(variable: Variable): Rec[Expr] = HFix(AST.Var(variable))
-def num(value: Int): Rec[Expr] = HFix(AST.Num(value))
+def num(value: String, typeName: String): Rec[Expr] = HFix(AST.Num(value, typeName))
 def char(value: scala.Char): Rec[Expr] = HFix(AST.Char(value))
 def stringLit(value: String): Rec[Expr] = HFix(AST.StringLit(value))
 def bool(value: Boolean): Rec[Expr] = HFix(AST.Bool(value))
@@ -117,11 +162,11 @@ def arrow(from: Rec[Type], to: Rec[Type]): Rec[Type] = HFix(AST.Arrow(from, to))
 def forallType(variable: TypeVariable, body: Rec[Type]): Rec[Type] = HFix(AST.ForAll(variable, body))
 def typeApp(function: Rec[Type], argument: Rec[Type]): Rec[Type] = HFix(AST.TypeApp(function, argument))
 
-def intType: Rec[Type] = primitive("Int")
-def charType: Rec[Type] = primitive("Char")
-def stringType: Rec[Type] = primitive("String")
-def boolType: Rec[Type] = primitive("Bool")
-def unitType: Rec[Type] = primitive("Unit")
+def intType: Rec[Type] = primitive("i32")
+def charType: Rec[Type] = primitive("char")
+def stringType: Rec[Type] = primitive(BuiltinTypes.CString)
+def boolType: Rec[Type] = primitive("bool")
+def unitType: Rec[Type] = primitive("unit")
 
 type TypeRec[I] = HCofree[AST, TypeAnn, I]
 
@@ -160,7 +205,7 @@ def tyAppT(t: TypeRec[Type], function: TypeRec[Expr], argument: TypeRec[Type]): 
   HCofree(ExprAnn(t), AST.TyApp(function, argument))
 def foreignT(variable: Variable, t: TypeRec[Type], types: TypeRec[Type]): TypeRec[Expr] = HCofree(ExprAnn(t), AST.Foreign(variable, types))
 def varrType(variable: Variable, t: TypeRec[Type]): TypeRec[Expr] = HCofree(ExprAnn(t), AST.Var(variable))
-def numT(value: Int, t: TypeRec[Type]): TypeRec[Expr] = HCofree(ExprAnn(t), AST.Num(value))
+def numT(value: String, typeName: String, t: TypeRec[Type]): TypeRec[Expr] = HCofree(ExprAnn(t), AST.Num(value, typeName))
 def charT(value: scala.Char, t: TypeRec[Type]): TypeRec[Expr] = HCofree(ExprAnn(t), AST.Char(value))
 def stringLitT(value: String, t: TypeRec[Type]): TypeRec[Expr] = HCofree(ExprAnn(t), AST.StringLit(value))
 def boolT(value: Boolean, t: TypeRec[Type]): TypeRec[Expr] = HCofree(ExprAnn(t), AST.Bool(value))
@@ -179,11 +224,11 @@ def arrowT(from: TypeRec[Type], to: TypeRec[Type]): TypeRec[Type] = HCofree(Type
 def forallTypeT(variable: TypeVariable, body: TypeRec[Type]): TypeRec[Type] = HCofree(TypeAnn, AST.ForAll(variable, body))
 def typeAppT(function: TypeRec[Type], argument: TypeRec[Type]): TypeRec[Type] = HCofree(TypeAnn, AST.TypeApp(function, argument))
 
-def intTypeT: TypeRec[Type] = primitiveT("Int")
-def charTypeT: TypeRec[Type] = primitiveT("Char")
-def stringTypeT: TypeRec[Type] = primitiveT("String")
-def boolTypeT: TypeRec[Type] = primitiveT("Bool")
-def unitTypeT: TypeRec[Type] = primitiveT("Unit")
+def intTypeT: TypeRec[Type] = primitiveT("i32")
+def charTypeT: TypeRec[Type] = primitiveT("char")
+def stringTypeT: TypeRec[Type] = primitiveT(BuiltinTypes.CString)
+def boolTypeT: TypeRec[Type] = primitiveT("bool")
+def unitTypeT: TypeRec[Type] = primitiveT("unit")
 
 def typeOf(expr: TypeRec[Expr]): TypeRec[Type] = expr.head match {
   case ExprAnn(t) => t
@@ -273,11 +318,17 @@ def sameType(left: TypeRec[Type], right: TypeRec[Type]): Boolean = {
 }
 
 def isNumericType(t: TypeRec[Type]): Boolean = {
-  sameType(t, intTypeT) || sameType(t, charTypeT)
+  t.projectT match {
+    case AST.Primitive(name) => BuiltinTypes.numericTypes.contains(name)
+    case _ => false
+  }
 }
 
 def isEquatableType(t: TypeRec[Type]): Boolean = {
-  isNumericType(t) || sameType(t, boolTypeT)
+  t.projectT match {
+    case AST.Primitive(name) => BuiltinTypes.equatableTypes.contains(name)
+    case _ => false
+  }
 }
 
 def collectTypeApps(t: TypeRec[Type]): (TypeRec[Type], Seq[TypeRec[Type]]) = {

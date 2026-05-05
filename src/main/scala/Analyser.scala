@@ -27,10 +27,10 @@ object Analyser {
     guard(sameType(expected, actual), s"Type mismatch: expected ${expected.show}, actual ${actual.show}")
 
   private def expectNumeric(actual: TypeRec[Type]): Check[Unit] =
-    guard(isNumericType(actual), s"Type mismatch: expected Int or Char, actual ${actual.show}")
+    guard(isNumericType(actual), s"Type mismatch: expected numeric, actual ${actual.show}")
 
   private def expectEquatable(actual: TypeRec[Type]): Check[Unit] =
-    guard(isEquatableType(actual), s"Type mismatch: expected Int, Char, or Bool, actual ${actual.show}")
+    guard(isEquatableType(actual), s"Type mismatch: expected numeric, char, or bool, actual ${actual.show}")
 
   private def expectForeignType(t: TypeRec[Type]): Check[Unit] = destructArrow(t) match {
     case Some((_, to)) if destructArrow(to).isEmpty => ReaderT.pure(())
@@ -87,14 +87,30 @@ object Analyser {
     spine match {
       case Some(TypeSpine(head, args)) => head.projectT match {
         case AST.TypeVar(variable) if !env.typeVars.contains(variable) => expandDefinedType(variable, args, env)
+        case AST.Primitive(name) => expandPrimitive(name, args, env)
         case _ => Left(s"Type application is not supported: ${self.show}")
       }
       case None => Left(s"Type application is not supported: ${self.show}")
     }
 
+  private def expandPrimitive(name: String, args: Seq[Expand[Type]], env: Env): EitherS[TypeRec[Type]] =
+    BuiltinTypes.arity(name) match {
+      case Some(expected) if expected == args.length =>
+        args.toList.traverse(arg => arg(env).value).map(expandedArgs =>
+          expandedArgs.foldLeft(primitiveT(name)) { (acc, arg) => typeAppT(acc, arg) }
+        )
+      case Some(expected) =>
+        Left(s"Primitive type $name expects $expected arguments, got ${args.length}")
+      case None =>
+        Left(s"Primitive type $name is not defined")
+    }
+
   private val expandAlg: HCofreeParaAlgebra[AST, TypeAnn, Expand] = [x] => (ann, node) => env => node match {
     case AST.TypeVar(variable) =>
       TypeExpansion(expandTypeName(variable, env), Some(typeNameSpine(variable)))
+
+    case AST.Primitive(name) =>
+      TypeExpansion(expandPrimitive(name, Seq.empty, env), Some(TypeSpine(primitiveT(name), Seq.empty)))
 
     case AST.ForAll(variable, body) =>
       val value = for {
@@ -324,7 +340,9 @@ object Analyser {
       t <- lift(env.values.get(value).toRight(s"Variable $value is not defined"))
     } yield varrType(value, t)
 
-    case AST.Num(value) => okT(numT(value, intTypeT))
+    case AST.Num(value, typeName) =>
+      if (BuiltinTypes.numericTypes.contains(typeName)) okT(numT(value, typeName, primitiveT(typeName)))
+      else fail(s"Numeric literal type $typeName is not defined")
     case AST.Char(value) => okT(charT(value, charTypeT))
     case AST.StringLit(value) => okT(stringLitT(value, stringTypeT))
     case AST.Bool(value) => okT(boolT(value, boolTypeT))
@@ -373,10 +391,11 @@ object Analyser {
       _ <- expect(thenType, elseType)
     } yield ifT(thenType, typedCond, typedThen, typedElse)
 
-    case AST.Primitive(name) => name match {
-      case "Int" | "Char" | "String" | "Bool" | "Unit" => okT(primitiveT(name))
-      case _ => fail(s"Primitive type $name is not defined")
-    }
+    case AST.Primitive(name) =>
+      BuiltinTypes.arity(name) match {
+        case Some(_) => okT(primitiveT(name))
+        case None => fail(s"Primitive type $name is not defined")
+      }
     case AST.TypeVar(variable) => for {
       env <- ask
       _ <- guard(
@@ -467,7 +486,7 @@ object Analyser {
       }.flatMap { case (typedDecls, env) =>
         env.values.get(Variable("main")) match {
           case Some(t) if sameType(t, arrowT(unitTypeT, intTypeT)) => Right(programT(typedDecls))
-          case Some(t) => Left(s"Top-level main must have type Unit → Int, actual ${t.show}")
+          case Some(t) => Left(s"Top-level main must have type unit → i32, actual ${t.show}")
           case None => Left("Top-level main is not defined")
         }
       }

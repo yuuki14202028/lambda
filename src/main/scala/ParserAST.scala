@@ -13,6 +13,10 @@ object ParserAST {
     (identStart ~ identChar.rep0).map { case (head, tail) =>
       (head :: tail.toList).mkString
     }
+  private val typeIdentifier: Parser[String] =
+    (identifier ~ (Parser.char('.') *> identifier).rep0).map { case (head, tail) =>
+      (head :: tail.toList).mkString(".")
+    }
 
   lazy val expr: Parser[Rec[Expr]] =
     Parser.defer(dataLetP | matchP | typeLetP | tyAbsP | absP | letSeriesP | ifP | equitive)
@@ -275,17 +279,15 @@ object ParserAST {
 
   private lazy val typeAtomP: Parser[Rec[Type]] = {
     val parens = Parser.char('(') *> sp *> Parser.defer(typeP) <* sp <* Parser.char(')')
-    primitiveP | typeVarP | parens
+    val unit = (Parser.char('(') *> sp *> Parser.char(')')).as(unitType).backtrack
+    unit | namedTypeP | parens
   }
 
-  private lazy val primitiveP: Parser[Rec[Type]] = {
-    Parser.string("Int").as(primitive("Int")) |
-    Parser.string("Char").as(primitive("Char")) |
-    Parser.string("String").as(primitive("String")) |
-    Parser.string("Bool").as(primitive("Bool")) |
-    Parser.string("Unit").as(unitType) |
-    (Parser.char('(') *> sp *> Parser.char(')')).as(unitType).backtrack
-  }
+  private lazy val namedTypeP: Parser[Rec[Type]] =
+    typeIdentifier.map { name =>
+      if (BuiltinTypes.isPrimitive(name)) primitive(name)
+      else typeVar(TypeVariable(name))
+    }
 
   private lazy val typeVarP: Parser[Rec[Type]] =
     identifier.map(n => typeVar(TypeVariable(n)))
@@ -398,8 +400,30 @@ object ParserAST {
   val varP: Parser[Rec[Expr]] =
     identifier.map(n => varr(Variable(n)))
 
-  val numP: Parser[Rec[Expr]] =
-    Numbers.digits.map(_.toInt).map(num)
+  private val intSuffixP: Parser[String] =
+    Parser.string("isize").as("isize") |
+    Parser.string("usize").as("usize") |
+    Parser.string("i8").as("i8") |
+    Parser.string("i16").as("i16") |
+    Parser.string("i32").as("i32") |
+    Parser.string("i64").as("i64") |
+    Parser.string("u8").as("u8") |
+    Parser.string("u16").as("u16") |
+    Parser.string("u32").as("u32") |
+    Parser.string("u64").as("u64")
+
+  private val floatSuffixP: Parser[String] =
+    Parser.string("f32").as("f32") | Parser.string("f64").as("f64")
+
+  val numP: Parser[Rec[Expr]] = {
+    val digits = Numbers.digits
+    val exponent = Parser.charIn("eE") ~ Parser.charIn("+-").? ~ digits
+    val floatValue = (digits ~ Parser.char('.') ~ digits ~ exponent.?).string
+    val intValue = digits
+    val floatLit = (floatValue ~ floatSuffixP.?).map { case (value, suffix) => num(value, suffix.getOrElse("f64")) }
+    val intLit = (intValue ~ intSuffixP.?).map { case (value, suffix) => num(value, suffix.getOrElse("i32")) }
+    floatLit.backtrack | intLit
+  }
 
   val charP: Parser[Rec[Expr]] =
     Parser.char('\'') *> alpha.map(char) <* Parser.char('\'')

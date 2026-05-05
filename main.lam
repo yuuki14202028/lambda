@@ -1,12 +1,12 @@
-let put: Int → Int = foreign[Int → Int] put_char
-let print: Int → Int = foreign[Int → Int] print_int
-let puts: String → Int = foreign[String → Int] puts
+let put: i32 → i32 = foreign[i32 → i32] put_char
+let print: i32 → i32 = foreign[i32 → i32] print_int
+let puts: foreign.C.String → i32 = foreign[foreign.C.String → i32] puts
 
 data Option[A] =
   | None
   | Some(A)
 
-let printOption(option: Option[Int]): Int =
+let printOption(option: Option[i32]): i32 =
   match option with
     | None -> puts("None!")
     | Some(n) -> print(n)
@@ -16,16 +16,16 @@ let map[T][U](option: Option[T])(f: T → U): Option[U] =
     | None -> None[U]
     | Some(n) -> Some[U](f(n))
 
-let add(x: Int)(y: Int): Int = x + y
+let add(x: i32)(y: i32): i32 = x + y
 
-let someValue: Option[Int] =
-  Some[Int](42)
+let someValue: Option[i32] =
+  Some[i32](42)
 
-let noneValue: Option[Int] =
-  None[Int]
+let noneValue: Option[i32] =
+  None[i32]
 
-let main(): Int = {
-  printOption(map[Int][Int](someValue)(add(1)));
-  printOption(map[Int][Int](noneValue)(add(1)));
+let main(): i32 = {
+  printOption(map[i32][i32](someValue)(add(1)));
+  printOption(map[i32][i32](noneValue)(add(1)));
   0
 }
