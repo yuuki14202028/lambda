@@ -84,8 +84,7 @@ object Generator {
       case '\r' => "\\r"
       case '\t' => "\\t"
       case '\u0000' => "\\0"
-      case ch if ch >= ' ' && ch <= '~' => ch.toString
-      case ch => f"\\${ch.toInt & 0xff}%03o"
+      case ch => ch.toString
     }
 
   private def liftedFn(label: String, body: List[String]): List[String] = {
