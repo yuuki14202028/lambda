@@ -16,14 +16,15 @@ enum AST[R[_], I] {
   case TopLet(variable: Variable, types: R[Type], value: R[Expr]) extends AST[R, Decl]
   case TopLetRec(variable: Variable, types: R[Type], value: R[Expr]) extends AST[R, Decl]
   case TopType(variable: TypeVariable, params: Seq[TypeVariable], alias: R[Type]) extends AST[R, Decl]
-  case TopData(variable: TypeVariable, params: Seq[TypeVariable], constructors: Seq[DataConstructor[R]]) extends AST[R, Decl]
+  case TopData(variable: TypeVariable, params: Seq[TypeVariable], constructors: Seq[DataConstructor[R]], recursive: Boolean) extends AST[R, Decl]
   case Abs(variable: Variable, types: R[Type], body: R[Expr]) extends AST[R, Expr]
   case TyAbs(variable: TypeVariable, body: R[Expr]) extends AST[R, Expr]
   case Let(variable: Variable, types: R[Type], value: R[Expr], body: R[Expr]) extends AST[R, Expr]
   case LetRec(variable: Variable, types: R[Type], value: R[Expr], body: R[Expr]) extends AST[R, Expr]
   case TypeLet(variable: TypeVariable, params: Seq[TypeVariable], alias: R[Type], body: R[Expr]) extends AST[R, Expr]
-  case DataLet(variable: TypeVariable, params: Seq[TypeVariable], constructors: Seq[DataConstructor[R]], body: R[Expr]) extends AST[R, Expr]
+  case DataLet(variable: TypeVariable, params: Seq[TypeVariable], constructors: Seq[DataConstructor[R]], body: R[Expr], recursive: Boolean) extends AST[R, Expr]
   case Match(scrutinee: R[Expr], cases: Seq[MatchCase[R]]) extends AST[R, Expr]
+  case Fold(scrutinee: R[Expr], resultType: R[Type], cases: Seq[MatchCase[R]]) extends AST[R, Expr]
   case App(function: R[Expr], argument: R[Expr]) extends AST[R, Expr]
   case TyApp(function: R[Expr], argument: R[Type]) extends AST[R, Expr]
   case Foreign(value: Variable, types: R[Type]) extends AST[R, Expr]
@@ -131,18 +132,20 @@ def topLet(variable: Variable, types: Rec[Type], value: Rec[Expr]): Rec[Decl] = 
 def topLetRec(variable: Variable, types: Rec[Type], value: Rec[Expr]): Rec[Decl] = HFix(AST.TopLetRec(variable, types, value))
 def topType(variable: TypeVariable, params: Seq[TypeVariable], alias: Rec[Type]): Rec[Decl] =
   HFix(AST.TopType(variable, params, alias))
-def topData(variable: TypeVariable, params: Seq[TypeVariable], constructors: Seq[DataConstructor[[x] =>> Rec[x]]]): Rec[Decl] =
-  HFix(AST.TopData(variable, params, constructors))
+def topData(variable: TypeVariable, params: Seq[TypeVariable], constructors: Seq[DataConstructor[[x] =>> Rec[x]]], recursive: Boolean = false): Rec[Decl] =
+  HFix(AST.TopData(variable, params, constructors, recursive))
 def abs(variable: Variable, types: Rec[Type], body: Rec[Expr]): Rec[Expr] = HFix(AST.Abs(variable, types, body))
 def tyAbs(variable: TypeVariable, body: Rec[Expr]): Rec[Expr] = HFix(AST.TyAbs(variable, body))
 def let(variable: Variable, types: Rec[Type], value: Rec[Expr], body: Rec[Expr]): Rec[Expr] = HFix(AST.Let(variable, types, value, body))
 def letRec(variable: Variable, types: Rec[Type], value: Rec[Expr], body: Rec[Expr]): Rec[Expr] = HFix(AST.LetRec(variable, types, value, body))
 def typeLet(variable: TypeVariable, params: Seq[TypeVariable], alias: Rec[Type], body: Rec[Expr]): Rec[Expr] =
   HFix(AST.TypeLet(variable, params, alias, body))
-def dataLet(variable: TypeVariable, params: Seq[TypeVariable], constructors: Seq[DataConstructor[[x] =>> Rec[x]]], body: Rec[Expr]): Rec[Expr] =
-  HFix(AST.DataLet(variable, params, constructors, body))
+def dataLet(variable: TypeVariable, params: Seq[TypeVariable], constructors: Seq[DataConstructor[[x] =>> Rec[x]]], body: Rec[Expr], recursive: Boolean = false): Rec[Expr] =
+  HFix(AST.DataLet(variable, params, constructors, body, recursive))
 def matchExpr(scrutinee: Rec[Expr], cases: Seq[MatchCase[[x] =>> Rec[x]]]): Rec[Expr] =
   HFix(AST.Match(scrutinee, cases))
+def foldExpr(scrutinee: Rec[Expr], resultType: Rec[Type], cases: Seq[MatchCase[[x] =>> Rec[x]]]): Rec[Expr] =
+  HFix(AST.Fold(scrutinee, resultType, cases))
 def app(function: Rec[Expr], argument: Rec[Expr]): Rec[Expr] = HFix(AST.App(function, argument))
 def tyApp(function: Rec[Expr], argument: Rec[Type]): Rec[Expr] = HFix(AST.TyApp(function, argument))
 def foreign(variable: Variable, types: Rec[Type]): Rec[Expr] = HFix(AST.Foreign(variable, types))
@@ -183,8 +186,8 @@ def topLetRecT(variable: Variable, types: TypeRec[Type], value: TypeRec[Expr]): 
   HCofree(DeclAnn, AST.TopLetRec(variable, types, value))
 def topTypeT(variable: TypeVariable, params: Seq[TypeVariable], alias: TypeRec[Type]): TypeRec[Decl] =
   HCofree(DeclAnn, AST.TopType(variable, params, alias))
-def topDataT(variable: TypeVariable, params: Seq[TypeVariable], constructors: Seq[DataConstructor[TypeRec]]): TypeRec[Decl] =
-  HCofree(DeclAnn, AST.TopData(variable, params, constructors))
+def topDataT(variable: TypeVariable, params: Seq[TypeVariable], constructors: Seq[DataConstructor[TypeRec]], recursive: Boolean = false): TypeRec[Decl] =
+  HCofree(DeclAnn, AST.TopData(variable, params, constructors, recursive))
 def absT(variable: Variable, t: TypeRec[Type], types: TypeRec[Type], body: TypeRec[Expr]): TypeRec[Expr] =
   HCofree(ExprAnn(t), AST.Abs(variable, types, body))
 def tyAbsT(variable: TypeVariable, t: TypeRec[Type], body: TypeRec[Expr]): TypeRec[Expr] =
@@ -195,10 +198,12 @@ def letRecT(variable: Variable, t: TypeRec[Type], types: TypeRec[Type], value: T
   HCofree(ExprAnn(t), AST.LetRec(variable, types, value, body))
 def typeLetT(variable: TypeVariable, params: Seq[TypeVariable], t: TypeRec[Type], alias: TypeRec[Type], body: TypeRec[Expr]): TypeRec[Expr] =
   HCofree(ExprAnn(t), AST.TypeLet(variable, params, alias, body))
-def dataLetT(variable: TypeVariable, params: Seq[TypeVariable], t: TypeRec[Type], constructors: Seq[DataConstructor[TypeRec]], body: TypeRec[Expr]): TypeRec[Expr] =
-  HCofree(ExprAnn(t), AST.DataLet(variable, params, constructors, body))
+def dataLetT(variable: TypeVariable, params: Seq[TypeVariable], t: TypeRec[Type], constructors: Seq[DataConstructor[TypeRec]], body: TypeRec[Expr], recursive: Boolean = false): TypeRec[Expr] =
+  HCofree(ExprAnn(t), AST.DataLet(variable, params, constructors, body, recursive))
 def matchExprT(t: TypeRec[Type], scrutinee: TypeRec[Expr], cases: Seq[MatchCase[TypeRec]]): TypeRec[Expr] =
   HCofree(ExprAnn(t), AST.Match(scrutinee, cases))
+def foldExprT(t: TypeRec[Type], scrutinee: TypeRec[Expr], resultType: TypeRec[Type], cases: Seq[MatchCase[TypeRec]]): TypeRec[Expr] =
+  HCofree(ExprAnn(t), AST.Fold(scrutinee, resultType, cases))
 def appT(t: TypeRec[Type], function: TypeRec[Expr], argument: TypeRec[Expr]): TypeRec[Expr] =
   HCofree(ExprAnn(t), AST.App(function, argument))
 def tyAppT(t: TypeRec[Type], function: TypeRec[Expr], argument: TypeRec[Type]): TypeRec[Expr] =

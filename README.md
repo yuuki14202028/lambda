@@ -10,7 +10,9 @@ Scala 3 で実装された、小さな型付きラムダ計算系言語のコン
 - 型適用 `f[T]`
 - 型別名 `type X[T] = ... in ...`
 - データ型定義 `data X[T] = | XA | XB(T) in ...`
+- 再帰データ型定義 `data rec Y[T] = | YA | YB(Y) in ...`
 - データ型のパターンマッチ `match x with | XA → ... | XB(t) -> ...`
+- 再帰データ型の畳み込み `fold y as R with | YA -> ... | YB(acc) -> ...`
 - 関数適用 `f(x)`
 - Unit 引数の関数定義・適用 `f()`
 - ブロック式 `{ expr; ...; result }`
@@ -20,7 +22,8 @@ Scala 3 で実装された、小さな型付きラムダ計算系言語のコン
 - 再帰関数束縛 `let rec f(x: T): R = ... in ...`
 - トップレベルの `type` / `data` / `let` / `let rec` 宣言
 - 外部 C 関数の参照 `foreign[T → U] name`
-- 整数リテラル `0`, `2`, `11`
+- 整数リテラル `0`, `2`, `11u32`
+- 浮動小数点数リテラル `0.0`, `1.2E3`, `1.2E-3f32`
 - 文字リテラル `'a'`, `'z'`
 - 文字列リテラル `"hello"`
 - 真偽値リテラル `true`, `false`
@@ -36,9 +39,13 @@ Scala 3 で実装された、小さな型付きラムダ計算系言語のコン
 現在サポートしている型は次のとおりです。
 
 ```text
-Int
-Char
-String
+i8, i16, i32, i64, isize
+u8, u16, u32, u64,, usize
+f32, f64,
+char,
+foreign.C.String
+foreign.C.Ptr
+foreign.C.VoidPtr
 Bool
 Unit / ()
 T → U
@@ -47,33 +54,33 @@ F[T]
 ```
 
 `λ`、`let`、`let rec` では型注釈が必須です。  
-多相関数は `ΛA. ...` で型抽象し、`f[Int]` のように明示的に型適用します。  
-型別名は `type Option[A] = ... in ...` のように定義でき、 `Option[Int]` のように単項の型適用を連ねます。  
-複数引数の型別名は `type Result[A][E] = ...`、利用側は `Result[Int][Char]` です。
-あくまでも型別名であり、`Result[Int]`のように利用することは出来ません。  
+多相関数は `ΛA. ...` で型抽象し、`f[i32]` のように明示的に型適用します。  
+型別名は `type Option[A] = ... in ...` のように定義でき、 `Option[i32]` のように単項の型適用を連ねます。  
+複数引数の型別名は `type Result[A][E] = ...`、利用側は `Result[i32][char]` です。
+あくまでも型別名であり、`Result[i32]`のように利用することは出来ません。  
 データ型も `data Option[A] = ... in ...` のように `in` 付きのスコープで定義します。型別名と違い、データ型は透明には展開されない名目的な型です。
-コンストラクタは通常の値として導入され、型引数は明示的に適用します。たとえば `None[Int]` や `Some[Int](42)` のように書きます。  
+コンストラクタは通常の値として導入され、型引数は明示的に適用します。たとえば `None[i32]` や `Some[i32](42)` のように書きます。  
 ブロック式は `{ expr; ...; result }` のように書き、セミコロン付きの式を順に評価して捨て、最後の式をブロック全体の結果にします。
 最後の式を省略した空ブロックや副作用だけのブロックの結果は `Unit` です。  
 
 ```ocaml
-λx: Int. x + 1
+λx: i32. x + 1
 
-let x: Int = 3 in
+let x: i32 = 3 in
 x + 10
 
-let rec f: Int → Int = λn: Int. if n <= 0 then 0 else f(n - 1) in
+let rec f: i32 → i32 = λn: i32. if n <= 0 then 0 else f(n - 1) in
 f(10)
 
 let id: ∀A. A → A = ΛA. λx: A. x in
-id[Int](42)
+id[i32](42)
 
 type Option[A] = ∀R. R → (A → R) → R in
 let none[A]: Option[A] =
   let run[R](fst: R)(snd: A → R): R = fst in
   run
 in
-none[Int]
+none[i32]
 ```
 
 ## データ型と match
@@ -86,8 +93,8 @@ data Option[A] =
   | Some(A)
 in
 
-let value: Option[Int] =
-  Some[Int](42)
+let value: Option[i32] =
+  Some[i32](42)
 in
 
 match value with
@@ -108,7 +115,7 @@ Some : ∀A. A → Option[A]
 data Pair[A][B] =
   | Pair(A)(B)
 in
-Pair[Int][String](1)("x")
+Pair[i32][String](1)("x")
 ```
 
 `match` は対象のデータ型の全コンストラクタを網羅する必要があります。
@@ -116,46 +123,48 @@ Pair[Int][String](1)("x")
 現在はネストパターン、ワイルドカード、guard、部分的な `match` はありません。
 
 ```ocaml
-let unwrapOrZero(option: Option[Int]): Int =
+let unwrapOrZero(option: Option[i32]): i32 =
   match option with
     | None -> 0
     | Some(n) -> n
 in
-unwrapOrZero(Some[Int](42))
+unwrapOrZero(Some[i32](42))
 ```
 
 データ型は型検査上は opaque な名目的型ですが、現在のバックエンドでは Generator に渡す前に Church encoding へ変換しています。
-そのためユーザーコードから `Option[Int]` を直接 `∀R. R → (Int → R) → R` として呼び出すことはできません。
-また、現時点では自身を直接フィールドに含む再帰データ型は Church encoding の対象外です。
+そのためユーザーコードから `Option[i32]` を直接 `∀R. R → (i32 → R) → R` として呼び出すことはできません。
+自身をフィールドに含むデータ型は `data rec` でのみ定義できます。
+`data rec` は型検査上は通常の opaque な名目的データ型として扱い、Church encoding 後の eliminator では再帰フィールドを同じデータ型の値として渡します。
+`fold` は再帰フィールドをそのまま束縛せず、対象データ型の再帰フィールドを `as` で指定した結果型へ畳み込んだ値として束縛します。
 
 関数束縛、再帰関数束縛は糖衣構文になっています。  
 
 ## トップレベル宣言
 
 ファイル先頭には `in` でネストせずに、`type` / `data` / `let` / `let rec` を並べられます。
-トップレベルの `main(): Int` がプログラム本体として呼び出されます。
+トップレベルの `main(): i32` がプログラム本体として呼び出されます。
 
 ```ocaml
-let print: Int → Int = foreign[Int → Int] print_int
+let print: i32 → i32 = foreign[i32 → i32] print_int
 
 data Option[A] =
   | None
   | Some(A)
 
-let unwrapOrZero(option: Option[Int]): Int =
+let unwrapOrZero(option: Option[i32]): i32 =
   match option with
     | None -> 0
     | Some(n) -> n
 
-let main(): Int =
-  unwrapOrZero(Some[Int](42))
+let main(): i32 =
+  unwrapOrZero(Some[i32](42))
 ```
 
 ## 糖衣構文
 
 ```ocaml
 let choose[A](x: A)(y: A): A = x in
-choose[Int](1)(2)
+choose[i32](1)(2)
 ```
 
 これは既存の `let` / `let rec` と `λ` / `Λ` に変換されます。
@@ -164,7 +173,7 @@ choose[Int](1)(2)
 let choose: ∀A. A → A → A =
   ΛΑ. λx: A. λy: A. x
 in
-choose[Int](1)(2)
+choose[i32](1)(2)
 ```
 
 外部 C 関数を使う場合は `foreign[T → U] name` のように型を書き、
@@ -172,7 +181,7 @@ choose[Int](1)(2)
 この型注釈は C 側の実装が従うものとして信頼します。
 
 ```ocaml
-let puts: String → Int = foreign[String → Int] puts in
+let puts: String → i32 = foreign[String → i32] puts in
 puts("hello")
 ```
 
@@ -204,24 +213,24 @@ puts("hello")
 `main.lam` には、たとえば次のような式を書けます。
 
 ```ocaml
-let print: Int → Int = foreign[Int → Int] print_int in
-let puts: String → Int = foreign[String → Int] puts in
+let print: i32 → i32 = foreign[i32 → i32] print_int in
+let puts: String → i32 = foreign[String → i32] puts in
 
 data Option[A] =
   | None
   | Some(A)
 in
 
-let printOption(option: Option[Int]): Int =
+let printOption(option: Option[i32]): i32 =
   match option with
     | None -> puts("None!")
     | Some(n) -> print(n)
 in
 
-printOption(Some[Int](42))
+printOption(Some[i32](42))
 ```
 
-この例では、`Option[Int]` の値を `match` で分岐し、`Some` の中身を `print_int` 経由で表示します。
+この例では、`Option[i32]` の値を `match` で分岐し、`Some` の中身を `print_int` 経由で表示します。
 
 ## クロージャと環境
 
@@ -245,8 +254,8 @@ struct Closure {
 たとえば次の式では、`f` のクロージャが外側の `x` を捕捉します。
 
 ```ocaml
-let x: Int = 3 in
-let f(y: Int): Int = x + y in
+let x: i32 = 3 in
+let f(y: i32): i32 = x + y in
 f(10)
 ```
 

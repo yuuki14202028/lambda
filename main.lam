@@ -1,31 +1,57 @@
-let put: i32 → i32 = foreign[i32 → i32] put_char
 let print: i32 → i32 = foreign[i32 → i32] print_int
-let puts: foreign.C.String → i32 = foreign[foreign.C.String → i32] puts
 
-data Option[A] =
-  | None
-  | Some(A)
+data rec List[A] =
+  | Nil
+  | Cons(A)(List[A])
 
-let printOption(option: Option[i32]): i32 =
-  match option with
-    | None -> puts("None!")
-    | Some(n) -> print(n)
+let length[A](xs: List[A]): i32 =
+  fold xs as i32 with
+    | Nil -> 0
+    | Cons(x)(acc) -> 1 + acc
 
-let map[T][U](option: Option[T])(f: T → U): Option[U] =
-  match option with
-    | None -> None[U]
-    | Some(n) -> Some[U](f(n))
+let map[A][B](xs: List[A])(f: A → B): List[B] =
+  fold xs as List[B] with
+    | Nil -> Nil[B]
+    | Cons(x)(mappedTail) -> Cons[B](f(x))(mappedTail)
+
+let foldR[A][B](xs: List[A])(nil: B)(cons: A → B → B): B =
+  fold xs as B with
+    | Nil -> nil
+    | Cons(x)(acc) -> cons(x)(acc)
+
+let rec foldL[A][B](xs: List[A])(acc: B)(step: B → A → B): B =
+  match xs with
+    | Nil -> acc
+    | Cons(x)(tail) -> foldL[A][B](tail)(step(acc)(x))(step)
+
+let rec forEach[A](xs: List[A])(f: A → i32): i32 =
+  match xs with
+    | Nil -> 0
+    | Cons(x)(tail) -> {
+        f(x);
+        forEach[A](tail)(f)
+      }
+
+let sum(xs: List[i32]): i32 =
+  fold xs as i32 with
+    | Nil -> 0
+    | Cons(x)(acc) -> x + acc
+
+let inc(x: i32): i32 = x + 1
+
+let mul(x: i32)(y: i32): i32 = x * y
 
 let add(x: i32)(y: i32): i32 = x + y
 
-let someValue: Option[i32] =
-  Some[i32](42)
+let values: List[i32] =
+  Cons[i32](1)(Cons[i32](2)(Cons[i32](3)(Nil[i32])))
 
-let noneValue: Option[i32] =
-  None[i32]
+let mapped: List[i32] =
+  map[i32][i32](values)(inc)
 
 let main(): i32 = {
-  printOption(map[i32][i32](someValue)(add(1)));
-  printOption(map[i32][i32](noneValue)(add(1)));
+  print(length[i32](values));
+  print(foldR[i32][i32](values)(0)(add));
+  print(foldR[i32][i32](values)(1)(mul));
   0
 }

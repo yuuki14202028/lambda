@@ -23,10 +23,10 @@ given HTraverse[AST] with {
       (f(types), f(value)).mapN(AST.TopLetRec(v, _, _))
     case AST.TopType(v, params, alias) =>
       f(alias).map(AST.TopType(v, params, _))
-    case AST.TopData(v, params, ctors) =>
+    case AST.TopData(v, params, ctors, recursive) =>
       ctors.toList.traverse { c =>
         c.fields.toList.traverse(field => f(field)).map(fs => DataConstructor[S](c.name, fs))
-      }.map(AST.TopData(v, params, _))
+      }.map(AST.TopData(v, params, _, recursive))
     case AST.Abs(v, types, body) =>
       (f(types), f(body)).mapN(AST.Abs(v, _, _))
     case AST.TyAbs(v, body) =>
@@ -37,16 +37,21 @@ given HTraverse[AST] with {
       (f(types), f(vall), f(body)).mapN(AST.LetRec(v, _, _, _))
     case AST.TypeLet(v, params, alias, body) =>
       (f(alias), f(body)).mapN(AST.TypeLet(v, params, _, _))
-    case AST.DataLet(v, params, ctors, body) =>
+    case AST.DataLet(v, params, ctors, body, recursive) =>
       val ctorsG = ctors.toList.traverse { c =>
         c.fields.toList.traverse(field => f(field)).map(fs => DataConstructor[S](c.name, fs))
       }
-      (ctorsG, f(body)).mapN(AST.DataLet(v, params, _, _))
+      (ctorsG, f(body)).mapN(AST.DataLet(v, params, _, _, recursive))
     case AST.Match(scrut, cases) =>
       val casesG = cases.toList.traverse { c =>
         f(c.body).map(b => MatchCase[S](c.constructor, c.binders, b))
       }
       (f(scrut), casesG).mapN(AST.Match(_, _))
+    case AST.Fold(scrut, resultType, cases) =>
+      val casesG = cases.toList.traverse { c =>
+        f(c.body).map(b => MatchCase[S](c.constructor, c.binders, b))
+      }
+      (f(scrut), f(resultType), casesG).mapN(AST.Fold(_, _, _))
     case AST.App(func, arg) =>
       (f(func), f(arg)).mapN(AST.App(_, _))
     case AST.TyApp(func, arg) =>

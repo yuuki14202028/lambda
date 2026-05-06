@@ -9,13 +9,13 @@ val showAlg: Algebra[AST, ShowResult] = [x] => node => node match {
   case AST.TopType(v, params, alias) =>
     val suffix = params.map(param => s"[${param.name}]").mkString
     s"type ${v.name}$suffix = $alias"
-  case AST.TopData(v, params, constructors) =>
+  case AST.TopData(v, params, constructors, recursive) =>
     val suffix = params.map(param => s"[${param.name}]").mkString
     val ctorText = constructors.map { ctor =>
       val fields = ctor.fields.map(field => s"($field)").mkString
       s"| ${ctor.name.name}$fields"
     }.mkString(" ")
-    s"data ${v.name}$suffix = $ctorText"
+    s"data ${if (recursive) "rec " else ""}${v.name}$suffix = $ctorText"
   case AST.Abs(v, types, body)     => s"λ${v.name}: $types. $body"
   case AST.TyAbs(v, body)          => s"Λ${v.name}. $body"
   case AST.Let(v, types, value, body) => s"let ${v.name}: $types = $value in $body"
@@ -24,20 +24,26 @@ val showAlg: Algebra[AST, ShowResult] = [x] => node => node match {
     val suffix = params.map(param => s"[${param.name}]").mkString
     val head = s"${v.name}$suffix"
     s"type $head = $alias in $body"
-  case AST.DataLet(v, params, constructors, body) =>
+  case AST.DataLet(v, params, constructors, body, recursive) =>
     val suffix = params.map(param => s"[${param.name}]").mkString
     val head = s"${v.name}$suffix"
     val ctorText = constructors.map { ctor =>
       val fields = ctor.fields.map(field => s"($field)").mkString
       s"| ${ctor.name.name}$fields"
     }.mkString(" ")
-    s"data $head = $ctorText in $body"
+    s"data ${if (recursive) "rec " else ""}$head = $ctorText in $body"
   case AST.Match(scrutinee, cases) =>
     val caseText = cases.map { c =>
       val binders = c.binders.map(binder => s"(${binder.name})").mkString
       s"| ${c.constructor.name}$binders -> ${c.body}"
     }.mkString(" ")
     s"match $scrutinee with $caseText"
+  case AST.Fold(scrutinee, resultType, cases) =>
+    val caseText = cases.map { c =>
+      val binders = c.binders.map(binder => s"(${binder.name})").mkString
+      s"| ${c.constructor.name}$binders -> ${c.body}"
+    }.mkString(" ")
+    s"fold $scrutinee as $resultType with $caseText"
   case AST.App(func, arg)          => s"$func($arg)"
   case AST.TyApp(func, arg)        => s"$func[$arg]"
   case AST.Foreign(v, types)       => s"foreign[$types] ${v.name}"

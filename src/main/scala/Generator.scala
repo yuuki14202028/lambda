@@ -354,8 +354,9 @@ object Generator {
     )
 
     case AST.TypeLet(_, _, _, body) => body.code
-    case AST.DataLet(_, _, _, _) => pure(sys.error("DataLet must be Church encoded before code generation"))
+    case AST.DataLet(_, _, _, _, _) => pure(sys.error("DataLet must be Church encoded before code generation"))
     case AST.Match(_, _) => pure(sys.error("Match must be Church encoded before code generation"))
+    case AST.Fold(_, _, _) => pure(sys.error("Fold must be Church encoded before code generation"))
 
     case AST.App(f, a) => for {
       fc <- f.code
@@ -391,7 +392,7 @@ object Generator {
     case AST.TopLet(_, _, _) => pure(Nil)
     case AST.TopLetRec(_, _, _) => pure(Nil)
     case AST.TopType(_, _, _) => pure(Nil)
-    case AST.TopData(_, _, _) => pure(Nil)
+    case AST.TopData(_, _, _, _) => pure(Nil)
 
     case AST.Primitive(_) => pure(Nil)
     case AST.TypeVar(_) => pure(Nil)
@@ -441,7 +442,7 @@ object Generator {
       }
 
     case AST.TopType(_, _, _) => State.pure((Nil, env))
-    case AST.TopData(_, _, _) => State.pure((Nil, env))
+    case AST.TopData(_, _, _, _) => State.pure((Nil, env))
   }
 
   private def genProgram(decls: Seq[TypeRec[Decl]]): GenR[List[String]] = ReaderT { initialEnv =>

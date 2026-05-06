@@ -40,6 +40,28 @@ object Analyser {
   private def dataResultType(owner: TypeVariable, params: Seq[TypeVariable]): TypeRec[Type] =
     applyTypeConstructor(owner, params.map(typeVarT))
 
+  private def containsDataApplicationOf(t: TypeRec[Type], owner: TypeVariable): Boolean = {
+    val (head, args) = collectTypeApps(t)
+    val self = head.projectT match {
+      case AST.TypeVar(variable) => variable == owner
+      case _ => false
+    }
+    self || (t.projectT match {
+      case AST.Arrow(from, to) => containsDataApplicationOf(from, owner) || containsDataApplicationOf(to, owner)
+      case AST.ForAll(_, body) => containsDataApplicationOf(body, owner)
+      case AST.TypeApp(_, _) => args.exists(arg => containsDataApplicationOf(arg, owner))
+      case _ => false
+    })
+  }
+
+  private def isDataApplicationOf(t: TypeRec[Type], owner: TypeVariable): Boolean = {
+    val (head, _) = collectTypeApps(t)
+    head.projectT match {
+      case AST.TypeVar(variable) => variable == owner
+      case _ => false
+    }
+  }
+
   private def constructorType(owner: TypeVariable, params: Seq[TypeVariable], fields: Seq[TypeRec[Type]]): TypeRec[Type] = {
     val result = dataResultType(owner, params)
     val functionType = fields.foldRight(result)(arrowT)
@@ -72,7 +94,7 @@ object Analyser {
         args.toList.traverse(arg => arg(env).value).map(expandedArgs => substMany(params, expandedArgs, body))
       }
       case None => env.dataTypes.get(variable) match {
-        case Some(DataDef(params, _)) => expectArity("Data type", variable, params.length, args.length) {
+        case Some(DataDef(params, _, _)) => expectArity("Data type", variable, params.length, args.length) {
           args.toList.traverse(arg => arg(env).value).map(expandedArgs => applyTypeConstructor(variable, expandedArgs))
         }
         case None => Left(s"Type variable ${variable.name} is not defined")
@@ -163,7 +185,7 @@ object Analyser {
       typedAlias <- alias.local((e: Env) => e.copy(typeVars = e.typeVars ++ params))
     } yield topTypeT(variable, params, typedAlias)
 
-    case AST.TopData(variable, params, constructors) => for {
+    case AST.TopData(variable, params, constructors, recursive) => for {
       env <- ask
       _ <- guard(
         !env.typeVars.contains(variable) && !env.typeAliases.contains(variable) && !env.dataTypes.contains(variable),
@@ -177,12 +199,12 @@ object Analyser {
         constructorNames.forall(name => !env.values.contains(name) && !env.constructors.contains(name)),
         s"Data type ${variable.name} has a constructor that is already defined"
       )
-      placeholder = DataDef(params, Seq.empty)
+      placeholder = DataDef(params, Seq.empty, recursive)
       fieldEnv = env.copy(typeVars = env.typeVars ++ params, dataTypes = env.dataTypes + (variable -> placeholder))
       typedConstructors <- constructors.toList.traverse { c =>
         c.fields.toList.traverse(field => field.local((_: Env) => fieldEnv)).map(fs => DataConstructor(c.name, fs))
       }
-    } yield topDataT(variable, params, typedConstructors)
+    } yield topDataT(variable, params, typedConstructors, recursive)
 
     case AST.Abs(variable, types, body) => for {
       typedTypes <- types
@@ -230,7 +252,7 @@ object Analyser {
       resultType = typeOf(typedBody)
     } yield typeLetT(variable, params, resultType, typedAlias, typedBody)
 
-    case AST.DataLet(variable, params, constructors, body) => for {
+    case AST.DataLet(variable, params, constructors, body, recursive) => for {
       env <- ask
       _ <- guard(
         !env.typeVars.contains(variable) && !env.typeAliases.contains(variable) && !env.dataTypes.contains(variable),
@@ -244,7 +266,7 @@ object Analyser {
         constructorNames.forall(name => !env.values.contains(name) && !env.constructors.contains(name)),
         s"Data type ${variable.name} has a constructor that is already defined"
       )
-      placeholder = DataDef(params, Seq.empty)
+      placeholder = DataDef(params, Seq.empty, recursive)
       fieldEnv = env.copy(typeVars = env.typeVars ++ params, dataTypes = env.dataTypes + (variable -> placeholder))
       typedConstructors <- constructors.toList.traverse { c =>
         c.fields.toList.traverse(field => field.local((_: Env) => fieldEnv)).map(fs => DataConstructor(c.name, fs))
@@ -254,7 +276,11 @@ object Analyser {
           c.fields.toList.traverse(field => expandType(field, fieldEnv)).map(fs => ConstructorDef(c.name, variable, fs, tag))
         }
       }
-      dataDef = DataDef(params, expandedConstructors)
+      _ <- guard(
+        recursive || !expandedConstructors.exists(_.fields.exists(field => containsDataApplicationOf(field, variable))),
+        s"Recursive data type ${variable.name} must be declared with data rec"
+      )
+      dataDef = DataDef(params, expandedConstructors, recursive)
       constructorDefs = constructorNames.zip(expandedConstructors).toMap
       constructorTypes = constructorNames.zip(expandedConstructors).map { case (name, c) =>
         name -> constructorType(variable, params, c.fields)
@@ -265,7 +291,7 @@ object Analyser {
         constructors = e.constructors ++ constructorDefs
       ))
       resultType = typeOf(typedBody)
-    } yield dataLetT(variable, params, resultType, typedConstructors, typedBody)
+    } yield dataLetT(variable, params, resultType, typedConstructors, typedBody, recursive)
 
     case AST.Match(scrutinee, cases) => for {
       env <- ask
@@ -308,6 +334,50 @@ object Analyser {
         case None => fail("Match must have at least one case")
       }
     } yield matchExprT(resultType, typedScrutinee, typedCases)
+
+    case AST.Fold(scrutinee, resultTypeNode, cases) => for {
+      env <- ask
+      typedScrutinee <- scrutinee
+      typedResultType <- resultTypeNode
+      resultType <- expandChecked(typedResultType)
+      dataApp <- lift(dataTypeApplication(typeOf(typedScrutinee), env.dataTypes)(_.params))
+      (dataName, dataDef, typeArgs) = dataApp
+      caseNames = cases.map(_.constructor)
+      _ <- guard(caseNames.distinct.length == caseNames.length, s"Fold has duplicate cases")
+      expectedConstructors <- lift {
+        dataDef.constructors.toList.traverse { cdef =>
+          env.constructors.collectFirst { case (name, c) if c == cdef => name }
+            .toRight(s"Constructor for data type ${dataName.name} is not defined")
+        }
+      }
+      _ <- {
+        val missing = expectedConstructors.filterNot(caseNames.contains)
+        val extra = caseNames.filterNot(expectedConstructors.contains)
+        guard(
+          missing.isEmpty && extra.isEmpty,
+          s"Non-exhaustive or invalid fold: missing ${missing.map(_.name).mkString(", ")}, invalid ${extra.map(_.name).mkString(", ")}"
+        )
+      }
+      typedCases <- cases.toList.traverse { foldCase =>
+        val cdef = env.constructors(foldCase.constructor)
+        val fieldTypes = dataDef.params.zip(typeArgs).foldLeft(cdef.fields) { case (fields, (param, arg)) =>
+          fields.map(field => substType(param, arg, field))
+        }
+        val binderFieldTypes = fieldTypes.map { field =>
+          if (isDataApplicationOf(field, dataName)) resultType else field
+        }
+        for {
+          _ <- guard(
+            foldCase.binders.length == fieldTypes.length,
+            s"Constructor ${foldCase.constructor.name} expects ${fieldTypes.length} binders, got ${foldCase.binders.length}"
+          )
+          _ <- guard(foldCase.binders.distinct.length == foldCase.binders.length, s"Fold case ${foldCase.constructor.name} has duplicate binders")
+          binderTypes = foldCase.binders.zip(binderFieldTypes).toMap
+          typedBody <- foldCase.body.local((e: Env) => e.copy(values = e.values ++ binderTypes))
+          _ <- expect(resultType, typeOf(typedBody))
+        } yield MatchCase(foldCase.constructor, foldCase.binders, typedBody)
+      }
+    } yield foldExprT(resultType, typedScrutinee, typedResultType, typedCases)
 
     case AST.App(function, argument) => for {
       typedFunction <- function
@@ -441,7 +511,7 @@ object Analyser {
       expandedAlias <- expandType(typedAlias, aliasEnv)
     } yield (topTypeT(variable, params, typedAlias), env.copy(typeAliases = env.typeAliases + (variable -> TypeAlias(params, expandedAlias))))
 
-    case AST.TopData(variable, params, constructors) => for {
+    case AST.TopData(variable, params, constructors, recursive) => for {
       _ <- Either.cond(
         !env.typeVars.contains(variable) && !env.typeAliases.contains(variable) && !env.dataTypes.contains(variable),
         (),
@@ -456,7 +526,7 @@ object Analyser {
         (),
         s"Data type ${variable.name} has a constructor that is already defined"
       )
-      placeholder = DataDef(params, Seq.empty)
+      placeholder = DataDef(params, Seq.empty, recursive)
       fieldEnv = env.copy(typeVars = env.typeVars ++ params, dataTypes = env.dataTypes + (variable -> placeholder))
       typedConstructors <- constructors.toList.traverse { c =>
         c.fields.toList.traverse(field => field.cata(tcAlg).run(fieldEnv)).map(fs => DataConstructor(c.name, fs))
@@ -464,7 +534,12 @@ object Analyser {
       expandedConstructors <- typedConstructors.zipWithIndex.toList.traverse { case (c, tag) =>
         c.fields.toList.traverse(field => expandType(field, fieldEnv)).map(fs => ConstructorDef(c.name, variable, fs, tag))
       }
-      dataDef = DataDef(params, expandedConstructors)
+      _ <- Either.cond(
+        recursive || !expandedConstructors.exists(_.fields.exists(field => containsDataApplicationOf(field, variable))),
+        (),
+        s"Recursive data type ${variable.name} must be declared with data rec"
+      )
+      dataDef = DataDef(params, expandedConstructors, recursive)
       constructorDefs = constructorNames.zip(expandedConstructors).toMap
       constructorTypes = constructorNames.zip(expandedConstructors).map { case (name, c) =>
         name -> constructorType(variable, params, c.fields)
@@ -474,7 +549,7 @@ object Analyser {
         dataTypes = env.dataTypes + (variable -> dataDef),
         constructors = env.constructors ++ constructorDefs
       )
-    } yield (topDataT(variable, params, typedConstructors), nextEnv)
+    } yield (topDataT(variable, params, typedConstructors, recursive), nextEnv)
   }
 
   def validate(prog: Rec[AST.Program.type]): EitherS[TypeRec[AST.Program.type]] = prog.unfix match {

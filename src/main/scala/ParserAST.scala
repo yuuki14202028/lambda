@@ -19,7 +19,7 @@ object ParserAST {
     }
 
   lazy val expr: Parser[Rec[Expr]] =
-    Parser.defer(dataLetP | matchP | typeLetP | tyAbsP | absP | letSeriesP | ifP | equitive)
+    Parser.defer(dataLetP | foldP.backtrack | matchP | typeLetP | tyAbsP | absP | letSeriesP | ifP | equitive)
 
   private lazy val letSeriesP: Parser[Rec[Expr]] =
     Parser.defer(letRecFunP.backtrack | letRecPolyP.backtrack | letFunP.backtrack | letPolyP.backtrack | letRecP.backtrack | letP)
@@ -231,23 +231,25 @@ object ParserAST {
   }
 
   lazy val dataLetP: Parser[Rec[Expr]] = {
-    val name = Parser.string("data") *> gap *> identifier
+    val recursive = Parser.string("data") *> gap *> (Parser.string("rec").as(true) <* gap).?.map(_.getOrElse(false))
+    val name = identifier
     val param = Parser.char('[') *> sp *> identifier <* sp <* Parser.char(']')
     val params = param.rep0
     val constructors = sp *> Parser.char('=') *> sp *> dataConstructorP.repSep(gap)
     val body = sp *> Parser.string("in") *> sp *> Parser.defer(expr)
-    (name ~ params ~ constructors ~ body).map { case (((name, params), constructors), body) =>
-      dataLet(TypeVariable(name), params.map(TypeVariable(_)), constructors.toList, body)
+    (recursive ~ name ~ params ~ constructors ~ body).map { case ((((recursive, name), params), constructors), body) =>
+      dataLet(TypeVariable(name), params.map(TypeVariable(_)), constructors.toList, body, recursive)
     }
   }
 
   private lazy val topDataP: Parser[Rec[Decl]] = {
-    val name = Parser.string("data") *> gap *> identifier
+    val recursive = Parser.string("data") *> gap *> (Parser.string("rec").as(true) <* gap).?.map(_.getOrElse(false))
+    val name = identifier
     val param = Parser.char('[') *> sp *> identifier <* sp <* Parser.char(']')
     val params = param.rep0
     val constructors = sp *> Parser.char('=') *> sp *> dataConstructorP.repSep(gap)
-    (name ~ params ~ constructors).map { case ((name, params), constructors) =>
-      topData(TypeVariable(name), params.map(TypeVariable(_)), constructors.toList)
+    (recursive ~ name ~ params ~ constructors).map { case (((recursive, name), params), constructors) =>
+      topData(TypeVariable(name), params.map(TypeVariable(_)), constructors.toList, recursive)
     }
   }
 
@@ -315,6 +317,15 @@ object ParserAST {
     val cases = sp *> Parser.string("with") *> sp *> matchCaseP.repSep(gap)
     (scrutinee ~ cases).map { case (scrutinee, cases) =>
       matchExpr(scrutinee, cases.toList)
+    }
+  }
+
+  lazy val foldP: Parser[Rec[Expr]] = {
+    val scrutinee = Parser.string("fold") *> gap *> expr
+    val resultType = sp *> Parser.string("as") *> sp *> typeP
+    val cases = sp *> Parser.string("with") *> sp *> matchCaseP.repSep(gap)
+    (scrutinee ~ resultType ~ cases).map { case ((scrutinee, resultType), cases) =>
+      foldExpr(scrutinee, resultType, cases.toList)
     }
   }
 

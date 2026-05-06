@@ -62,7 +62,7 @@
           <key>name</key>
           <string>meta.declaration.data.lambda</string>
           <key>begin</key>
-          <string>\b(data)\s+([A-Za-z][A-Za-z0-9_]*)</string>
+          <string>\b(data)\s+(?:(rec)\s+)?([A-Za-z][A-Za-z0-9_]*)</string>
           <key>beginCaptures</key>
           <dict>
             <key>1</key>
@@ -71,6 +71,11 @@
               <string>keyword.declaration.data.lambda</string>
             </dict>
             <key>2</key>
+            <dict>
+              <key>name</key>
+              <string>keyword.declaration.recursive.lambda</string>
+            </dict>
+            <key>3</key>
             <dict>
               <key>name</key>
               <string>entity.name.class</string>
@@ -307,6 +312,30 @@
           </dict>
         </dict>
         <dict>
+          <key>name</key>
+          <string>meta.fold.lambda</string>
+          <key>match</key>
+          <string>\b(fold)\b|\b(as)\b|\b(with)\b</string>
+          <key>captures</key>
+          <dict>
+            <key>1</key>
+            <dict>
+              <key>name</key>
+              <string>keyword.control.fold.lambda</string>
+            </dict>
+            <key>2</key>
+            <dict>
+              <key>name</key>
+              <string>keyword.control.fold.as.lambda</string>
+            </dict>
+            <key>3</key>
+            <dict>
+              <key>name</key>
+              <string>keyword.control.match.with.lambda</string>
+            </dict>
+          </dict>
+        </dict>
+        <dict>
           <key>include</key>
           <string>#patterns</string>
         </dict>
@@ -414,13 +443,13 @@
           <key>name</key>
           <string>variable.function.lambda</string>
           <key>match</key>
-          <string>\b(?!(?:if|then|else|let|rec|type|data|in|match|with|foreign|true|false)\b)[a-z][A-Za-z0-9_]*\b(?=\s*(?:\[|\())</string>
+          <string>\b(?!(?:if|then|else|let|rec|type|data|in|match|fold|as|with|foreign|true|false)\b)[a-z][A-Za-z0-9_]*\b(?=\s*(?:\[|\())</string>
         </dict>
         <dict>
           <key>name</key>
           <string>variable.other.lambda</string>
           <key>match</key>
-          <string>\b(?!(?:if|then|else|let|rec|type|data|in|match|with|foreign|true|false)\b)[a-z][A-Za-z0-9_]*\b</string>
+          <string>\b(?!(?:if|then|else|let|rec|type|data|in|match|fold|as|with|foreign|true|false)\b)[a-z][A-Za-z0-9_]*\b</string>
         </dict>
       </array>
     </dict>
@@ -717,6 +746,18 @@
           <string>keyword.control.match.lambda</string>
           <key>match</key>
           <string>\bmatch\b</string>
+        </dict>
+        <dict>
+          <key>name</key>
+          <string>keyword.control.fold.lambda</string>
+          <key>match</key>
+          <string>\bfold\b</string>
+        </dict>
+        <dict>
+          <key>name</key>
+          <string>keyword.control.fold.as.lambda</string>
+          <key>match</key>
+          <string>\bas\b</string>
         </dict>
         <dict>
           <key>name</key>
