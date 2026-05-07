@@ -4,10 +4,16 @@ import cats.data.ReaderT
 import cats.syntax.all.*
 
 object ChurchEncoder {
-  case class Env(dataTypes: Map[TypeVariable, DataDef])
+  enum EncodeError {
+    case InvariantViolation(message: String)
 
-  type EitherS[A] = Either[String, A]
-  private type Encode[A] = ReaderT[EitherS, Env, A]
+    override def toString: String = this match {
+      case InvariantViolation(message) => s"Compiler invariant violation: $message"
+    }
+  }
+
+  private type EncodeResult[A] = Either[EncodeError, A]
+  private type Encode[A] = ReaderT[EncodeResult, DataEnv, A]
   private type Encoded[I] = Encode[TypeRec[I]]
   private type Child[I] = (TypeRec[I], Encoded[I])
 
@@ -16,55 +22,32 @@ object ChurchEncoder {
     private def encoded: Encoded[I] = self._2
   }
 
-  private def fail[A](msg: String): Encode[A] = ReaderT.liftF(Left(msg))
-  private def guard(cond: Boolean, msg: => String): Encode[Unit] = ReaderT.liftF(Either.cond(cond, (), msg))
-  private def lift[A](e: EitherS[A]): Encode[A] = ReaderT.liftF(e)
-  private val ask: Encode[Env] = ReaderT.ask[EitherS, Env]
+  private def fail[A](msg: String): Encode[A] = ReaderT.liftF(Left(EncodeError.InvariantViolation(msg)))
+  private def guard(cond: Boolean, msg: => String): Encode[Unit] =
+    ReaderT.liftF(Either.cond(cond, (), EncodeError.InvariantViolation(msg)))
+  private def lift[A](e: Either[String, A]): Encode[A] =
+    ReaderT.liftF(e.leftMap(EncodeError.InvariantViolation.apply))
+  private val ask: Encode[DataEnv] = ReaderT.ask[EncodeResult, DataEnv]
   private def okT[I](t: TypeRec[I]): Encoded[I] = ReaderT.pure(t)
-
-  private def isDataApplicationOf(t: TypeRec[Type], owner: TypeVariable): Boolean = {
-    val (head, _) = collectTypeApps(t)
-    head.projectT match {
-      case AST.TypeVar(variable) => variable == owner
-      case _ => false
-    }
-  }
-
-  private def containsDataApplicationOf(t: TypeRec[Type], owner: TypeVariable): Boolean = {
-    val (head, args) = collectTypeApps(t)
-    val self = head.projectT match {
-      case AST.TypeVar(variable) => variable == owner
-      case _ => false
-    }
-    self || (t.projectT match {
-      case AST.Arrow(from, to) => containsDataApplicationOf(from, owner) || containsDataApplicationOf(to, owner)
-      case AST.ForAll(_, body) => containsDataApplicationOf(body, owner)
-      case AST.TypeApp(_, _) => args.exists(arg => containsDataApplicationOf(arg, owner))
-      case _ => false
-    })
-  }
 
   private def thunkIfNullary(fields: Seq[?], handlerT: TypeRec[Type], resultType: TypeRec[Type]): TypeRec[Type] =
     if (fields.isEmpty) arrowT(unitTypeT, resultType) else handlerT
 
-  private def recursiveDataTypeError(owner: TypeVariable): String =
-    s"Recursive data type ${owner.name} must be declared with data rec"
-
-  private def encodeFieldType(owner: TypeVariable, dataDef: DataDef, args: Seq[TypeRec[Type]], field: TypeRec[Type]): Encoded[Type] = {
-    val substituted = substMany(dataDef.params, args, field)
-    if (containsDataApplicationOf(substituted, owner) && !dataDef.recursive) fail(recursiveDataTypeError(owner))
-    else if (containsDataApplicationOf(substituted, owner)) okT(substituted)
-    else encodeType(substituted)
-  }
-
-  private def encodeConstructorFields(owner: TypeVariable, args: Seq[TypeRec[Type]], dataDef: DataDef, constructor: ConstructorDef): Encode[List[TypeRec[Type]]] =
-    constructor.fields.toList.traverse(field => encodeFieldType(owner, dataDef, args, field))
+  private def encodeConstructorFields(owner: TypeVariable, args: Seq[TypeRec[Type]], dataDef: DataDef, constructor: ConstructorDef): Encode[Seq[TypeRec[Type]]] =
+    constructor.fields.traverse { field =>
+      val substituted = substMany(dataDef.params, args, field)
+      val recursive = containsDataApplicationOf(substituted, owner)
+      if (recursive && !dataDef.recursive)
+        fail(s"Recursive data type ${owner.name} must be declared with data rec")
+      else if (recursive) okT(substituted)
+      else encodeType(substituted)
+    }
 
   private def churchDataType(owner: TypeVariable, args: Seq[TypeRec[Type]], dataDef: DataDef): Encoded[Type] = {
     val resultVar = TypeVariable("R")
     val resultType = typeVarT(resultVar)
 
-    dataDef.constructors.toList.traverse { constructor =>
+    dataDef.constructors.traverse { constructor =>
       encodeConstructorFields(owner, args, dataDef, constructor).map { encodedFields =>
         thunkIfNullary(constructor.fields, encodedFields.foldRight(resultType)(arrowT), resultType)
       }
@@ -112,25 +95,20 @@ object ChurchEncoder {
   private def encodeType(t: TypeRec[Type]): Encoded[Type] =
     t.paraAnn(typeEncoderAlg)
 
-  private def encodeTypes(types: Seq[TypeRec[Type]]): Encode[List[TypeRec[Type]]] =
-    types.toList.traverse(t => encodeType(t))
-
   private def mkTyAbs(variable: TypeVariable, body: TypeRec[Expr]): TypeRec[Expr] =
     tyAbsT(variable, forallTypeT(variable, typeOf(body)), body)
 
   private def mkAbs(variable: Variable, paramType: TypeRec[Type], body: TypeRec[Expr]): TypeRec[Expr] =
     absT(variable, arrowT(paramType, typeOf(body)), paramType, body)
 
-  private def mkApp(function: TypeRec[Expr], argument: TypeRec[Expr]): EitherS[TypeRec[Expr]] =
-    destructArrow(typeOf(function)) match {
-      case Some((_, to)) => Right(appT(to, function, argument))
-      case None => Left(s"ChurchEncoder expected function type, got ${typeOf(function).show}")
-    }
-
-  private def mkTyApp(function: TypeRec[Expr], argument: TypeRec[Type]): EitherS[TypeRec[Expr]] =
-    destructForAll(typeOf(function)) match {
-      case Some((variable, body)) => Right(tyAppT(substType(variable, argument, body), function, argument))
-      case None => Left(s"ChurchEncoder expected polymorphic type, got ${typeOf(function).show}")
+  private def applyHandlers(
+      target: TypeRec[Expr],
+      handlers: Seq[TypeRec[Expr]],
+      handlerTypes: Seq[TypeRec[Type]],
+      resultType: TypeRec[Type]
+  ): TypeRec[Expr] =
+    handlers.zipWithIndex.foldLeft(target) { case (expr, (handler, index)) =>
+      appT(handlerTypes.drop(index + 1).foldRight(resultType)(arrowT), expr, handler)
     }
 
   private def constructorType(owner: TypeVariable, dataDef: DataDef, constructor: ConstructorDef): Encoded[Type] = {
@@ -144,32 +122,30 @@ object ChurchEncoder {
       thunkIfNullary(constructor.fields, encodedFields.foldRight(resultType)(arrowT), resultType)
     }
 
-  private def constructorValue(owner: TypeVariable, dataDef: DataDef, constructor: ConstructorDef): Encoded[Expr] = {
-    val typeArgs = dataDef.params.map(typeVarT)
-    val resultVar = TypeVariable("R")
-    val resultType = typeVarT(resultVar)
-    val fieldVars = constructor.fields.indices.map(i => Variable(s"__${constructor.name.name}_field_$i"))
-    val handlerVars = dataDef.constructors.indices.map(i => Variable(s"__${constructor.name.name}_case_$i"))
-
-    for {
-      fieldTypes <- encodeTypes(constructor.fields.map(field => substMany(dataDef.params, typeArgs, field)))
-      handlerTypes <- dataDef.constructors.toList.traverse((c: ConstructorDef) => handlerType(owner, typeArgs, dataDef, c, resultType): Encode[TypeRec[Type]])
-      selectedHandler = varrType(handlerVars(constructor.tag), handlerTypes(constructor.tag))
-      thunkedHandler <- if (constructor.fields.isEmpty) lift(mkApp(selectedHandler, unitLitT(unitTypeT))) else okT(selectedHandler)
-      appliedHandler <- fieldVars.zip(fieldTypes).foldLeft[Encode[TypeRec[Expr]]](okT(thunkedHandler)) {
-        case (acc, (fieldVar, fieldType)) =>
-          acc.flatMap(handler => lift(mkApp(handler, varrType(fieldVar, fieldType))))
-      }
-      withHandlers = handlerVars.zip(handlerTypes).foldRight(appliedHandler) { case ((handlerVar, handlerT), body) =>
-        mkAbs(handlerVar, handlerT, body)
-      }
-      withResultType = mkTyAbs(resultVar, withHandlers)
-      withFields = fieldVars.zip(fieldTypes).foldRight(withResultType) { case ((fieldVar, fieldType), body) =>
-        mkAbs(fieldVar, fieldType, body)
-      }
-      withTypeParams = dataDef.params.foldRight(withFields)(mkTyAbs)
-    } yield withTypeParams
-  }
+  private def constructorValue(owner: TypeVariable, dataDef: DataDef, constructor: ConstructorDef): Encoded[Expr] = for {
+    typeArgs = dataDef.params.map(typeVarT)
+    resultVar = TypeVariable("R")
+    resultType = typeVarT(resultVar)
+    fieldVars = constructor.fields.indices.map(i => Variable(s"__${constructor.name.name}_field_$i"))
+    handlerVars = dataDef.constructors.indices.map(i => Variable(s"__${constructor.name.name}_case_$i"))
+    fieldTypes <- constructor.fields.map(field => substMany(dataDef.params, typeArgs, field)).traverse(t => encodeType(t): Encode[TypeRec[Type]])
+    handlerTypes <- dataDef.constructors.toList.traverse((c: ConstructorDef) => handlerType(owner, typeArgs, dataDef, c, resultType): Encode[TypeRec[Type]])
+    selectedHandler = varrType(handlerVars(constructor.tag), handlerTypes(constructor.tag))
+    thunkedHandler = if (constructor.fields.isEmpty) appT(resultType, selectedHandler, unitLitT(unitTypeT)) else selectedHandler
+    appliedHandler = fieldVars.zip(fieldTypes).zipWithIndex.foldLeft(thunkedHandler) {
+      case (handler, ((fieldVar, fieldType), index)) =>
+        val nextType = fieldTypes.drop(index + 1).foldRight(resultType)(arrowT)
+        appT(nextType, handler, varrType(fieldVar, fieldType))
+    }
+    withHandlers = handlerVars.zip(handlerTypes).foldRight(appliedHandler) { case ((handlerVar, handlerT), body) =>
+      mkAbs(handlerVar, handlerT, body)
+    }
+    withResultType = mkTyAbs(resultVar, withHandlers)
+    withFields = fieldVars.zip(fieldTypes).foldRight(withResultType) { case ((fieldVar, fieldType), body) =>
+      mkAbs(fieldVar, fieldType, body)
+    }
+    withTypeParams = dataDef.params.foldRight(withFields)(mkTyAbs)
+  } yield withTypeParams
 
   private def encodeMatchCase(
       owner: TypeVariable,
@@ -218,9 +194,7 @@ object ChurchEncoder {
             acc.flatMap { body =>
               if (isDataApplicationOf(field, owner)) {
                 val tailValue = varrType(handlerParam, fieldType)
-                for {
-                  folded <- lift(mkApp(foldFunction, tailValue))
-                } yield letT(binder, typeOf(body), resultType, folded, body)
+                okT(letT(binder, typeOf(body), resultType, appT(resultType, foldFunction, tailValue), body))
               } else okT(body)
             }
         }
@@ -235,88 +209,85 @@ object ChurchEncoder {
   }
 
   private val encoderAlg: HCofreeParaAlgebra[AST, TypeAnn, Encoded] = [x] => (ann, node) => (ann, node) match {
-    case (ProgramAnn, _) => rebuildNode(ProgramAnn, node)
+    case (ann: ProgramAnn, _) => rebuildNode(ann, node)
     case (DeclAnn, _) => rebuildNode(DeclAnn, node)
     case (TypeAnn, _) => encodeType(originalNode(TypeAnn, node))
-    case (ExprAnn(t), AST.DataLet(variable, params, constructors, body, recursive)) =>
-      val taggedConstructors = constructors.zipWithIndex.map { case (constructor, tag) =>
+    case (ExprAnn(t), AST.DataLet(variable, params, constructors, body, recursive)) => for {
+      taggedConstructors = constructors.zipWithIndex.map { case (constructor, tag) =>
         ConstructorDef(constructor.name, variable, constructor.fields.map(_.original), tag)
       }
-      val dataDef = DataDef(params, taggedConstructors, recursive)
-      for {
-        encodedBody <- body.encoded.local((env: Env) => env.copy(dataTypes = env.dataTypes + (variable -> dataDef)))
-        encoded <- dataDef.constructors.foldRight(okT(encodedBody)) { (constructor, acc) => for {
+      dataDef = DataDef(params, taggedConstructors, recursive)
+      encodedBody <- body.encoded.local((env: DataEnv) => env.copy(dataTypes = env.dataTypes + (variable -> dataDef)))
+      encoded <- dataDef.constructors.foldRight(okT(encodedBody)) { (constructor, acc) =>
+        for {
           bodyExpr <- acc
           constructorT <- constructorType(variable, dataDef, constructor)
           value <- constructorValue(variable, dataDef, constructor)
-        } yield letT(constructor.name, typeOf(bodyExpr), constructorT, value, bodyExpr) }
-      } yield encoded
-    case (ExprAnn(t), AST.Match(scrutinee, cases)) =>
-      val scrutType = typeOf(scrutinee.original)
-      for {
-        resultType <- encodeType(t)
-        encodedScrutinee <- scrutinee.encoded
-        dataApp <- ask.flatMap(env => lift(dataTypeApplication(scrutType, env.dataTypes)(_.params)))
-        (owner, dataDef, args) = dataApp
-        resultApplied <- lift(mkTyApp(encodedScrutinee, resultType))
-        handlers <- dataDef.constructors.toList.traverse { constructor =>
-          cases.find(_.constructor == constructor.name)
+        } yield letT(constructor.name, typeOf(bodyExpr), constructorT, value, bodyExpr)
+      }
+    } yield encoded
+    case (ExprAnn(t), AST.Match(scrutinee, cases)) => for {
+      scrutType = typeOf(scrutinee.original)
+      resultType <- encodeType(t)
+      encodedScrutinee <- scrutinee.encoded
+      dataApp <- ask.flatMap(env => lift(dataTypeApplication(scrutType, env.dataTypes)(_.params)))
+      (owner, dataDef, args) = dataApp
+      handlerTypes <- dataDef.constructors.traverse((c: ConstructorDef) => handlerType(owner, args, dataDef, c, resultType): Encode[TypeRec[Type]])
+      resultApplied = tyAppT(handlerTypes.foldRight(resultType)(arrowT), encodedScrutinee, resultType)
+      handlers <- dataDef.constructors.traverse { constructor =>
+        cases.find(_.constructor == constructor.name)
           .fold(fail[TypeRec[Expr]](s"Match is missing constructor ${constructor.name.name}")) { c =>
             encodeMatchCase(owner, args, dataDef, resultType, c)
           }
-        }
-        encoded <- handlers.foldLeft(okT(resultApplied)) { (acc, handler) =>
-          acc.flatMap(expr => lift(mkApp(expr, handler)))
-        }
-      } yield encoded
-    case (ExprAnn(t), AST.Fold(scrutinee, _, cases)) =>
-      val scrutType = typeOf(scrutinee.original)
-      val foldVariable = Variable("__fold")
-      val foldArgument = Variable("__fold_arg")
-      for {
-        resultType <- encodeType(t)
-        encodedScrutineeType <- encodeType(scrutType)
-        encodedScrutinee <- scrutinee.encoded
-        dataApp <- ask.flatMap(env => lift(dataTypeApplication(scrutType, env.dataTypes)(_.params)))
-        (owner, dataDef, args) = dataApp
-        foldType = arrowT(encodedScrutineeType, resultType)
-        foldRef = varrType(foldVariable, foldType)
-        foldArgRef = varrType(foldArgument, encodedScrutineeType)
-        resultApplied <- lift(mkTyApp(foldArgRef, resultType))
-        handlers <- dataDef.constructors.toList.traverse { constructor =>
-          cases.find(_.constructor == constructor.name)
-            .fold(fail[TypeRec[Expr]](s"Fold is missing constructor ${constructor.name.name}")) { c =>
-              encodeFoldCase(owner, args, dataDef, foldRef, resultType, c)
-            }
-        }
-        encodedMatch <- handlers.foldLeft(okT(resultApplied)) { (acc, handler) =>
-          acc.flatMap(expr => lift(mkApp(expr, handler)))
-        }
-        foldValue = absT(foldArgument, foldType, encodedScrutineeType, encodedMatch)
-        folded <- lift(mkApp(foldRef, encodedScrutinee))
-      } yield letRecT(foldVariable, resultType, foldType, foldValue, folded)
+      }
+      encoded = applyHandlers(resultApplied, handlers, handlerTypes, resultType)
+    } yield encoded
+    case (ExprAnn(t), AST.Fold(scrutinee, _, cases)) => for {
+      scrutType = typeOf(scrutinee.original)
+      foldVariable = Variable("__fold")
+      foldArgument = Variable("__fold_arg")
+      resultType <- encodeType(t)
+      encodedScrutineeType <- encodeType(scrutType)
+      encodedScrutinee <- scrutinee.encoded
+      dataApp <- ask.flatMap(env => lift(dataTypeApplication(scrutType, env.dataTypes)(_.params)))
+      (owner, dataDef, args) = dataApp
+      foldType = arrowT(encodedScrutineeType, resultType)
+      foldRef = varrType(foldVariable, foldType)
+      foldArgRef = varrType(foldArgument, encodedScrutineeType)
+      handlerTypes <- dataDef.constructors.traverse((c: ConstructorDef) => handlerType(owner, args, dataDef, c, resultType): Encode[TypeRec[Type]])
+      resultApplied = tyAppT(handlerTypes.foldRight(resultType)(arrowT), foldArgRef, resultType)
+      handlers <- dataDef.constructors.traverse { constructor =>
+        cases.find(_.constructor == constructor.name)
+          .fold(fail[TypeRec[Expr]](s"Fold is missing constructor ${constructor.name.name}")) { c =>
+            encodeFoldCase(owner, args, dataDef, foldRef, resultType, c)
+          }
+      }
+      encodedMatch = applyHandlers(resultApplied, handlers, handlerTypes, resultType)
+      foldValue = absT(foldArgument, foldType, encodedScrutineeType, encodedMatch)
+      folded = appT(resultType, foldRef, encodedScrutinee)
+    } yield letRecT(foldVariable, resultType, foldType, foldValue, folded)
     case (ExprAnn(t), _) => rebuildExprNode(t, node)
   }
 
-  private def encodeDecl(decl: TypeRec[Decl], env: Env): EitherS[(Seq[TypeRec[Decl]], Env)] = decl.tail match {
-    case AST.TopData(variable, params, constructors, recursive) =>
-      val taggedConstructors = constructors.zipWithIndex.map { case (constructor, tag) =>
-        ConstructorDef(constructor.name, variable, constructor.fields, tag)
+  private def encodeDecl(decl: TypeRec[Decl], env: DataEnv): EncodeResult[(Seq[TypeRec[Decl]], DataEnv)] = decl.tail match {
+    case AST.TopData(variable, _, _, _) =>
+      env.dataTypes.get(variable).toRight(EncodeError.InvariantViolation(s"Top-level data type ${variable.name} is missing from ProgramAnn")).flatMap { dataDef =>
+        dataDef.constructors.traverse { constructor => for {
+          constructorT <- constructorType(variable, dataDef, constructor).run(env)
+          value <- constructorValue(variable, dataDef, constructor).run(env)
+        } yield topLetT(constructor.name, constructorT, value) }.map(_ -> env)
       }
-      val dataDef = DataDef(params, taggedConstructors, recursive)
-      val nextEnv = env.copy(dataTypes = env.dataTypes + (variable -> dataDef))
-      taggedConstructors.toList.traverse { constructor => for {
-        constructorT <- constructorType(variable, dataDef, constructor).run(nextEnv)
-        value <- constructorValue(variable, dataDef, constructor).run(nextEnv)
-      } yield topLetT(constructor.name, constructorT, value) }.map(_ -> nextEnv)
 
     case _ =>
       decl.paraAnn(encoderAlg).run(env).map(encodedDecl => (Seq(encodedDecl), env))
   }
 
-  def encode(program: TypeRec[AST.Program.type]): EitherS[TypeRec[AST.Program.type]] = program.tail match {
+  def encode(program: TypeRec[AST.Program.type]): EncodeResult[TypeRec[AST.Program.type]] = program.tail match {
     case AST.Program(decls) =>
-      decls.foldLeft(Right((Vector.empty[TypeRec[Decl]], Env(Map.empty))): EitherS[(Vector[TypeRec[Decl]], Env)]) {
+      val initialEnv = program.head match {
+        case ProgramAnn(env) => DataEnv.from(env)
+      }
+      decls.foldLeft(Right((Vector.empty[TypeRec[Decl]], initialEnv)): EncodeResult[(Vector[TypeRec[Decl]], DataEnv)]) {
         case (acc, decl) => acc.flatMap { case (encodedDecls, env) =>
           encodeDecl(decl, env).map { case (newDecls, nextEnv) => (encodedDecls ++ newDecls, nextEnv) }
         }

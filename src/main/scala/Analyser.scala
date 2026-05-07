@@ -5,14 +5,6 @@ import cats.data.ReaderT
 
 object Analyser {
 
-  case class TypeAlias(params: Seq[TypeVariable], body: TypeRec[Type])
-  case class Env(
-      values: Map[Variable, TypeRec[Type]],
-      typeVars: Set[TypeVariable],
-      typeAliases: Map[TypeVariable, TypeAlias],
-      dataTypes: Map[TypeVariable, DataDef],
-      constructors: Map[Variable, ConstructorDef]
-  )
   private type EitherS[A] = Either[String, A]
   private type Check[A] = ReaderT[EitherS, Env, A]
   private type TC[I] = Check[TypeRec[I]]
@@ -39,28 +31,6 @@ object Analyser {
 
   private def dataResultType(owner: TypeVariable, params: Seq[TypeVariable]): TypeRec[Type] =
     applyTypeConstructor(owner, params.map(typeVarT))
-
-  private def containsDataApplicationOf(t: TypeRec[Type], owner: TypeVariable): Boolean = {
-    val (head, args) = collectTypeApps(t)
-    val self = head.projectT match {
-      case AST.TypeVar(variable) => variable == owner
-      case _ => false
-    }
-    self || (t.projectT match {
-      case AST.Arrow(from, to) => containsDataApplicationOf(from, owner) || containsDataApplicationOf(to, owner)
-      case AST.ForAll(_, body) => containsDataApplicationOf(body, owner)
-      case AST.TypeApp(_, _) => args.exists(arg => containsDataApplicationOf(arg, owner))
-      case _ => false
-    })
-  }
-
-  private def isDataApplicationOf(t: TypeRec[Type], owner: TypeVariable): Boolean = {
-    val (head, _) = collectTypeApps(t)
-    head.projectT match {
-      case AST.TypeVar(variable) => variable == owner
-      case _ => false
-    }
-  }
 
   private def constructorType(owner: TypeVariable, params: Seq[TypeVariable], fields: Seq[TypeRec[Type]]): TypeRec[Type] = {
     val result = dataResultType(owner, params)
@@ -158,7 +128,7 @@ object Analyser {
 
   private val tcAlg: Algebra[AST, TC] = [x] => (node: AST[TC, x]) => node match {
 
-    case AST.Program(decls) => decls.toList.traverse(identity).map(programT)
+    case AST.Program(decls) => decls.toList.traverse(identity).map(decls => programT(decls))
 
     case AST.TopLet(variable, types, value) => for {
       typedTypes <- types
@@ -554,13 +524,14 @@ object Analyser {
 
   def validate(prog: Rec[AST.Program.type]): EitherS[TypeRec[AST.Program.type]] = prog.unfix match {
     case AST.Program(decls) =>
-      decls.foldLeft(Right((Vector.empty[TypeRec[Decl]], Env(Map.empty, Set.empty, Map.empty, Map.empty, Map.empty))): EitherS[(Vector[TypeRec[Decl]], Env)]) {
+      decls.foldLeft(Right((Vector.empty[TypeRec[Decl]], Env.empty)): EitherS[(Vector[TypeRec[Decl]], Env)]) {
         case (acc, decl) => acc.flatMap { case (typedDecls, env) =>
           checkDecl(decl, env).map { case (typedDecl, nextEnv) => (typedDecls :+ typedDecl, nextEnv) }
         }
       }.flatMap { case (typedDecls, env) =>
         env.values.get(Variable("main")) match {
-          case Some(t) if sameType(t, arrowT(unitTypeT, intTypeT)) => Right(programT(typedDecls))
+          case Some(t) if sameType(t, arrowT(unitTypeT, intTypeT)) =>
+            Right(programT(typedDecls, env))
           case Some(t) => Left(s"Top-level main must have type unit → i32, actual ${t.show}")
           case None => Left("Top-level main is not defined")
         }

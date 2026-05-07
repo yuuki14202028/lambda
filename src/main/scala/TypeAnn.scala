@@ -4,7 +4,7 @@ import AST.Program
 
 sealed trait TypeAnn[I]
 
-case object ProgramAnn extends TypeAnn[Program.type]
+case class ProgramAnn(env: Env = Env.empty) extends TypeAnn[Program.type]
 case object DeclAnn extends TypeAnn[Decl]
 case class ExprAnn(t: TypeRec[Type]) extends TypeAnn[Expr]
 case object TypeAnn extends TypeAnn[Type]

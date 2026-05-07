@@ -179,7 +179,8 @@ private val eraseAnn: TypeRec ~> Rec = new (TypeRec ~> Rec) {
   }
 }
 
-def programT(decls: Seq[TypeRec[Decl]]): TypeRec[AST.Program.type] = HCofree(ProgramAnn, AST.Program(decls))
+def programT(decls: Seq[TypeRec[Decl]], env: Env = Env.empty): TypeRec[AST.Program.type] =
+  HCofree(ProgramAnn(env), AST.Program(decls))
 def topLetT(variable: Variable, types: TypeRec[Type], value: TypeRec[Expr]): TypeRec[Decl] =
   HCofree(DeclAnn, AST.TopLet(variable, types, value))
 def topLetRecT(variable: Variable, types: TypeRec[Type], value: TypeRec[Expr]): TypeRec[Decl] =
@@ -348,6 +349,28 @@ def collectTypeApps(t: TypeRec[Type]): (TypeRec[Type], Seq[TypeRec[Type]]) = {
       (self, Seq.empty)
   }
   t.paraAnn(alg)
+}
+
+def isDataApplicationOf(t: TypeRec[Type], owner: TypeVariable): Boolean = {
+  type Found[I] = Boolean
+  val alg: HCofreeAlgebra[AST, TypeAnn, Found] = [x] => (_, node) => node match {
+    case AST.TypeVar(variable) => variable == owner
+    case AST.TypeApp(headIsOwner, _) => headIsOwner
+    case _ => false
+  }
+  t.cataAnn(alg)
+}
+
+def containsDataApplicationOf(t: TypeRec[Type], owner: TypeVariable): Boolean = {
+  type Found[I] = Boolean
+  val alg: HCofreeAlgebra[AST, TypeAnn, Found] = [x] => (_, node) => node match {
+    case AST.TypeVar(variable) => variable == owner
+    case AST.Arrow(from, to) => from || to
+    case AST.ForAll(_, body) => body
+    case AST.TypeApp(function, argument) => function || argument
+    case _ => false
+  }
+  t.cataAnn(alg)
 }
 
 def dataTypeApplication[D](
