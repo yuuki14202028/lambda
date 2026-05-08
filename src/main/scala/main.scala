@@ -3,8 +3,9 @@ package com.yuuki14202028
 import java.nio.file.{Files, Paths}
 
 @main
-def main(): Unit = {
-  val srcPath = Paths.get("main.lam")
+def main(args: String*): Unit = {
+  val srcPath = args.headOption.map(Paths.get(_)).getOrElse(Paths.get("main.lam"))
+  val asmPath = args.drop(1).headOption.map(Paths.get(_)).getOrElse(Paths.get("build/out.s"))
   val src = Files.readString(srcPath)
 
   ParserAST.programParser.parseAll(src) match {
@@ -28,8 +29,8 @@ def main(): Unit = {
       }
       println(eraseAnn(encoded).show)
       val asm = Generator.generate(encoded)
-      val outDir = Paths.get("build")
-      Files.createDirectories(outDir)
-      Files.writeString(outDir.resolve("out.s"), asm)
+      val outDir = asmPath.getParent
+      if (outDir != null) Files.createDirectories(outDir)
+      Files.writeString(asmPath, asm)
   }
 }

@@ -1,10 +1,24 @@
 package com.yuuki14202028
 
 import cats.data.{ReaderT, State}
-import cats.syntax.all.*
+
+import scala.annotation.tailrec
 
 object Generator {
-  type Env = List[String]
+  sealed trait Binding {
+    def name: String
+  }
+  case class HeapBinding(name: String) extends Binding
+  case class StackBinding(name: String, offset: Int) extends Binding
+  case class Env(values: List[Binding], directFunctions: Map[String, String]) {
+    def withHeap(name: String): Env = copy(values = HeapBinding(name) :: values)
+    def withStack(name: String, offset: Int): Env = copy(values = StackBinding(name, offset) :: values)
+    def withDirectFunction(name: String, label: String): Env = copy(directFunctions = directFunctions.updated(name, label))
+  }
+
+  object Env {
+    val empty: Env = Env(Nil, Map.empty)
+  }
 
   case class GenState(funcs: Vector[List[String]], counter: Int, externs: Set[String], strings: Vector[(String, String)])
   type GenS[A] = State[GenState, A]
@@ -86,13 +100,28 @@ object Generator {
   }
 
   private def varLookup(name: String, env: Env): List[String] = {
-    val idx = env.indexOf(name)
-    if (idx < 0) sys.error(s"Unbound variable: $name")
-    "    ldr x0, [x29, #-16]" ::
-      List.fill(idx)("    ldr x0, [x0, #8]") :::
-      List("    ldr x0, [x0]")
+    val found = env.values.foldLeft(Option.empty[(Binding, Int)]) {
+      case (some @ Some(_), _) => some
+      case (None, binding @ HeapBinding(`name`)) => Some(binding -> env.values.takeWhile(_ ne binding).count(_.isInstanceOf[HeapBinding]))
+      case (None, binding @ StackBinding(`name`, _)) => Some(binding -> 0)
+      case (None, _) => None
+    }
+    found match {
+      case Some((StackBinding(_, offset), _)) =>
+        List(s"    ldr x0, [x29, #$offset]")
+      case Some((HeapBinding(_), idx)) =>
+        "    ldr x0, [x29, #-16]" ::
+          List.fill(idx)("    ldr x0, [x0, #8]") :::
+          List("    ldr x0, [x0]")
+      case None =>
+        env.directFunctions.get(name) match {
+          case Some(label) => closureAllocNoEnv(label)
+          case None => sys.error(s"Unbound variable: $name")
+        }
+    }
   }
 
+  @tailrec
   private def primitiveName(t: TypeRec[Type]): Option[String] = t.projectT match {
     case AST.Primitive(name) => Some(name)
     case AST.TypeApp(function, _) => primitiveName(function)
@@ -216,6 +245,35 @@ object Generator {
     "    str x9, [x0, #8]"
   )
 
+  private def closureAllocNoEnv(label: String): List[String] = List(
+    "    mov x0, #16",
+    "    bl _malloc",
+    s"    adrp x9, $label@PAGE",
+    s"    add x9, x9, $label@PAGEOFF",
+    "    str x9, [x0]",
+    "    mov x9, #0",
+    "    str x9, [x0, #8]"
+  )
+
+  private def directFn(label: String, param: String, body: List[String]): List[String] = List(
+    "", ".p2align 2", s"$label:",
+    "    stp x29, x30, [sp, #-16]!",
+    "    mov x29, sp",
+    "    sub sp, sp, #16",
+    "    str x1, [x29, #-16]"
+  ) ++ body ++ List(
+    "    mov sp, x29",
+    "    ldp x29, x30, [sp], #16",
+    "    ret"
+  )
+
+  @tailrec
+  private def isFunctionType(t: TypeRec[Type]): Boolean = t.projectT match {
+    case AST.Arrow(_, _) => true
+    case AST.ForAll(_, body) => isFunctionType(body)
+    case _ => false
+  }
+
   private val appSeq: List[String] = List(
     "    mov x1, x0",
     "    ldr x0, [sp], #16",
@@ -301,7 +359,7 @@ object Generator {
 
     case AST.Abs(Variable(param), types, body) => for {
       lbl <- liftS(fresh("lambda"))
-      bc  <- body.code.local((env: Env) => param :: env)
+      bc  <- body.code.local((env: Env) => env.withHeap(param))
       _   <- liftS(addFunc(liftedFn(lbl, bc)))
     } yield closureAlloc(lbl)
 
@@ -309,7 +367,7 @@ object Generator {
 
     case AST.Let(Variable(param), types, value, body) => for {
       vc <- value.code
-      bc <- body.code.local((env: Env) => param :: env)
+      bc <- body.code.local((env: Env) => env.withHeap(param))
     } yield vc ++ List(
       "    ldr x9, [x29, #-16]",
       "    str x9, [sp, #-16]!",
@@ -330,8 +388,8 @@ object Generator {
     )
 
     case AST.LetRec(Variable(param), types, value, body) => for {
-      vc <- value.code.local((env: Env) => param :: env)
-      bc <- body.code.local((env: Env) => param :: env)
+      vc <- value.code.local((env: Env) => env.withHeap(param))
+      bc <- body.code.local((env: Env) => env.withHeap(param))
     } yield List(
       "    ldr x9, [x29, #-16]",
       "    str x9, [sp, #-16]!",
@@ -358,11 +416,25 @@ object Generator {
     case AST.Match(_, _) => pure(sys.error("Match must be Church encoded before code generation"))
     case AST.Fold(_, _, _) => pure(sys.error("Fold must be Church encoded before code generation"))
 
-    case AST.App(f, a) => for {
-      fc <- f.code
-      str = List("    str x0, [sp, #-16]!")
-      ac <- a.code
-    } yield fc ++ str ++ ac ++ appSeq
+    case AST.App(f, a) =>
+      @tailrec
+      def directName(expr: TypeRec[Expr]): Option[String] = expr.tail match {
+        case AST.Var(Variable(name)) => Some(name)
+        case AST.TyApp(function, _) => directName(function)
+        case _ => None
+      }
+      ask.flatMap { env =>
+        directName(f.original).flatMap(env.directFunctions.get) match {
+          case Some(label) =>
+            a.code.map(ac => ac ++ List("    mov x1, x0", s"    bl $label"))
+          case None =>
+            for {
+              fc <- f.code
+              str = List("    str x0, [sp, #-16]!")
+              ac <- a.code
+            } yield fc ++ str ++ ac ++ appSeq
+        }
+      }
 
     case AST.TyApp(f, _) => f.code
 
@@ -417,28 +489,51 @@ object Generator {
       "    str x0, [x29, #-16]"
     )
 
+  @tailrec
+  private def unwrapTypeAbs(expr: TypeRec[Expr]): TypeRec[Expr] = expr.tail match {
+    case AST.TyAbs(_, body) => unwrapTypeAbs(body)
+    case _ => expr
+  }
+
+  private def directFunctionValue(name: String, value: TypeRec[Expr]): Option[(String, TypeRec[Expr])] = unwrapTypeAbs(value).tail match {
+    case AST.Abs(Variable(param), _, body) if freeVars(value).subsetOf(Set(Variable(name))) && !isFunctionType(typeOf(body)) =>
+      Some(param -> body)
+    case _ => None
+  }
+
   private def genDecl(decl: TypeRec[Decl], env: Env): GenS[(List[String], Env)] = decl.tail match {
     case AST.TopLet(Variable(param), _, value) =>
-      genExpr(value).run(env).map(code => (bindTop(code), param :: env))
+      genExpr(value).run(env).map(code => (bindTop(code), env.withHeap(param)))
 
     case AST.TopLetRec(Variable(param), _, value) =>
-      val valueEnv = param :: env
-      genExpr(value).run(valueEnv).map { vc =>
-        val code = List(
-          "    ldr x9, [x29, #-16]",
-          "    str x9, [sp, #-16]!",
-          "    mov x0, #16",
-          "    bl _malloc",
-          "    ldr x9, [sp], #16",
-          "    str x9, [x0, #8]",
-          "    mov x9, #0",
-          "    str x9, [x0]",
-          "    str x0, [x29, #-16]"
-        ) ++ vc ++ List(
-          "    ldr x9, [x29, #-16]",
-          "    str x0, [x9]"
-        )
-        (code, valueEnv)
+      directFunctionValue(param, value) match {
+        case Some((arg, body)) => for {
+          label <- fresh(s"direct_$param")
+          valueEnv = env.withDirectFunction(param, label)
+          bodyCode <- genExpr(body).run(valueEnv.withStack(arg, -16))
+          _ <- addFunc(directFn(label, arg, bodyCode))
+        } yield {
+          (Nil, valueEnv)
+        }
+        case None =>
+          val valueEnv = env.withHeap(param)
+          genExpr(value).run(valueEnv).map { vc =>
+            val code = List(
+              "    ldr x9, [x29, #-16]",
+              "    str x9, [sp, #-16]!",
+              "    mov x0, #16",
+              "    bl _malloc",
+              "    ldr x9, [sp], #16",
+              "    str x9, [x0, #8]",
+              "    mov x9, #0",
+              "    str x9, [x0]",
+              "    str x0, [x29, #-16]"
+            ) ++ vc ++ List(
+              "    ldr x9, [x29, #-16]",
+              "    str x0, [x9]"
+            )
+            (code, valueEnv)
+          }
       }
 
     case AST.TopType(_, _, _) => State.pure((Nil, env))
@@ -460,7 +555,7 @@ object Generator {
     val gen = prog.tail match {
       case AST.Program(decls) => genProgram(decls)
     }
-    val (finalSt, mainCode) = gen.run(Nil).run(GenState(Vector.empty, 0, Set.empty, Vector.empty)).value
+    val (finalSt, mainCode) = gen.run(Env.empty).run(GenState(Vector.empty, 0, Set.empty, Vector.empty)).value
     val externs = finalSt.externs.toList.sorted.map(sym => s".extern _$sym")
     val strings = if (finalSt.strings.isEmpty) Nil
       else ".section __TEXT,__cstring,cstring_literals" :: finalSt.strings.toList.flatMap {

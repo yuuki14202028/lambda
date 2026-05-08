@@ -266,6 +266,37 @@ def freeTypeVars(t: TypeRec[Type]): Set[TypeVariable] = {
   t.cataAnn(alg)
 }
 
+def freeVars(expr: TypeRec[Expr]): Set[Variable] = {
+  type FV[I] = Set[Variable]
+  val alg: HCofreeAlgebra[AST, TypeAnn, FV] = [x] => (_, node) => node match {
+    case AST.Var(variable) => Set(variable)
+    case AST.Abs(variable, _, body) => body - variable
+    case AST.TyAbs(_, body) => body
+    case AST.Let(variable, _, value, body) => value ++ (body - variable)
+    case AST.LetRec(variable, _, value, body) => (value - variable) ++ (body - variable)
+    case AST.TypeLet(_, _, _, body) => body
+    case AST.DataLet(_, _, _, body, _) => body
+    case AST.Match(scrutinee, cases) =>
+      scrutinee ++ cases.foldLeft(Set.empty[Variable]) { (acc, c) =>
+        acc ++ (c.body -- c.binders.toSet)
+      }
+    case AST.Fold(scrutinee, _, cases) =>
+      scrutinee ++ cases.foldLeft(Set.empty[Variable]) { (acc, c) =>
+        acc ++ (c.body -- c.binders.toSet)
+      }
+    case AST.App(function, argument) => function ++ argument
+    case AST.TyApp(function, _) => function
+    case AST.Foreign(_, _) => Set.empty
+    case AST.Block(discarded, result) => discarded.foldLeft(Set.empty[Variable])(_ ++ _) ++ result.getOrElse(Set.empty)
+    case AST.BinOp(_, left, right) => left ++ right
+    case AST.UnaryOp(_, body) => body
+    case AST.If(cond, thenBranch, elseBranch) => cond ++ thenBranch ++ elseBranch
+    case AST.Num(_, _) | AST.Char(_) | AST.StringLit(_) | AST.Bool(_) | AST.UnitLit() => Set.empty
+    case _ => Set.empty
+  }
+  expr.cataAnn(alg)
+}
+
 private def freshTypeVariable(base: TypeVariable, used: Set[TypeVariable]): TypeVariable = {
   Iterator.from(0)
     .map {
