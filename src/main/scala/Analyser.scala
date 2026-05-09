@@ -24,10 +24,17 @@ object Analyser {
   private def expectEquatable(actual: TypeRec[Type]): Check[Unit] =
     guard(isEquatableType(actual), s"Type mismatch: expected numeric, char, or bool, actual ${actual.show}")
 
-  private def expectForeignType(t: TypeRec[Type]): Check[Unit] = destructArrow(t) match {
-    case Some((_, to)) if destructArrow(to).isEmpty => ReaderT.pure(())
-    case _ => fail(s"Foreign function must have exactly one argument: ${t.show}")
+  private def foreignArity(t: TypeRec[Type]): Int = {
+    @annotation.tailrec
+    def loop(current: TypeRec[Type], count: Int): Int = destructArrow(current) match {
+      case Some((_, to)) => loop(to, count + 1)
+      case None => count
+    }
+    loop(t, 0)
   }
+
+  private def expectForeignType(t: TypeRec[Type]): Check[Unit] =
+    guard(foreignArity(t) > 0, s"Foreign function must have at least one argument: ${t.show}")
 
   private def dataResultType(owner: TypeVariable, params: Seq[TypeVariable]): TypeRec[Type] =
     applyTypeConstructor(owner, params.map(typeVarT))

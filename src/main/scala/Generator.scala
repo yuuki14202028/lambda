@@ -1,6 +1,7 @@
 package com.yuuki14202028
 
 import cats.data.{ReaderT, State}
+import cats.syntax.all._
 
 import scala.annotation.tailrec
 
@@ -95,6 +96,7 @@ object Generator {
   private val sp = Reg("sp")
   private val w0 = Reg("w0")
   private val w1 = Reg("w1")
+  private val w10 = Reg("w10")
   private val s0 = Reg("s0")
   private val s1 = Reg("s1")
   private val d0 = Reg("d0")
@@ -301,11 +303,54 @@ object Generator {
       ) ++ body ++ epilogue
     )
 
-  private def foreignArgMove(t: TypeRec[Type]): Code = primitiveName(t) match {
-    case Some("f32") => code(ins("fmov", r(s0), r(w1)))
-    case Some("f64") => code(ins("fmov", r(d0), r(x1)))
-    case _ => code(ins("mov", r(x0), r(x1)))
+  private case class ForeignSig(args: Vector[TypeRec[Type]], returnType: TypeRec[Type])
+  private sealed trait ForeignArgSource
+  private case class SavedEnvArg(envIndex: Int) extends ForeignArgSource
+  private case object SavedCurrentArg extends ForeignArgSource
+
+  private def destructForeignSig(t: TypeRec[Type]): Option[ForeignSig] = {
+    @tailrec
+    def loop(current: TypeRec[Type], args: Vector[TypeRec[Type]]): ForeignSig = destructArrow(current) match {
+      case Some((from, to)) => loop(to, args :+ from)
+      case None => ForeignSig(args, current)
+    }
+    val sig = loop(t, Vector.empty)
+    Option.when(sig.args.nonEmpty)(sig)
   }
+
+  private def foreignArgLocations(args: Vector[TypeRec[Type]]): Vector[(TypeRec[Type], Reg)] = {
+    val (_, _, locations) = args.foldLeft((0, 0, Vector.empty[(TypeRec[Type], Reg)])) {
+      case ((intCount, floatCount, acc), t) =>
+        primitiveName(t) match {
+          case Some("f32") =>
+            if (floatCount >= 8) sys.error("Foreign functions with more than 8 floating-point arguments are not supported")
+            (intCount, floatCount + 1, acc :+ (t -> scalarReg("s", floatCount)))
+          case Some("f64") =>
+            if (floatCount >= 8) sys.error("Foreign functions with more than 8 floating-point arguments are not supported")
+            (intCount, floatCount + 1, acc :+ (t -> scalarReg("d", floatCount)))
+          case _ =>
+            if (intCount >= 8) sys.error("Foreign functions with more than 8 integer/pointer arguments are not supported")
+            (intCount + 1, floatCount, acc :+ (t -> scalarReg("x", intCount)))
+        }
+    }
+    locations
+  }
+
+  private def loadSavedForeignArg(source: ForeignArgSource): Code = source match {
+    case SavedCurrentArg =>
+      code(ins("ldr", r(x10), mem(x29, -32)))
+    case SavedEnvArg(envIndex) =>
+      val hops = code(ins("ldr", r(x9), mem(x29, -16)), ins("ldr", r(x9), mem(x9, 8))) ++
+        Code.concat(List.fill(envIndex)(code(ins("ldr", r(x9), mem(x9, 8)))))
+      hops ++ code(ins("ldr", r(x10), mem(x9)))
+  }
+
+  private def moveForeignArg(source: ForeignArgSource, t: TypeRec[Type], target: Reg): Code =
+    loadSavedForeignArg(source) ++ (primitiveName(t) match {
+      case Some("f32") => code(ins("fmov", r(target), r(w10)))
+      case Some("f64") => code(ins("fmov", r(target), r(x10)))
+      case _ => code(ins("mov", r(target), r(x10)))
+    })
 
   private def foreignReturnMove(t: TypeRec[Type]): Code = primitiveName(t) match {
     case Some("f32") => code(ins("fmov", r(w0), r(s0)))
@@ -313,18 +358,50 @@ object Generator {
     case _ => Code.empty
   }
 
-  private def foreignWrapper(label: Label, symbol: String, argType: TypeRec[Type], returnType: TypeRec[Type]): FunctionDef =
+  private def foreignCaptureWrapper(label: Label, nextLabel: Label): FunctionDef =
     function(label,
       code(
         ins("stp", r(x29), r(x30), pre(sp, -16)),
-        ins("mov", r(x29), r(sp))
-      ) ++ foreignArgMove(argType) ++ code(
+        ins("mov", r(x29), r(sp)),
+        ins("sub", r(sp), r(sp), imm(16)),
+        ins("stp", r(x0), r(x1), pre(sp, -16)),
+        ins("mov", r(x0), imm(16)),
+        ins("bl", LabelOperand(Label("_malloc"))),
+        ins("mov", r(x9), r(x0)),
+        ins("ldp", r(x0), r(x1), post(sp, 16)),
+        ins("str", r(x1), mem(x9)),
+        ins("ldr", r(x10), mem(x0, 8)),
+        ins("str", r(x10), mem(x9, 8)),
+        ins("str", r(x9), mem(x29, -16))
+      ) ++ closureAlloc(nextLabel) ++ epilogue
+    )
+
+  private def foreignCallWrapper(label: Label, symbol: String, args: Vector[TypeRec[Type]], returnType: TypeRec[Type]): FunctionDef = {
+    val previousCount = args.length - 1
+    val sources = args.indices.map { argIndex =>
+      if (argIndex == previousCount) SavedCurrentArg else SavedEnvArg(previousCount - 1 - argIndex)
+    }.toVector
+    val moves = foreignArgLocations(args).zip(sources).map { case ((t, target), source) => moveForeignArg(source, t, target) }
+    function(label,
+      code(
+        ins("stp", r(x29), r(x30), pre(sp, -16)),
+        ins("mov", r(x29), r(sp)),
+        ins("str", r(x0), pre(sp, -16)),
+        ins("str", r(x1), pre(sp, -16))
+      ) ++ Code.concat(moves) ++ code(
         ins("bl", LabelOperand(Label(s"_$symbol")))
       ) ++ foreignReturnMove(returnType) ++ code(
+        ins("mov", r(sp), r(x29)),
         ins("ldp", r(x29), r(x30), post(sp, 16)),
         ins("ret")
       )
     )
+  }
+
+  private def foreignWrappers(labels: Vector[Label], symbol: String, sig: ForeignSig): Vector[FunctionDef] = {
+    val captureWrappers = labels.dropRight(1).zip(labels.tail).map { case (label, nextLabel) => foreignCaptureWrapper(label, nextLabel) }
+    captureWrappers :+ foreignCallWrapper(labels.last, symbol, sig.args, sig.returnType)
+  }
 
   private def closureAlloc(label: Label): Code = code(
     ins("mov", r(x0), imm(16)),
@@ -433,14 +510,14 @@ object Generator {
       ask.map(env => varLookup(name, env))
 
     case AST.Foreign(Variable(name), _) => for {
-      lbl <- liftS(fresh(s"foreign_$name"))
-      (argType, returnType) = ann match {
-        case ExprAnn(t) => destructArrow(t).getOrElse(sys.error(s"Foreign must have function type: ${t.show}"))
+      sig = ann match {
+        case ExprAnn(t) => destructForeignSig(t).getOrElse(sys.error(s"Foreign must have function type: ${t.show}"))
         case _ => sys.error("Foreign node must have expression annotation")
       }
+      labels <- liftS(sig.args.indices.toList.traverse(_ => fresh(s"foreign_$name")))
       _ <- liftS(addExtern(name))
-      _ <- liftS(addFunc(foreignWrapper(lbl, name, argType, returnType)))
-    } yield closureAllocNoEnv(lbl)
+      _ <- liftS(State.modify[GenState](st => st.copy(funcs = st.funcs ++ foreignWrappers(labels.toVector, name, sig))))
+    } yield closureAllocNoEnv(labels.head)
 
     case AST.Abs(Variable(param), _, body) => for {
       lbl <- liftS(fresh("lambda"))

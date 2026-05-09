@@ -297,7 +297,17 @@ def freeVars(expr: TypeRec[Expr]): Set[Variable] = {
   expr.cataAnn(alg)
 }
 
-private def freshTypeVariable(base: TypeVariable, used: Set[TypeVariable]): TypeVariable = {
+def freshVariable(base: Variable, used: Set[Variable]): Variable = {
+  Iterator.from(0)
+    .map {
+      case 0 => Variable(s"${base.name}'")
+      case n => Variable(s"${base.name}'$n")
+    }
+    .find(v => !used.contains(v))
+    .get
+}
+
+def freshTypeVariable(base: TypeVariable, used: Set[TypeVariable]): TypeVariable = {
   Iterator.from(0)
     .map {
       case 0 => TypeVariable(s"${base.name}'")

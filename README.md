@@ -176,9 +176,8 @@ in
 choose[i32](1)(2)
 ```
 
-外部 C 関数を使う場合は `foreign[T → U] name` のように型を書き、
-一変数の関数しか置くことができません。また、
-この型注釈は C 側の実装が従うものとして信頼します。
+外部 C 関数を使う場合は `foreign[T → U] name` のように型を明示します。  
+また、 この型注釈は C 側の実装が従うものとして信頼します。
 
 ```ocaml
 let puts: String → i32 = foreign[String → i32] puts in
