@@ -21,6 +21,8 @@ given HTraverse[AST] with {
       (f(types), f(value)).mapN(AST.TopLet(v, _, _))
     case AST.TopLetRec(v, types, value) =>
       (f(types), f(value)).mapN(AST.TopLetRec(v, _, _))
+    case AST.TopImport(path) =>
+      Applicative[G].pure(AST.TopImport(path))
     case AST.TopType(v, params, alias) =>
       f(alias).map(AST.TopType(v, params, _))
     case AST.TopData(v, params, ctors, recursive) =>
@@ -68,6 +70,8 @@ given HTraverse[AST] with {
       (discarded.toList.traverse(e => f(e)), result.traverse(e => f(e))).mapN(AST.Block(_, _))
     case AST.BinOp(op, l, r) =>
       (f(l), f(r)).mapN(AST.BinOp(op, _, _))
+    case AST.Intrinsic(op, args) =>
+      args.toList.traverse(arg => f(arg)).map(AST.Intrinsic(op, _))
     case AST.UnaryOp(op, t) =>
       f(t).map(AST.UnaryOp(op, _))
     case AST.If(c, t, e) =>

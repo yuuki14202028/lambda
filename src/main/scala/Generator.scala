@@ -1,7 +1,7 @@
 package com.yuuki14202028
 
 import cats.data.{ReaderT, State}
-import cats.syntax.all._
+import cats.syntax.all.*
 
 import scala.annotation.tailrec
 
@@ -233,6 +233,7 @@ object Generator {
         case BinOps.Sub => code(ins("fmov", r(s1), r(w1)), ins("fmov", r(s0), r(w0)), ins("fsub", r(s0), r(s1), r(s0)), ins("fmov", r(w0), r(s0)))
         case BinOps.Mul => code(ins("fmov", r(s1), r(w1)), ins("fmov", r(s0), r(w0)), ins("fmul", r(s0), r(s1), r(s0)), ins("fmov", r(w0), r(s0)))
         case BinOps.Div => code(ins("fmov", r(s1), r(w1)), ins("fmov", r(s0), r(w0)), ins("fdiv", r(s0), r(s1), r(s0)), ins("fmov", r(w0), r(s0)))
+        case BinOps.Mod => sys.error("Modulo must be implemented by the standard library")
         case BinOps.Eq  => code(ins("fmov", r(s1), r(w1)), ins("fmov", r(s0), r(w0)), ins("fcmp", r(s1), r(s0)), ins("cset", r(w0), Condition("eq")))
         case BinOps.Neq => code(ins("fmov", r(s1), r(w1)), ins("fmov", r(s0), r(w0)), ins("fcmp", r(s1), r(s0)), ins("cset", r(w0), Condition("ne")))
         case BinOps.Lt  => code(ins("fmov", r(s1), r(w1)), ins("fmov", r(s0), r(w0)), ins("fcmp", r(s1), r(s0)), ins("cset", r(w0), Condition("lt")))
@@ -246,6 +247,7 @@ object Generator {
         case BinOps.Sub => code(ins("fmov", r(d1), r(x1)), ins("fmov", r(d0), r(x0)), ins("fsub", r(d0), r(d1), r(d0)), ins("fmov", r(x0), r(d0)))
         case BinOps.Mul => code(ins("fmov", r(d1), r(x1)), ins("fmov", r(d0), r(x0)), ins("fmul", r(d0), r(d1), r(d0)), ins("fmov", r(x0), r(d0)))
         case BinOps.Div => code(ins("fmov", r(d1), r(x1)), ins("fmov", r(d0), r(x0)), ins("fdiv", r(d0), r(d1), r(d0)), ins("fmov", r(x0), r(d0)))
+        case BinOps.Mod => sys.error("Modulo must be implemented by the standard library")
         case BinOps.Eq  => code(ins("fmov", r(d1), r(x1)), ins("fmov", r(d0), r(x0)), ins("fcmp", r(d1), r(d0)), ins("cset", r(w0), Condition("eq")))
         case BinOps.Neq => code(ins("fmov", r(d1), r(x1)), ins("fmov", r(d0), r(x0)), ins("fcmp", r(d1), r(d0)), ins("cset", r(w0), Condition("ne")))
         case BinOps.Lt  => code(ins("fmov", r(d1), r(x1)), ins("fmov", r(d0), r(x0)), ins("fcmp", r(d1), r(d0)), ins("cset", r(w0), Condition("lt")))
@@ -264,6 +266,7 @@ object Generator {
         case BinOps.Sub => code(ins("sub", r(r0), r(r1), r(r0)))
         case BinOps.Mul => code(ins("mul", r(r0), r(r1), r(r0)))
         case BinOps.Div => code(ins(if (isUnsigned(name)) "udiv" else "sdiv", r(r0), r(r1), r(r0)))
+        case BinOps.Mod => sys.error("Modulo must be implemented by the standard library")
         case BinOps.Eq  => code(ins("cmp", r(r1), r(r0)), ins("cset", r(w0), Condition("eq")))
         case BinOps.Neq => code(ins("cmp", r(r1), r(r0)), ins("cset", r(w0), Condition("ne")))
         case cmp        => code(ins("cmp", r(r1), r(r0)), ins("cset", r(w0), Condition(if (isUnsigned(name)) unsignedCond(cmp) else signedCond(cmp))))
@@ -506,6 +509,28 @@ object Generator {
       rc <- rExpr.code
     } yield lc ++ code(ins("str", r(x0), pre(sp, -16))) ++ rc ++ code(ins("ldr", r(x1), post(sp, 16))) ++ binInstr(op, typeOf(l.original))
 
+    case AST.Intrinsic(IntrinsicOps.BinOp(op, _), Seq(l, rExpr)) => for {
+      lc <- l.code
+      rc <- rExpr.code
+    } yield lc ++ code(ins("str", r(x0), pre(sp, -16))) ++ rc ++ code(ins("ldr", r(x1), post(sp, 16))) ++ binInstr(op, typeOf(l.original))
+
+    case AST.Intrinsic(IntrinsicOps.UnaryOp(UnaryOps.Neg, _), Seq(body)) =>
+      body.code.map(_ ++ (primitiveName(typeOf(body.original)) match {
+        case Some("f32") => code(ins("fmov", r(s0), r(w0)), ins("fneg", r(s0), r(s0)), ins("fmov", r(w0), r(s0)))
+        case Some("f64") => code(ins("fmov", r(d0), r(x0)), ins("fneg", r(d0), r(d0)), ins("fmov", r(x0), r(d0)))
+        case Some(name) if is64BitScalar(name) => code(ins("neg", r(x0), r(x0)))
+        case _ => code(ins("neg", r(w0), r(w0)))
+      }))
+
+    case AST.Intrinsic(IntrinsicOps.UnaryOp(UnaryOps.Not, _), Seq(body)) =>
+      body.code.map(_ ++ code(
+        ins("cmp", r(w0), imm(0)),
+        ins("cset", r(w0), Condition("eq"))
+      ))
+
+    case AST.Intrinsic(op, args) =>
+      pure(sys.error(s"Unsupported intrinsic $op with ${args.length} arguments"))
+
     case AST.Var(Variable(name)) =>
       ask.map(env => varLookup(name, env))
 
@@ -585,6 +610,7 @@ object Generator {
 
     case AST.TopLet(_, _, _) => pure(Code.empty)
     case AST.TopLetRec(_, _, _) => pure(Code.empty)
+    case AST.TopImport(_) => pure(Code.empty)
     case AST.TopType(_, _, _) => pure(Code.empty)
     case AST.TopData(_, _, _, _) => pure(Code.empty)
 
@@ -665,8 +691,21 @@ object Generator {
           }
       }
 
+    case AST.TopImport(_) => State.pure((Code.empty, env))
     case AST.TopType(_, _, _) => State.pure((Code.empty, env))
     case AST.TopData(_, _, _, _) => State.pure((Code.empty, env))
+  }
+
+  private def topLevelName(decl: TypeRec[Decl]): Option[Variable] = decl.tail match {
+    case AST.TopLet(variable, _, _) => Some(variable)
+    case AST.TopLetRec(variable, _, _) => Some(variable)
+    case AST.TopImport(_) | AST.TopType(_, _, _) | AST.TopData(_, _, _, _) => None
+  }
+
+  private def topLevelFreeVars(decl: TypeRec[Decl]): Set[Variable] = decl.tail match {
+    case AST.TopLet(_, _, value) => freeVars(value)
+    case AST.TopLetRec(variable, _, value) => freeVars(value) - variable
+    case AST.TopImport(_) | AST.TopType(_, _, _) | AST.TopData(_, _, _, _) => Set.empty
   }
 
   private def genProgram(decls: Seq[TypeRec[Decl]]): Gen[AssemblyProgram] = ReaderT { initialEnv =>

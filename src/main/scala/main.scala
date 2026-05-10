@@ -14,8 +14,14 @@ def main(args: String*): Unit = {
       sys.exit(1)
 
     case Right(ast) =>
-      println(ast.show)
-      val typed = Analyser.validate(ast) match {
+      val resolved = ImportResolver.resolve(ast, srcPath) match {
+        case Left(err) =>
+          Console.err.println(err)
+          sys.exit(1)
+        case Right(resolved) => resolved
+      }
+      println(resolved.show)
+      val typed = Analyser.validate(resolved) match {
         case Left(err) =>
           Console.err.println(s"Type error: $err")
           sys.exit(1)

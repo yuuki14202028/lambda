@@ -6,6 +6,7 @@ val showAlg: Algebra[AST, ShowResult] = [x] => node => node match {
   case AST.Program(decls)          => decls.mkString("\n")
   case AST.TopLet(v, types, value) => s"let ${v.name}: $types = $value"
   case AST.TopLetRec(v, types, value) => s"let rec ${v.name}: $types = $value"
+  case AST.TopImport(path)         => s"import \"$path\""
   case AST.TopType(v, params, alias) =>
     val suffix = params.map(param => s"[${param.name}]").mkString
     s"type ${v.name}$suffix = $alias"
@@ -65,6 +66,7 @@ val showAlg: Algebra[AST, ShowResult] = [x] => node => node match {
     val body = (discarded.map(_.toString + ";") ++ result.toSeq.map(_.toString)).mkString(" ")
     s"{ $body }"
   case AST.BinOp(op, l, r)         => s"($l $op $r)"
+  case AST.Intrinsic(op, args)     => s"intrinsic[$op](${args.mkString(", ")})"
   case AST.UnaryOp(op, t)          => s"$op $t"
   case AST.If(c, t, e)             => s"if $c then $t else $e"
   case AST.Primitive(name)         => name
@@ -81,7 +83,7 @@ extension [I](t: Rec[I]) {
 val typedShowAlg: HCofreeAlgebra[AST, TypeAnn, ShowResult] = [x] => (ann, node) => {
   val shown = showAlg[x](node)
   ann match {
-    case ProgramAnn        => shown
+    case ProgramAnn(_)     => shown
     case DeclAnn           => shown
     case ExprAnn(exprType) => s"($shown)[${exprType.show}]"
     case TypeAnn           => shown

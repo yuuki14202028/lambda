@@ -15,6 +15,7 @@ enum AST[R[_], I] {
   case Program(decls: Seq[R[Decl]]) extends AST[R, Program.type]
   case TopLet(variable: Variable, types: R[Type], value: R[Expr]) extends AST[R, Decl]
   case TopLetRec(variable: Variable, types: R[Type], value: R[Expr]) extends AST[R, Decl]
+  case TopImport(path: String) extends AST[R, Decl]
   case TopType(variable: TypeVariable, params: Seq[TypeVariable], alias: R[Type]) extends AST[R, Decl]
   case TopData(variable: TypeVariable, params: Seq[TypeVariable], constructors: Seq[DataConstructor[R]], recursive: Boolean) extends AST[R, Decl]
   case Abs(variable: Variable, types: R[Type], body: R[Expr]) extends AST[R, Expr]
@@ -36,6 +37,7 @@ enum AST[R[_], I] {
   case UnitLit() extends AST[R, Expr]
   case Block(discarded: Seq[R[Expr]], result: Option[R[Expr]]) extends AST[R, Expr]
   case BinOp(op: BinOps, left: R[Expr], right: R[Expr]) extends AST[R, Expr]
+  case Intrinsic(op: IntrinsicOps, args: Seq[R[Expr]]) extends AST[R, Expr]
   case UnaryOp(op: UnaryOps, body: R[Expr]) extends AST[R, Expr]
   case If(cond: R[Expr], thenBranch: R[Expr], elseBranch: R[Expr]) extends AST[R, Expr]
   case Primitive(name: String) extends AST[R, Type]
@@ -49,13 +51,14 @@ case class DataConstructor[R[_]](name: Variable, fields: Seq[R[Type]])
 case class MatchCase[R[_]](constructor: Variable, binders: Seq[Variable], body: R[Expr])
 
 enum BinOps {
-  case Add, Sub, Mul, Div, Eq, Neq, Lt, Leq, Gt, Geq
+  case Add, Sub, Mul, Div, Mod, Eq, Neq, Lt, Leq, Gt, Geq
 
   override def toString: String = this match {
     case BinOps.Add => "+"
     case BinOps.Sub => "-"
     case BinOps.Mul => "*"
     case BinOps.Div => "/"
+    case BinOps.Mod => "%"
     case BinOps.Eq  => "=="
     case BinOps.Neq => "!="
     case BinOps.Lt  => "<"
@@ -63,6 +66,11 @@ enum BinOps {
     case BinOps.Gt  => ">"
     case BinOps.Geq => ">="
   }
+}
+
+enum IntrinsicOps {
+  case BinOp(op: BinOps, operandType: String)
+  case UnaryOp(op: UnaryOps, operandType: String)
 }
 
 enum UnaryOps {
@@ -130,6 +138,7 @@ type Rec[I] = HFix[AST, I]
 def program(decls: Seq[Rec[Decl]]): Rec[AST.Program.type] = HFix(AST.Program(decls))
 def topLet(variable: Variable, types: Rec[Type], value: Rec[Expr]): Rec[Decl] = HFix(AST.TopLet(variable, types, value))
 def topLetRec(variable: Variable, types: Rec[Type], value: Rec[Expr]): Rec[Decl] = HFix(AST.TopLetRec(variable, types, value))
+def topImport(path: String): Rec[Decl] = HFix(AST.TopImport(path))
 def topType(variable: TypeVariable, params: Seq[TypeVariable], alias: Rec[Type]): Rec[Decl] =
   HFix(AST.TopType(variable, params, alias))
 def topData(variable: TypeVariable, params: Seq[TypeVariable], constructors: Seq[DataConstructor[[x] =>> Rec[x]]], recursive: Boolean = false): Rec[Decl] =
@@ -157,6 +166,7 @@ def bool(value: Boolean): Rec[Expr] = HFix(AST.Bool(value))
 def unitLit: Rec[Expr] = HFix(AST.UnitLit())
 def block(discarded: Seq[Rec[Expr]], result: Option[Rec[Expr]]): Rec[Expr] = HFix(AST.Block(discarded, result))
 def binop(op: BinOps, left: Rec[Expr], right: Rec[Expr]): Rec[Expr] = HFix(AST.BinOp(op, left, right))
+def intrinsic(op: IntrinsicOps, args: Seq[Rec[Expr]]): Rec[Expr] = HFix(AST.Intrinsic(op, args))
 def unop(op: UnaryOps, body: Rec[Expr]): Rec[Expr] = HFix(AST.UnaryOp(op, body))
 def iff(cond: Rec[Expr], thenBranch: Rec[Expr], elseBranch: Rec[Expr]): Rec[Expr] = HFix(AST.If(cond, thenBranch, elseBranch))
 def primitive(name: String): Rec[Type] = HFix(AST.Primitive(name))
@@ -185,6 +195,8 @@ def topLetT(variable: Variable, types: TypeRec[Type], value: TypeRec[Expr]): Typ
   HCofree(DeclAnn, AST.TopLet(variable, types, value))
 def topLetRecT(variable: Variable, types: TypeRec[Type], value: TypeRec[Expr]): TypeRec[Decl] =
   HCofree(DeclAnn, AST.TopLetRec(variable, types, value))
+def topImportT(path: String): TypeRec[Decl] =
+  HCofree(DeclAnn, AST.TopImport(path))
 def topTypeT(variable: TypeVariable, params: Seq[TypeVariable], alias: TypeRec[Type]): TypeRec[Decl] =
   HCofree(DeclAnn, AST.TopType(variable, params, alias))
 def topDataT(variable: TypeVariable, params: Seq[TypeVariable], constructors: Seq[DataConstructor[TypeRec]], recursive: Boolean = false): TypeRec[Decl] =
@@ -220,6 +232,8 @@ def blockT(t: TypeRec[Type], discarded: Seq[TypeRec[Expr]], result: Option[TypeR
   HCofree(ExprAnn(t), AST.Block(discarded, result))
 def binopT(op: BinOps, t: TypeRec[Type], left: TypeRec[Expr], right: TypeRec[Expr]): TypeRec[Expr] =
   HCofree(ExprAnn(t), AST.BinOp(op, left, right))
+def intrinsicT(op: IntrinsicOps, t: TypeRec[Type], args: Seq[TypeRec[Expr]]): TypeRec[Expr] =
+  HCofree(ExprAnn(t), AST.Intrinsic(op, args))
 def unopT(op: UnaryOps, t: TypeRec[Type], body: TypeRec[Expr]): TypeRec[Expr] =
   HCofree(ExprAnn(t), AST.UnaryOp(op, body))
 def ifT(t: TypeRec[Type], cond: TypeRec[Expr], thenBranch: TypeRec[Expr], elseBranch: TypeRec[Expr]): TypeRec[Expr] =
@@ -289,6 +303,7 @@ def freeVars(expr: TypeRec[Expr]): Set[Variable] = {
     case AST.Foreign(_, _) => Set.empty
     case AST.Block(discarded, result) => discarded.foldLeft(Set.empty[Variable])(_ ++ _) ++ result.getOrElse(Set.empty)
     case AST.BinOp(_, left, right) => left ++ right
+    case AST.Intrinsic(_, args) => args.foldLeft(Set.empty[Variable])(_ ++ _)
     case AST.UnaryOp(_, body) => body
     case AST.If(cond, thenBranch, elseBranch) => cond ++ thenBranch ++ elseBranch
     case AST.Num(_, _) | AST.Char(_) | AST.StringLit(_) | AST.Bool(_) | AST.UnitLit() => Set.empty
@@ -368,6 +383,15 @@ def isNumericType(t: TypeRec[Type]): Boolean = {
   t.projectT match {
     case AST.Primitive(name) => BuiltinTypes.numericTypes.contains(name)
     case _ => false
+  }
+}
+
+def operatorTypeName(t: TypeRec[Type]): Option[String] = {
+  val (head, _) = collectTypeApps(t)
+  head.projectT match {
+    case AST.Primitive(name) => Some(name)
+    case AST.TypeVar(variable) => Some(variable.name)
+    case _ => None
   }
 }
 

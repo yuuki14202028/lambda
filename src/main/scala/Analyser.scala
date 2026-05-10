@@ -24,6 +24,91 @@ object Analyser {
   private def expectEquatable(actual: TypeRec[Type]): Check[Unit] =
     guard(isEquatableType(actual), s"Type mismatch: expected numeric, char, or bool, actual ${actual.show}")
 
+  private def resolveBinaryOperator(op: BinOps, left: TypeRec[Expr], right: TypeRec[Expr]): Check[TypeRec[Expr]] = for {
+    env <- ask
+    typeName <- lift(operatorTypeName(typeOf(left)).toRight(s"Cannot resolve operator $op for type ${typeOf(left).show}"))
+    fn = StandardLibrary.binaryOperatorName(op, typeName)
+    fnType <- lift(env.values.get(fn).toRight(s"Operator $op is not defined for type ${typeOf(left).show}; expected function ${fn.name}"))
+    result <- destructArrow(fnType) match {
+      case Some((leftParam, afterLeft)) if sameType(leftParam, typeOf(left)) =>
+        destructArrow(afterLeft) match {
+          case Some((rightParam, resultType)) if sameType(rightParam, typeOf(right)) =>
+            val fnRef = varrType(fn, fnType)
+            val appliedLeft = appT(afterLeft, fnRef, left)
+            okT(appT(resultType, appliedLeft, right))
+          case Some((rightParam, _)) =>
+            fail(s"Type mismatch: expected ${rightParam.show}, actual ${typeOf(right).show}")
+          case None =>
+            fail(s"Operator function ${fn.name} must take two arguments: ${fnType.show}")
+        }
+      case Some((leftParam, _)) =>
+        fail(s"Type mismatch: expected ${leftParam.show}, actual ${typeOf(left).show}")
+      case None =>
+        fail(s"Operator function ${fn.name} must be a function: ${fnType.show}")
+    }
+  } yield result
+
+  private def resolveUnaryOperator(op: UnaryOps, body: TypeRec[Expr]): Check[TypeRec[Expr]] = for {
+    env <- ask
+    typeName <- lift(operatorTypeName(typeOf(body)).toRight(s"Cannot resolve operator $op for type ${typeOf(body).show}"))
+    fn = StandardLibrary.unaryOperatorName(op, typeName)
+    fnType <- lift(env.values.get(fn).toRight(s"Operator $op is not defined for type ${typeOf(body).show}; expected function ${fn.name}"))
+    result <- destructArrow(fnType) match {
+      case Some((paramType, resultType)) if sameType(paramType, typeOf(body)) =>
+        okT(appT(resultType, varrType(fn, fnType), body))
+      case Some((paramType, _)) =>
+        fail(s"Type mismatch: expected ${paramType.show}, actual ${typeOf(body).show}")
+      case None =>
+        fail(s"Operator function ${fn.name} must be a function: ${fnType.show}")
+    }
+  } yield result
+
+  private def checkIntrinsic(op: IntrinsicOps, args: Seq[TypeRec[Expr]]): Check[TypeRec[Expr]] = op match {
+    case IntrinsicOps.BinOp(binOp, operandTypeName) =>
+      args match {
+        case Seq(left, right) =>
+          val operandType = primitiveT(operandTypeName)
+          for {
+            _ <- expect(operandType, typeOf(left))
+            _ <- expect(operandType, typeOf(right))
+            _ <- binOp match {
+              case BinOps.Add | BinOps.Sub | BinOps.Mul | BinOps.Div =>
+                guard(BuiltinTypes.numericTypes.contains(operandTypeName), s"Intrinsic $binOp requires numeric operands")
+              case BinOps.Mod =>
+                guard(BuiltinTypes.integerTypes.contains(operandTypeName), s"Intrinsic $binOp requires integer operands")
+              case BinOps.Eq | BinOps.Neq =>
+                guard(BuiltinTypes.equatableTypes.contains(operandTypeName), s"Intrinsic $binOp requires equatable operands")
+              case BinOps.Lt | BinOps.Leq | BinOps.Gt | BinOps.Geq =>
+                guard(BuiltinTypes.numericTypes.contains(operandTypeName), s"Intrinsic $binOp requires numeric operands")
+            }
+            resultType = binOp match {
+              case BinOps.Add | BinOps.Sub | BinOps.Mul | BinOps.Div | BinOps.Mod => operandType
+              case BinOps.Eq | BinOps.Neq | BinOps.Lt | BinOps.Leq | BinOps.Gt | BinOps.Geq => boolTypeT
+            }
+          } yield intrinsicT(op, resultType, args)
+        case _ => fail(s"Binary intrinsic $binOp expects 2 arguments, got ${args.length}")
+      }
+    case IntrinsicOps.UnaryOp(unaryOp, operandTypeName) =>
+      args match {
+        case Seq(body) =>
+          val operandType = primitiveT(operandTypeName)
+          for {
+            _ <- expect(operandType, typeOf(body))
+            _ <- unaryOp match {
+              case UnaryOps.Neg =>
+                guard(BuiltinTypes.numericTypes.contains(operandTypeName), s"Intrinsic $unaryOp requires numeric operand")
+              case UnaryOps.Not =>
+                guard(operandTypeName == "bool", s"Intrinsic $unaryOp requires bool operand")
+            }
+            resultType = unaryOp match {
+              case UnaryOps.Neg => operandType
+              case UnaryOps.Not => boolTypeT
+            }
+          } yield intrinsicT(op, resultType, args)
+        case _ => fail(s"Unary intrinsic $unaryOp expects 1 argument, got ${args.length}")
+      }
+  }
+
   private def foreignArity(t: TypeRec[Type]): Int = {
     @annotation.tailrec
     def loop(current: TypeRec[Type], count: Int): Int = destructArrow(current) match {
@@ -150,6 +235,9 @@ object Analyser {
       typedValue <- value.local((e: Env) => e.copy(values = e.values + (variable -> declaredType)))
       _ <- expect(declaredType, typeOf(typedValue))
     } yield topLetRecT(variable, typedTypes, typedValue)
+
+    case AST.TopImport(path) =>
+      fail(s"Unresolved import: $path")
 
     case AST.TopType(variable, params, alias) => for {
       env <- ask
@@ -404,28 +492,18 @@ object Analyser {
     case AST.BinOp(op, left, right) => for {
       typedLeft <- left
       typedRight <- right
-      leftType = typeOf(typedLeft)
-      rightType = typeOf(typedRight)
-      _ <- op match {
-        case BinOps.Add | BinOps.Sub | BinOps.Mul | BinOps.Div => expectNumeric(leftType)
-        case BinOps.Eq | BinOps.Neq => expectEquatable(leftType)
-        case BinOps.Lt | BinOps.Leq | BinOps.Gt | BinOps.Geq => expectNumeric(leftType)
-      }
-      _ <- expect(leftType, rightType)
-      resultType = op match {
-        case BinOps.Add | BinOps.Sub | BinOps.Mul | BinOps.Div => leftType
-        case BinOps.Eq | BinOps.Neq | BinOps.Lt | BinOps.Leq | BinOps.Gt | BinOps.Geq => boolTypeT
-      }
-    } yield binopT(op, resultType, typedLeft, typedRight)
+      resolved <- resolveBinaryOperator(op, typedLeft, typedRight)
+    } yield resolved
+
+    case AST.Intrinsic(op, args) => for {
+      typedArgs <- args.toList.traverse(identity)
+      checked <- checkIntrinsic(op, typedArgs)
+    } yield checked
 
     case AST.UnaryOp(op, body) => for {
       typedBody <- body
-      bodyType = typeOf(typedBody)
-      _ <- op match {
-        case UnaryOps.Neg => expectNumeric(bodyType)
-        case UnaryOps.Not => expect(boolTypeT, bodyType)
-      }
-    } yield unopT(op, bodyType, typedBody)
+      resolved <- resolveUnaryOperator(op, typedBody)
+    } yield resolved
 
     case AST.If(cond, thenBranch, elseBranch) => for {
       typedCond <- cond
@@ -474,6 +552,9 @@ object Analyser {
       typedValue <- value.cata(tcAlg).run(valueEnv)
       _ <- Either.cond(sameType(declaredType, typeOf(typedValue)), (), s"Type mismatch: expected ${declaredType.show}, actual ${typeOf(typedValue).show}")
     } yield (topLetRecT(variable, typedTypes, typedValue), valueEnv)
+
+    case AST.TopImport(path) =>
+      Left(s"Unresolved import: $path")
 
     case AST.TopType(variable, params, alias) => for {
       _ <- Either.cond(

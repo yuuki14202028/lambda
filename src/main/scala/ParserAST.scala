@@ -6,7 +6,7 @@ object ParserAST {
   private val sp: Parser0[Unit]  = Parser.charIn(" \t\n\r").rep0.void
   private val sp1: Parser0[Unit] = Parser.charIn(" \t").rep0.void
   private val gap: Parser[Unit] = Parser.charIn(" \t\n\r").rep.void
-  private val identStart: Parser[Char] = alpha
+  private val identStart: Parser[Char] = alpha | Parser.char('_').as('_')
   private val identChar: Parser[Char] =
     alpha | digit | Parser.char('_').as('_')
   private val identifier: Parser[String] =
@@ -17,6 +17,10 @@ object ParserAST {
     (identifier ~ (Parser.char('.') *> identifier).rep0).map { case (head, tail) =>
       (head :: tail.toList).mkString(".")
     }
+  private val importPath: Parser[String] = {
+    val plain = Parser.charWhere(ch => ch != '"' && ch != '\n' && ch != '\r')
+    Parser.char('"') *> plain.rep0.map(_.toList.mkString) <* Parser.char('"')
+  }
 
   lazy val expr: Parser[Rec[Expr]] =
     Parser.defer(dataLetP | foldP.backtrack | matchP | typeLetP | tyAbsP | absP | letSeriesP | ifP | equitive)
@@ -116,6 +120,9 @@ object ParserAST {
       topLet(Variable(name), types, value)
     }
   }
+
+  private lazy val topImportP: Parser[Rec[Decl]] =
+    (Parser.string("import") *> gap *> importPath).map(topImport)
 
   lazy val letPolyP: Parser[Rec[Expr]] = {
     val name = Parser.string("let") *> sp *> identifier
@@ -254,7 +261,7 @@ object ParserAST {
   }
 
   private lazy val topDeclP: Parser[Rec[Decl]] =
-    Parser.defer(topDataP.backtrack | topTypeP.backtrack | topLetRecFunP.backtrack | topLetRecPolyP.backtrack | topLetRecP.backtrack | topLetFunP.backtrack | topLetPolyP.backtrack | topLetP)
+    Parser.defer(topImportP.backtrack | topDataP.backtrack | topTypeP.backtrack | topLetRecFunP.backtrack | topLetRecPolyP.backtrack | topLetRecP.backtrack | topLetFunP.backtrack | topLetPolyP.backtrack | topLetP)
 
   lazy val typeP: Parser[Rec[Type]] = Parser.defer(forAllP | arrowTypeP)
 
@@ -338,7 +345,7 @@ object ParserAST {
     Parser.char('+').as(BinOps.Add) | Parser.char('-').as(BinOps.Sub)
 
   private val mulOp: Parser[BinOps] =
-    Parser.char('*').as(BinOps.Mul) | Parser.char('/').as(BinOps.Div)
+    Parser.char('*').as(BinOps.Mul) | Parser.char('/').as(BinOps.Div) | Parser.char('%').as(BinOps.Mod)
 
   lazy val equitive: Parser[Rec[Expr]] = {
     val eq  = Parser.defer(additive)
@@ -388,7 +395,7 @@ object ParserAST {
 
   lazy val atom: Parser[Rec[Expr]] = {
     val parens = Parser.char('(') *> sp *> Parser.defer(expr) <* sp <* Parser.char(')')
-    Parser.defer(blockP | unitP.backtrack | numP | charP | stringP | boolP | foreignP | varP | parens)
+    Parser.defer(blockP | unitP.backtrack | numP | charP | stringP | boolP | foreignP | intrinsicP | varP | parens)
   }
 
   lazy val blockP: Parser[Rec[Expr]] = {
@@ -405,6 +412,15 @@ object ParserAST {
     val types = Parser.char('[') *> sp *> typeP <* sp <* Parser.char(']')
     (Parser.string("foreign") *> types ~ (sp1.with1 *> identifier)).map {
       case (t, n) => foreign(Variable(n), t)
+    }
+  }
+
+  val intrinsicP: Parser[Rec[Expr]] = {
+    val name = Parser.char('[') *> sp *> identifier <* sp <* Parser.char(']')
+    val op = name.map(n => StandardLibrary.intrinsicOp(n).getOrElse(sys.error(s"Unknown intrinsic $n")))
+    val arg = Parser.char('(') *> sp *> Parser.defer(expr) <* sp <* Parser.char(')')
+    (Parser.string("intrinsic") *> op ~ arg.rep).map { case (op, args) =>
+      intrinsic(op, args.toList)
     }
   }
 

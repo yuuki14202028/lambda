@@ -60,6 +60,35 @@
       <array>
         <dict>
           <key>name</key>
+          <string>meta.declaration.import.lambda</string>
+          <key>match</key>
+          <string>\b(import)\s+(")([^"]*)(")</string>
+          <key>captures</key>
+          <dict>
+            <key>1</key>
+            <dict>
+              <key>name</key>
+              <string>keyword.control.import.lambda</string>
+            </dict>
+            <key>2</key>
+            <dict>
+              <key>name</key>
+              <string>punctuation.definition.string.begin.lambda</string>
+            </dict>
+            <key>3</key>
+            <dict>
+              <key>name</key>
+              <string>string.quoted.double.import.lambda</string>
+            </dict>
+            <key>4</key>
+            <dict>
+              <key>name</key>
+              <string>punctuation.definition.string.end.lambda</string>
+            </dict>
+          </dict>
+        </dict>
+        <dict>
+          <key>name</key>
           <string>meta.declaration.data.lambda</string>
           <key>begin</key>
           <string>\b(data)\s+(?:(rec)\s+)?([A-Za-z][A-Za-z0-9_]*)</string>
@@ -82,7 +111,7 @@
             </dict>
           </dict>
           <key>end</key>
-          <string>(?=^\s*(?:let|type|data)\b|\z)</string>
+          <string>(?=^\s*(?:import|let|type|data)\b|\z)</string>
           <key>patterns</key>
           <array>
             <dict>
@@ -441,15 +470,44 @@
         </dict>
         <dict>
           <key>name</key>
+          <string>meta.intrinsic.lambda</string>
+          <key>match</key>
+          <string>\b(intrinsic|inst)(\s*)(\[)([A-Za-z_][A-Za-z0-9_]*)(\])</string>
+          <key>captures</key>
+          <dict>
+            <key>1</key>
+            <dict>
+              <key>name</key>
+              <string>keyword.other.intrinsic.lambda</string>
+            </dict>
+            <key>3</key>
+            <dict>
+              <key>name</key>
+              <string>punctuation.definition.intrinsic.begin.lambda</string>
+            </dict>
+            <key>4</key>
+            <dict>
+              <key>name</key>
+              <string>support.function.intrinsic.lambda</string>
+            </dict>
+            <key>5</key>
+            <dict>
+              <key>name</key>
+              <string>punctuation.definition.intrinsic.end.lambda</string>
+            </dict>
+          </dict>
+        </dict>
+        <dict>
+          <key>name</key>
           <string>variable.function.lambda</string>
           <key>match</key>
-          <string>\b(?!(?:if|then|else|let|rec|type|data|in|match|fold|as|with|foreign|true|false)\b)[a-z][A-Za-z0-9_]*\b(?=\s*(?:\[|\())</string>
+          <string>\b(?!(?:if|then|else|import|let|rec|type|data|in|match|fold|as|with|foreign|intrinsic|inst|true|false)\b)[a-z][A-Za-z0-9_]*\b(?=\s*(?:\[|\())</string>
         </dict>
         <dict>
           <key>name</key>
           <string>variable.other.lambda</string>
           <key>match</key>
-          <string>\b(?!(?:if|then|else|let|rec|type|data|in|match|fold|as|with|foreign|true|false)\b)[a-z][A-Za-z0-9_]*\b</string>
+          <string>\b(?!(?:if|then|else|import|let|rec|type|data|in|match|fold|as|with|foreign|intrinsic|inst|true|false)\b)[a-z][A-Za-z0-9_]*\b</string>
         </dict>
       </array>
     </dict>
@@ -743,6 +801,12 @@
         </dict>
         <dict>
           <key>name</key>
+          <string>keyword.control.import.lambda</string>
+          <key>match</key>
+          <string>\bimport\b</string>
+        </dict>
+        <dict>
+          <key>name</key>
           <string>keyword.control.match.lambda</string>
           <key>match</key>
           <string>\bmatch\b</string>
@@ -777,6 +841,12 @@
           <key>match</key>
           <string>\bforeign\b</string>
         </dict>
+        <dict>
+          <key>name</key>
+          <string>keyword.other.intrinsic.lambda</string>
+          <key>match</key>
+          <string>\b(?:intrinsic|inst)\b</string>
+        </dict>
       </array>
     </dict>
     <key>operators</key>
@@ -799,7 +869,7 @@
           <key>name</key>
           <string>keyword.operator.arithmetic.lambda</string>
           <key>match</key>
-          <string>[+\-*/]</string>
+          <string>[+\-*/%]</string>
         </dict>
         <dict>
           <key>name</key>
