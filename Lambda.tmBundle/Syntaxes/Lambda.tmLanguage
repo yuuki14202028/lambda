@@ -875,7 +875,7 @@
           <key>name</key>
           <string>keyword.operator.logical.lambda</string>
           <key>match</key>
-          <string>!</string>
+          <string>&amp;&amp;|\|\||&amp;|\||\^|!</string>
         </dict>
         <dict>
           <key>name</key>

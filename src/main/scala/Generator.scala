@@ -240,6 +240,10 @@ object Generator {
         case BinOps.Leq => code(ins("fmov", r(s1), r(w1)), ins("fmov", r(s0), r(w0)), ins("fcmp", r(s1), r(s0)), ins("cset", r(w0), Condition("le")))
         case BinOps.Gt  => code(ins("fmov", r(s1), r(w1)), ins("fmov", r(s0), r(w0)), ins("fcmp", r(s1), r(s0)), ins("cset", r(w0), Condition("gt")))
         case BinOps.Geq => code(ins("fmov", r(s1), r(w1)), ins("fmov", r(s0), r(w0)), ins("fcmp", r(s1), r(s0)), ins("cset", r(w0), Condition("ge")))
+        case BinOps.And => code(ins("and", r(w0), r(w1), r(w0)))
+        case BinOps.Or  => code(ins("orr", r(w0), r(w1), r(w0)))
+        case BinOps.Xor => code(ins("eor", r(w0), r(w1), r(w0)))
+        case BinOps.ShortAnd | BinOps.ShortOr => sys.error(s"Short-circuit operator $op must be lowered by operator resolution")
       }
     case Some("f64") =>
       op match {
@@ -254,6 +258,10 @@ object Generator {
         case BinOps.Leq => code(ins("fmov", r(d1), r(x1)), ins("fmov", r(d0), r(x0)), ins("fcmp", r(d1), r(d0)), ins("cset", r(w0), Condition("le")))
         case BinOps.Gt  => code(ins("fmov", r(d1), r(x1)), ins("fmov", r(d0), r(x0)), ins("fcmp", r(d1), r(d0)), ins("cset", r(w0), Condition("gt")))
         case BinOps.Geq => code(ins("fmov", r(d1), r(x1)), ins("fmov", r(d0), r(x0)), ins("fcmp", r(d1), r(d0)), ins("cset", r(w0), Condition("ge")))
+        case BinOps.And => code(ins("and", r(x0), r(x1), r(x0)))
+        case BinOps.Or  => code(ins("orr", r(x0), r(x1), r(x0)))
+        case BinOps.Xor => code(ins("eor", r(x0), r(x1), r(x0)))
+        case BinOps.ShortAnd | BinOps.ShortOr => sys.error(s"Short-circuit operator $op must be lowered by operator resolution")
       }
     case Some(name) =>
       val p = if (is64BitScalar(name)) "x" else "w"
@@ -269,6 +277,10 @@ object Generator {
         case BinOps.Mod => sys.error("Modulo must be implemented by the standard library")
         case BinOps.Eq  => code(ins("cmp", r(r1), r(r0)), ins("cset", r(w0), Condition("eq")))
         case BinOps.Neq => code(ins("cmp", r(r1), r(r0)), ins("cset", r(w0), Condition("ne")))
+        case BinOps.And => code(ins("and", r(r0), r(r1), r(r0)))
+        case BinOps.Or  => code(ins("orr", r(r0), r(r1), r(r0)))
+        case BinOps.Xor => code(ins("eor", r(r0), r(r1), r(r0)))
+        case BinOps.ShortAnd | BinOps.ShortOr => sys.error(s"Short-circuit operator $op must be lowered by operator resolution")
         case cmp        => code(ins("cmp", r(r1), r(r0)), ins("cset", r(w0), Condition(if (isUnsigned(name)) unsignedCond(cmp) else signedCond(cmp))))
       }
     case None => sys.error(s"Unsupported binary operand type: ${operandType.show}")

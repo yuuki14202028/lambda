@@ -23,7 +23,7 @@ object ParserAST {
   }
 
   lazy val expr: Parser[Rec[Expr]] =
-    Parser.defer(dataLetP | foldP.backtrack | matchP | typeLetP | tyAbsP | absP | letSeriesP | ifP | equitive)
+    Parser.defer(dataLetP | foldP.backtrack | matchP | typeLetP | tyAbsP | absP | letSeriesP | ifP | logicalOr)
 
   private lazy val letSeriesP: Parser[Rec[Expr]] =
     Parser.defer(letRecFunP.backtrack | letRecPolyP.backtrack | letFunP.backtrack | letPolyP.backtrack | letRecP.backtrack | letP)
@@ -346,6 +346,55 @@ object ParserAST {
 
   private val mulOp: Parser[BinOps] =
     Parser.char('*').as(BinOps.Mul) | Parser.char('/').as(BinOps.Div) | Parser.char('%').as(BinOps.Mod)
+
+  private val bitAndOp: Parser[BinOps] =
+    (Parser.char('&') <* Parser.not(Parser.char('&'))).backtrack.as(BinOps.And)
+
+  private val bitOrOp: Parser[BinOps] =
+    (Parser.char('|') <* Parser.not(Parser.char('|'))).backtrack.as(BinOps.Or)
+
+  private val xorOp: Parser[BinOps] =
+    Parser.char('^').as(BinOps.Xor)
+
+  lazy val logicalOr: Parser[Rec[Expr]] = {
+    val and = Parser.defer(logicalAnd)
+    val tail = (sp.with1.soft *> Parser.string("||").as(BinOps.ShortOr) ~ (sp.with1 *> and)).rep0
+    (and ~ tail).map { case (init, ops) =>
+      ops.foldLeft(init) { case (acc, (op, r)) => binop(op, acc, r) }
+    }
+  }
+
+  lazy val logicalAnd: Parser[Rec[Expr]] = {
+    val bitOr = Parser.defer(bitwiseOr)
+    val tail = (sp.with1.soft *> Parser.string("&&").as(BinOps.ShortAnd) ~ (sp.with1 *> bitOr)).rep0
+    (bitOr ~ tail).map { case (init, ops) =>
+      ops.foldLeft(init) { case (acc, (op, r)) => binop(op, acc, r) }
+    }
+  }
+
+  lazy val bitwiseOr: Parser[Rec[Expr]] = {
+    val xor = Parser.defer(bitwiseXor)
+    val tail = (sp.with1.soft *> bitOrOp ~ (sp.with1 *> xor)).rep0
+    (xor ~ tail).map { case (init, ops) =>
+      ops.foldLeft(init) { case (acc, (op, r)) => binop(op, acc, r) }
+    }
+  }
+
+  lazy val bitwiseXor: Parser[Rec[Expr]] = {
+    val and = Parser.defer(bitwiseAnd)
+    val tail = (sp.with1.soft *> xorOp ~ (sp.with1 *> and)).rep0
+    (and ~ tail).map { case (init, ops) =>
+      ops.foldLeft(init) { case (acc, (op, r)) => binop(op, acc, r) }
+    }
+  }
+
+  lazy val bitwiseAnd: Parser[Rec[Expr]] = {
+    val eq = Parser.defer(equitive)
+    val tail = (sp.with1.soft *> bitAndOp ~ (sp.with1 *> eq)).rep0
+    (eq ~ tail).map { case (init, ops) =>
+      ops.foldLeft(init) { case (acc, (op, r)) => binop(op, acc, r) }
+    }
+  }
 
   lazy val equitive: Parser[Rec[Expr]] = {
     val eq  = Parser.defer(additive)

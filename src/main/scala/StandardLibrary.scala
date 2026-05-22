@@ -12,7 +12,10 @@ object StandardLibrary {
     "lt" -> BinOps.Lt,
     "leq" -> BinOps.Leq,
     "gt" -> BinOps.Gt,
-    "geq" -> BinOps.Geq
+    "geq" -> BinOps.Geq,
+    "and" -> BinOps.And,
+    "or" -> BinOps.Or,
+    "xor" -> BinOps.Xor
   )
 
   private val unaryNames: Map[String, UnaryOps] = Map(
@@ -32,6 +35,11 @@ object StandardLibrary {
     case BinOps.Leq => "leq"
     case BinOps.Gt  => "gt"
     case BinOps.Geq => "geq"
+    case BinOps.And => "and"
+    case BinOps.Or  => "or"
+    case BinOps.Xor => "xor"
+    case BinOps.ShortAnd => "short_and"
+    case BinOps.ShortOr  => "short_or"
   }
 
   private def opName(op: UnaryOps): String = op match {

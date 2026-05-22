@@ -24,20 +24,36 @@ object Analyser {
   private def expectEquatable(actual: TypeRec[Type]): Check[Unit] =
     guard(isEquatableType(actual), s"Type mismatch: expected numeric, char, or bool, actual ${actual.show}")
 
+  private def isShortCircuit(op: BinOps): Boolean =
+    op == BinOps.ShortAnd || op == BinOps.ShortOr
+
+  private def thunkParam(body: TypeRec[Expr]): Variable = {
+    val used = freeVars(body).map(_.name)
+    LazyList.from(0)
+      .map(i => Variable(s"__short_arg_$i"))
+      .find(v => !used.contains(v.name))
+      .get
+  }
+
   private def resolveBinaryOperator(op: BinOps, left: TypeRec[Expr], right: TypeRec[Expr]): Check[TypeRec[Expr]] = for {
     env <- ask
     typeName <- lift(operatorTypeName(typeOf(left)).toRight(s"Cannot resolve operator $op for type ${typeOf(left).show}"))
     fn = StandardLibrary.binaryOperatorName(op, typeName)
     fnType <- lift(env.values.get(fn).toRight(s"Operator $op is not defined for type ${typeOf(left).show}; expected function ${fn.name}"))
+    rightArg = if (isShortCircuit(op)) {
+      val thunkType = arrowT(unitTypeT, typeOf(right))
+      absT(thunkParam(right), thunkType, unitTypeT, right)
+    } else right
+    expectedRightType = if (isShortCircuit(op)) arrowT(unitTypeT, typeOf(right)) else typeOf(right)
     result <- destructArrow(fnType) match {
       case Some((leftParam, afterLeft)) if sameType(leftParam, typeOf(left)) =>
         destructArrow(afterLeft) match {
-          case Some((rightParam, resultType)) if sameType(rightParam, typeOf(right)) =>
+          case Some((rightParam, resultType)) if sameType(rightParam, expectedRightType) =>
             val fnRef = varrType(fn, fnType)
             val appliedLeft = appT(afterLeft, fnRef, left)
-            okT(appT(resultType, appliedLeft, right))
+            okT(appT(resultType, appliedLeft, rightArg))
           case Some((rightParam, _)) =>
-            fail(s"Type mismatch: expected ${rightParam.show}, actual ${typeOf(right).show}")
+            fail(s"Type mismatch: expected ${rightParam.show}, actual ${expectedRightType.show}")
           case None =>
             fail(s"Operator function ${fn.name} must take two arguments: ${fnType.show}")
         }
@@ -80,10 +96,19 @@ object Analyser {
                 guard(BuiltinTypes.equatableTypes.contains(operandTypeName), s"Intrinsic $binOp requires equatable operands")
               case BinOps.Lt | BinOps.Leq | BinOps.Gt | BinOps.Geq =>
                 guard(BuiltinTypes.numericTypes.contains(operandTypeName), s"Intrinsic $binOp requires numeric operands")
+              case BinOps.And | BinOps.Or | BinOps.Xor =>
+                guard(
+                  BuiltinTypes.numericTypes.contains(operandTypeName) || operandTypeName == "bool",
+                  s"Intrinsic $binOp requires numeric or bool operands"
+                )
+              case BinOps.ShortAnd | BinOps.ShortOr =>
+                fail(s"Intrinsic $binOp is not supported; define it as an operator function")
             }
             resultType = binOp match {
-              case BinOps.Add | BinOps.Sub | BinOps.Mul | BinOps.Div | BinOps.Mod => operandType
+              case BinOps.Add | BinOps.Sub | BinOps.Mul | BinOps.Div | BinOps.Mod |
+                  BinOps.And | BinOps.Or | BinOps.Xor => operandType
               case BinOps.Eq | BinOps.Neq | BinOps.Lt | BinOps.Leq | BinOps.Gt | BinOps.Geq => boolTypeT
+              case BinOps.ShortAnd | BinOps.ShortOr => boolTypeT
             }
           } yield intrinsicT(op, resultType, args)
         case _ => fail(s"Binary intrinsic $binOp expects 2 arguments, got ${args.length}")

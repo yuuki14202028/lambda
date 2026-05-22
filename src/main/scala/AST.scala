@@ -51,7 +51,10 @@ case class DataConstructor[R[_]](name: Variable, fields: Seq[R[Type]])
 case class MatchCase[R[_]](constructor: Variable, binders: Seq[Variable], body: R[Expr])
 
 enum BinOps {
-  case Add, Sub, Mul, Div, Mod, Eq, Neq, Lt, Leq, Gt, Geq
+  case Add, Sub, Mul, Div, Mod,
+    Eq, Neq, Lt, Leq, Gt, Geq,
+    And, Or, Xor,
+    ShortAnd, ShortOr
 
   override def toString: String = this match {
     case BinOps.Add => "+"
@@ -65,6 +68,11 @@ enum BinOps {
     case BinOps.Leq => "<="
     case BinOps.Gt  => ">"
     case BinOps.Geq => ">="
+    case BinOps.And => "&"
+    case BinOps.Or  => "|"
+    case BinOps.Xor => "^"
+    case BinOps.ShortAnd => "&&"
+    case BinOps.ShortOr  => "||"
   }
 }
 
