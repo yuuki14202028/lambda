@@ -21,7 +21,7 @@ def main(args: String*): Unit = {
         case Right(resolved) => resolved
       }
       println(resolved.show)
-      val typed = Analyser.validate(resolved) match {
+      val typed = TAnalyser.validate(resolved) match {
         case Left(err) =>
           Console.err.println(s"Type error: $err")
           sys.exit(1)

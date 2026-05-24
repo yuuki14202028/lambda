@@ -2,31 +2,37 @@ package com.yuuki14202028
 
 type ShowResult[I] = String
 
+private def showKindedParam(param: (TypeVariable, Kind)): String = param match {
+  case (v, Kind.Star) => s"[${v.name}]"
+  case (v, k) => s"[${v.name}: ${k.show}]"
+}
+
 val showAlg: Algebra[AST, ShowResult] = [x] => node => node match {
   case AST.Program(decls)          => decls.mkString("\n")
   case AST.TopLet(v, types, value) => s"let ${v.name}: $types = $value"
   case AST.TopLetRec(v, types, value) => s"let rec ${v.name}: $types = $value"
   case AST.TopImport(path)         => s"import \"$path\""
   case AST.TopType(v, params, alias) =>
-    val suffix = params.map(param => s"[${param.name}]").mkString
+    val suffix = params.map(showKindedParam).mkString
     s"type ${v.name}$suffix = $alias"
   case AST.TopData(v, params, constructors, recursive) =>
-    val suffix = params.map(param => s"[${param.name}]").mkString
+    val suffix = params.map(showKindedParam).mkString
     val ctorText = constructors.map { ctor =>
       val fields = ctor.fields.map(field => s"($field)").mkString
       s"| ${ctor.name.name}$fields"
     }.mkString(" ")
     s"data ${if (recursive) "rec " else ""}${v.name}$suffix = $ctorText"
   case AST.Abs(v, types, body)     => s"λ${v.name}: $types. $body"
-  case AST.TyAbs(v, body)          => s"Λ${v.name}. $body"
+  case AST.TyAbs(v, Kind.Star, body) => s"Λ${v.name}. $body"
+  case AST.TyAbs(v, k, body)         => s"Λ(${v.name}: ${k.show}). $body"
   case AST.Let(v, types, value, body) => s"let ${v.name}: $types = $value in $body"
   case AST.LetRec(v, types, value, body) => s"let rec ${v.name}: $types = $value in $body"
   case AST.TypeLet(v, params, alias, body) =>
-    val suffix = params.map(param => s"[${param.name}]").mkString
+    val suffix = params.map(showKindedParam).mkString
     val head = s"${v.name}$suffix"
     s"type $head = $alias in $body"
   case AST.DataLet(v, params, constructors, body, recursive) =>
-    val suffix = params.map(param => s"[${param.name}]").mkString
+    val suffix = params.map(showKindedParam).mkString
     val head = s"${v.name}$suffix"
     val ctorText = constructors.map { ctor =>
       val fields = ctor.fields.map(field => s"($field)").mkString
@@ -72,8 +78,11 @@ val showAlg: Algebra[AST, ShowResult] = [x] => node => node match {
   case AST.Primitive(name)         => name
   case AST.TypeVar(v)              => v.name
   case AST.Arrow(from, to)         => s"$from → $to"
-  case AST.ForAll(v, body)         => s"∀${v.name}. $body"
-  case AST.TypeApp(func, arg)      => s"$func[$arg]"
+  case AST.ForAll(v, Kind.Star, body) => s"∀${v.name}. $body"
+  case AST.ForAll(v, k, body)         => s"∀(${v.name}: ${k.show}). $body"
+  case AST.TypeApp(func, arg)         => s"$func[$arg]"
+  case AST.TypeAbs(v, Kind.Star, body) => s"λ${v.name}. $body"
+  case AST.TypeAbs(v, k, body)         => s"λ(${v.name}: ${k.show}). $body"
 }
 
 extension [I](t: Rec[I]) {

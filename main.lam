@@ -1,43 +1,40 @@
-import "std/operators"
+import "stdlib/operators"
 
-let printf: foreign.C.String → i32 = foreign[foreign.C.String → i32] printf
 let printInt: foreign.C.String → i32 → i32 = foreign[foreign.C.String → i32 → i32] printf
+let printStr: foreign.C.String → i32 = foreign[foreign.C.String → i32] printf
 
-data Vec2i32 =
-  | Vec2(i32)(i32)
+data Maybe[a] =
+  | Nothing
+  | Just(a)
 
-let __add_Vec2i32(left: Vec2i32)(right: Vec2i32): Vec2i32 =
-  match left with
-    | Vec2(lx)(ly) ->
-      match right with
-        | Vec2(rx)(ry) -> Vec2(lx + rx)(ly + ry)
+data Monad[m: * → *] = | MkMonad(∀a. a → m[a])(∀a. ∀b. m[a] → (a → m[b]) → m[b])
 
-let __sub_Vec2i32(left: Vec2i32)(right: Vec2i32): Vec2i32 =
-  match left with
-    | Vec2(lx)(ly) ->
-      match right with
-        | Vec2(rx)(ry) -> Vec2(lx - rx)(ly - ry)
+let maybeReturn[a](x: a): Maybe[a] = Just[a](x)
 
-let __mul_Vec2i32(left: Vec2i32)(right: Vec2i32): Vec2i32 =
-  match left with
-    | Vec2(lx)(ly) ->
-      match right with
-        | Vec2(rx)(ry) -> Vec2(lx * rx)(ly * ry)
+let maybeBind[a][b](m: Maybe[a])(f: a → Maybe[b]): Maybe[b] =
+  match m with
+    | Nothing -> Nothing[b]
+    | Just(x) -> f(x)
 
-let __eq_Vec2i32(left: Vec2i32)(right: Vec2i32): bool =
-  match left with
-    | Vec2(lx)(ly) ->
-      match right with
-        | Vec2(rx)(ry) -> if lx == rx then ly == ry else false
+let maybeMonad: Monad[Maybe] = MkMonad[Maybe](maybeReturn)(maybeBind)
 
-let main(): i32 = {
-  let a: Vec2i32 = Vec2(10)(20) in
-  let b: Vec2i32 = Vec2(3)(4) in
-  let c: Vec2i32 = (a + b) * b - Vec2(1)(2) in
-  match c with
-    | Vec2(x)(y) -> {
-      printInt("x = %d\n")(x);
-      printInt("y = %d\n")(y);
-      if c == Vec2(38)(94) then x + y else 1
-    }
-}
+let mreturn[m: * → *](d: Monad[m]): ∀a. a → m[a] =
+  match d with
+    | MkMonad(r)(__b) -> r
+
+let mbind[m: * → *](d: Monad[m]): ∀a. ∀b. m[a] → (a → m[b]) → m[b] =
+  match d with
+    | MkMonad(__r)(b) -> b
+
+let safeDiv(x: i32)(y: i32): Maybe[i32] =
+  if y == 0 then Nothing[i32] else Just[i32](x / y)
+
+let compute(): Maybe[i32] =
+  mbind[Maybe](maybeMonad)[i32][i32](safeDiv(100)(5))(λstep1: i32.
+    mbind[Maybe](maybeMonad)[i32][i32](safeDiv(step1)(2))(λstep2: i32.
+      mreturn[Maybe](maybeMonad)[i32](step2 + 1)))
+
+let main(): i32 =
+  match compute() with
+    | Nothing -> printStr("result = nothing\n")
+    | Just(r) -> printInt("result = %d\n")(r)

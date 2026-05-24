@@ -31,8 +31,8 @@ given HTraverse[AST] with {
       }.map(AST.TopData(v, params, _, recursive))
     case AST.Abs(v, types, body) =>
       (f(types), f(body)).mapN(AST.Abs(v, _, _))
-    case AST.TyAbs(v, body) =>
-      f(body).map(AST.TyAbs(v, _))
+    case AST.TyAbs(v, k, body) =>
+      f(body).map(AST.TyAbs(v, k, _))
     case AST.Let(v, types, vall, body) =>
       (f(types), f(vall), f(body)).mapN(AST.Let(v, _, _, _))
     case AST.LetRec(v, types, vall, body) =>
@@ -80,10 +80,12 @@ given HTraverse[AST] with {
     case AST.TypeVar(v) => Applicative[G].pure(AST.TypeVar(v))
     case AST.Arrow(from, to) =>
       (f(from), f(to)).mapN(AST.Arrow(_, _))
-    case AST.ForAll(v, body) =>
-      f(body).map(AST.ForAll(v, _))
+    case AST.ForAll(v, k, body) =>
+      f(body).map(AST.ForAll(v, k, _))
     case AST.TypeApp(func, arg) =>
       (f(func), f(arg)).mapN(AST.TypeApp(_, _))
+    case AST.TypeAbs(v, k, body) =>
+      f(body).map(AST.TypeAbs(v, k, _))
   }
 }
 

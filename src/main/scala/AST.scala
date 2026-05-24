@@ -16,14 +16,14 @@ enum AST[R[_], I] {
   case TopLet(variable: Variable, types: R[Type], value: R[Expr]) extends AST[R, Decl]
   case TopLetRec(variable: Variable, types: R[Type], value: R[Expr]) extends AST[R, Decl]
   case TopImport(path: String) extends AST[R, Decl]
-  case TopType(variable: TypeVariable, params: Seq[TypeVariable], alias: R[Type]) extends AST[R, Decl]
-  case TopData(variable: TypeVariable, params: Seq[TypeVariable], constructors: Seq[DataConstructor[R]], recursive: Boolean) extends AST[R, Decl]
+  case TopType(variable: TypeVariable, params: Seq[(TypeVariable, Kind)], alias: R[Type]) extends AST[R, Decl]
+  case TopData(variable: TypeVariable, params: Seq[(TypeVariable, Kind)], constructors: Seq[DataConstructor[R]], recursive: Boolean) extends AST[R, Decl]
   case Abs(variable: Variable, types: R[Type], body: R[Expr]) extends AST[R, Expr]
-  case TyAbs(variable: TypeVariable, body: R[Expr]) extends AST[R, Expr]
+  case TyAbs(variable: TypeVariable, kind: Kind, body: R[Expr]) extends AST[R, Expr]
   case Let(variable: Variable, types: R[Type], value: R[Expr], body: R[Expr]) extends AST[R, Expr]
   case LetRec(variable: Variable, types: R[Type], value: R[Expr], body: R[Expr]) extends AST[R, Expr]
-  case TypeLet(variable: TypeVariable, params: Seq[TypeVariable], alias: R[Type], body: R[Expr]) extends AST[R, Expr]
-  case DataLet(variable: TypeVariable, params: Seq[TypeVariable], constructors: Seq[DataConstructor[R]], body: R[Expr], recursive: Boolean) extends AST[R, Expr]
+  case TypeLet(variable: TypeVariable, params: Seq[(TypeVariable, Kind)], alias: R[Type], body: R[Expr]) extends AST[R, Expr]
+  case DataLet(variable: TypeVariable, params: Seq[(TypeVariable, Kind)], constructors: Seq[DataConstructor[R]], body: R[Expr], recursive: Boolean) extends AST[R, Expr]
   case Match(scrutinee: R[Expr], cases: Seq[MatchCase[R]]) extends AST[R, Expr]
   case Fold(scrutinee: R[Expr], resultType: R[Type], cases: Seq[MatchCase[R]]) extends AST[R, Expr]
   case App(function: R[Expr], argument: R[Expr]) extends AST[R, Expr]
@@ -43,8 +43,9 @@ enum AST[R[_], I] {
   case Primitive(name: String) extends AST[R, Type]
   case TypeVar(value: TypeVariable) extends AST[R, Type]
   case Arrow(from: R[Type], to: R[Type]) extends AST[R, Type]
-  case ForAll(variable: TypeVariable, body: R[Type]) extends AST[R, Type]
+  case ForAll(variable: TypeVariable, kind: Kind, body: R[Type]) extends AST[R, Type]
   case TypeApp(function: R[Type], argument: R[Type]) extends AST[R, Type]
+  case TypeAbs(variable: TypeVariable, kind: Kind, body: R[Type]) extends AST[R, Type]
 }
 
 case class DataConstructor[R[_]](name: Variable, fields: Seq[R[Type]])
@@ -147,17 +148,17 @@ def program(decls: Seq[Rec[Decl]]): Rec[AST.Program.type] = HFix(AST.Program(dec
 def topLet(variable: Variable, types: Rec[Type], value: Rec[Expr]): Rec[Decl] = HFix(AST.TopLet(variable, types, value))
 def topLetRec(variable: Variable, types: Rec[Type], value: Rec[Expr]): Rec[Decl] = HFix(AST.TopLetRec(variable, types, value))
 def topImport(path: String): Rec[Decl] = HFix(AST.TopImport(path))
-def topType(variable: TypeVariable, params: Seq[TypeVariable], alias: Rec[Type]): Rec[Decl] =
+def topType(variable: TypeVariable, params: Seq[(TypeVariable, Kind)], alias: Rec[Type]): Rec[Decl] =
   HFix(AST.TopType(variable, params, alias))
-def topData(variable: TypeVariable, params: Seq[TypeVariable], constructors: Seq[DataConstructor[[x] =>> Rec[x]]], recursive: Boolean = false): Rec[Decl] =
+def topData(variable: TypeVariable, params: Seq[(TypeVariable, Kind)], constructors: Seq[DataConstructor[[x] =>> Rec[x]]], recursive: Boolean = false): Rec[Decl] =
   HFix(AST.TopData(variable, params, constructors, recursive))
 def abs(variable: Variable, types: Rec[Type], body: Rec[Expr]): Rec[Expr] = HFix(AST.Abs(variable, types, body))
-def tyAbs(variable: TypeVariable, body: Rec[Expr]): Rec[Expr] = HFix(AST.TyAbs(variable, body))
+def tyAbs(variable: TypeVariable, kind: Kind, body: Rec[Expr]): Rec[Expr] = HFix(AST.TyAbs(variable, kind, body))
 def let(variable: Variable, types: Rec[Type], value: Rec[Expr], body: Rec[Expr]): Rec[Expr] = HFix(AST.Let(variable, types, value, body))
 def letRec(variable: Variable, types: Rec[Type], value: Rec[Expr], body: Rec[Expr]): Rec[Expr] = HFix(AST.LetRec(variable, types, value, body))
-def typeLet(variable: TypeVariable, params: Seq[TypeVariable], alias: Rec[Type], body: Rec[Expr]): Rec[Expr] =
+def typeLet(variable: TypeVariable, params: Seq[(TypeVariable, Kind)], alias: Rec[Type], body: Rec[Expr]): Rec[Expr] =
   HFix(AST.TypeLet(variable, params, alias, body))
-def dataLet(variable: TypeVariable, params: Seq[TypeVariable], constructors: Seq[DataConstructor[[x] =>> Rec[x]]], body: Rec[Expr], recursive: Boolean = false): Rec[Expr] =
+def dataLet(variable: TypeVariable, params: Seq[(TypeVariable, Kind)], constructors: Seq[DataConstructor[[x] =>> Rec[x]]], body: Rec[Expr], recursive: Boolean = false): Rec[Expr] =
   HFix(AST.DataLet(variable, params, constructors, body, recursive))
 def matchExpr(scrutinee: Rec[Expr], cases: Seq[MatchCase[[x] =>> Rec[x]]]): Rec[Expr] =
   HFix(AST.Match(scrutinee, cases))
@@ -180,8 +181,9 @@ def iff(cond: Rec[Expr], thenBranch: Rec[Expr], elseBranch: Rec[Expr]): Rec[Expr
 def primitive(name: String): Rec[Type] = HFix(AST.Primitive(name))
 def typeVar(variable: TypeVariable): Rec[Type] = HFix(AST.TypeVar(variable))
 def arrow(from: Rec[Type], to: Rec[Type]): Rec[Type] = HFix(AST.Arrow(from, to))
-def forallType(variable: TypeVariable, body: Rec[Type]): Rec[Type] = HFix(AST.ForAll(variable, body))
+def forallType(variable: TypeVariable, kind: Kind, body: Rec[Type]): Rec[Type] = HFix(AST.ForAll(variable, kind, body))
 def typeApp(function: Rec[Type], argument: Rec[Type]): Rec[Type] = HFix(AST.TypeApp(function, argument))
+def typeAbs(variable: TypeVariable, kind: Kind, body: Rec[Type]): Rec[Type] = HFix(AST.TypeAbs(variable, kind, body))
 
 def intType: Rec[Type] = primitive("i32")
 def charType: Rec[Type] = primitive("char")
@@ -205,21 +207,21 @@ def topLetRecT(variable: Variable, types: TypeRec[Type], value: TypeRec[Expr]): 
   HCofree(DeclAnn, AST.TopLetRec(variable, types, value))
 def topImportT(path: String): TypeRec[Decl] =
   HCofree(DeclAnn, AST.TopImport(path))
-def topTypeT(variable: TypeVariable, params: Seq[TypeVariable], alias: TypeRec[Type]): TypeRec[Decl] =
+def topTypeT(variable: TypeVariable, params: Seq[(TypeVariable, Kind)], alias: TypeRec[Type]): TypeRec[Decl] =
   HCofree(DeclAnn, AST.TopType(variable, params, alias))
-def topDataT(variable: TypeVariable, params: Seq[TypeVariable], constructors: Seq[DataConstructor[TypeRec]], recursive: Boolean = false): TypeRec[Decl] =
+def topDataT(variable: TypeVariable, params: Seq[(TypeVariable, Kind)], constructors: Seq[DataConstructor[TypeRec]], recursive: Boolean = false): TypeRec[Decl] =
   HCofree(DeclAnn, AST.TopData(variable, params, constructors, recursive))
 def absT(variable: Variable, t: TypeRec[Type], types: TypeRec[Type], body: TypeRec[Expr]): TypeRec[Expr] =
   HCofree(ExprAnn(t), AST.Abs(variable, types, body))
-def tyAbsT(variable: TypeVariable, t: TypeRec[Type], body: TypeRec[Expr]): TypeRec[Expr] =
-  HCofree(ExprAnn(t), AST.TyAbs(variable, body))
+def tyAbsT(variable: TypeVariable, t: TypeRec[Type], kind: Kind, body: TypeRec[Expr]): TypeRec[Expr] =
+  HCofree(ExprAnn(t), AST.TyAbs(variable, kind, body))
 def letT(variable: Variable, t: TypeRec[Type], types: TypeRec[Type], value: TypeRec[Expr], body: TypeRec[Expr]): TypeRec[Expr] =
   HCofree(ExprAnn(t), AST.Let(variable, types, value, body))
 def letRecT(variable: Variable, t: TypeRec[Type], types: TypeRec[Type], value: TypeRec[Expr], body: TypeRec[Expr]): TypeRec[Expr] =
   HCofree(ExprAnn(t), AST.LetRec(variable, types, value, body))
-def typeLetT(variable: TypeVariable, params: Seq[TypeVariable], t: TypeRec[Type], alias: TypeRec[Type], body: TypeRec[Expr]): TypeRec[Expr] =
+def typeLetT(variable: TypeVariable, params: Seq[(TypeVariable, Kind)], t: TypeRec[Type], alias: TypeRec[Type], body: TypeRec[Expr]): TypeRec[Expr] =
   HCofree(ExprAnn(t), AST.TypeLet(variable, params, alias, body))
-def dataLetT(variable: TypeVariable, params: Seq[TypeVariable], t: TypeRec[Type], constructors: Seq[DataConstructor[TypeRec]], body: TypeRec[Expr], recursive: Boolean = false): TypeRec[Expr] =
+def dataLetT(variable: TypeVariable, params: Seq[(TypeVariable, Kind)], t: TypeRec[Type], constructors: Seq[DataConstructor[TypeRec]], body: TypeRec[Expr], recursive: Boolean = false): TypeRec[Expr] =
   HCofree(ExprAnn(t), AST.DataLet(variable, params, constructors, body, recursive))
 def matchExprT(t: TypeRec[Type], scrutinee: TypeRec[Expr], cases: Seq[MatchCase[TypeRec]]): TypeRec[Expr] =
   HCofree(ExprAnn(t), AST.Match(scrutinee, cases))
@@ -249,8 +251,9 @@ def ifT(t: TypeRec[Type], cond: TypeRec[Expr], thenBranch: TypeRec[Expr], elseBr
 def primitiveT(name: String): TypeRec[Type] = HCofree(TypeAnn, AST.Primitive(name))
 def typeVarT(variable: TypeVariable): TypeRec[Type] = HCofree(TypeAnn, AST.TypeVar(variable))
 def arrowT(from: TypeRec[Type], to: TypeRec[Type]): TypeRec[Type] = HCofree(TypeAnn, AST.Arrow(from, to))
-def forallTypeT(variable: TypeVariable, body: TypeRec[Type]): TypeRec[Type] = HCofree(TypeAnn, AST.ForAll(variable, body))
+def forallTypeT(variable: TypeVariable, kind: Kind, body: TypeRec[Type]): TypeRec[Type] = HCofree(TypeAnn, AST.ForAll(variable, kind, body))
 def typeAppT(function: TypeRec[Type], argument: TypeRec[Type]): TypeRec[Type] = HCofree(TypeAnn, AST.TypeApp(function, argument))
+def typeAbsT(variable: TypeVariable, kind: Kind, body: TypeRec[Type]): TypeRec[Type] = HCofree(TypeAnn, AST.TypeAbs(variable, kind, body))
 
 def intTypeT: TypeRec[Type] = primitiveT("i32")
 def charTypeT: TypeRec[Type] = primitiveT("char")
@@ -271,8 +274,8 @@ def destructArrow(t: TypeRec[Type]): Option[(TypeRec[Type], TypeRec[Type])] = t.
   case _ => None
 }
 
-def destructForAll(t: TypeRec[Type]): Option[(TypeVariable, TypeRec[Type])] = t.projectT match {
-  case AST.ForAll(variable, body) => Some((variable, body))
+def destructForAllK(t: TypeRec[Type]): Option[(TypeVariable, Kind, TypeRec[Type])] = t.projectT match {
+  case AST.ForAll(variable, kind, body) => Some((variable, kind, body))
   case _ => None
 }
 
@@ -280,9 +283,10 @@ def freeTypeVars(t: TypeRec[Type]): Set[TypeVariable] = {
   type FV[I] = Set[TypeVariable]
   val alg: HCofreeAlgebra[AST, TypeAnn, FV] = [x] => (_, node) => node match {
     case AST.TypeVar(v) => Set(v)
-    case AST.ForAll(v, body) => body - v
+    case AST.ForAll(v, _, body) => body - v
     case AST.Arrow(from, to) => from ++ to
     case AST.TypeApp(f, a) => f ++ a
+    case AST.TypeAbs(v, _, body) => body - v
     case _ => Set.empty
   }
   t.cataAnn(alg)
@@ -293,7 +297,7 @@ def freeVars(expr: TypeRec[Expr]): Set[Variable] = {
   val alg: HCofreeAlgebra[AST, TypeAnn, FV] = [x] => (_, node) => node match {
     case AST.Var(variable) => Set(variable)
     case AST.Abs(variable, _, body) => body - variable
-    case AST.TyAbs(_, body) => body
+    case AST.TyAbs(_, _, body) => body
     case AST.Let(variable, _, value, body) => value ++ (body - variable)
     case AST.LetRec(variable, _, value, body) => (value - variable) ++ (body - variable)
     case AST.TypeLet(_, _, _, body) => body
@@ -343,7 +347,8 @@ def freshTypeVariable(base: TypeVariable, used: Set[TypeVariable]): TypeVariable
 def renameTypeVar(from: TypeVariable, to: TypeVariable, in: TypeRec[Type]): TypeRec[Type] = {
   val algebra: HCofreeAlgebra[AST, TypeAnn, TypeRec] = [x] => (ann, node) => node match {
     case AST.TypeVar(variable) if variable == from => typeVarT(to)
-    case AST.ForAll(variable, body) if variable == from => forallTypeT(to, body)
+    case AST.ForAll(variable, kind, body) if variable == from => forallTypeT(to, kind, body)
+    case AST.TypeAbs(variable, kind, body) if variable == from => typeAbsT(to, kind, body)
     case ast => HCofree(ann, ast)
   }
   in.cataAnn(algebra)
@@ -352,14 +357,22 @@ def renameTypeVar(from: TypeVariable, to: TypeVariable, in: TypeRec[Type]): Type
 def substType(target: TypeVariable, replace: TypeRec[Type], in: TypeRec[Type]): TypeRec[Type] = {
   val algebra: HCofreeAlgebra[AST, TypeAnn, TypeRec] = [x] => (ann, node) => node match {
     case AST.TypeVar(variable) if variable == target => replace
-    case AST.ForAll(variable, body) if variable != target =>
+    case AST.ForAll(variable, kind, body) if variable != target =>
       val replaceFreeVars = freeTypeVars(replace)
       if (replaceFreeVars.contains(variable)) {
         val used = replaceFreeVars ++ freeTypeVars(body) + target + variable
         val fresh = freshTypeVariable(variable, used)
         val renamedBody = renameTypeVar(variable, fresh, body)
-        forallTypeT(fresh, renamedBody)
-      } else forallTypeT(variable, body)
+        forallTypeT(fresh, kind, renamedBody)
+      } else forallTypeT(variable, kind, body)
+    case AST.TypeAbs(variable, kind, body) if variable != target =>
+      val replaceFreeVars = freeTypeVars(replace)
+      if (replaceFreeVars.contains(variable)) {
+        val used = replaceFreeVars ++ freeTypeVars(body) + target + variable
+        val fresh = freshTypeVariable(variable, used)
+        val renamedBody = renameTypeVar(variable, fresh, body)
+        typeAbsT(fresh, kind, renamedBody)
+      } else typeAbsT(variable, kind, body)
     case ast => HCofree(ann, ast)
   }
   in.cataAnn(algebra)
@@ -380,7 +393,8 @@ def sameType(left: TypeRec[Type], right: TypeRec[Type]): Boolean = {
           case None => !bound.values.toSet.contains(rv) && lv == rv
         }
       case (AST.Arrow(lf, lt), AST.Arrow(rf, rt)) => lf(bound)(rf) && lt(bound)(rt)
-      case (AST.ForAll(lv, lb), AST.ForAll(rv, rb)) => lb(bound + (lv -> rv))(rb)
+      case (AST.ForAll(lv, lk, lb), AST.ForAll(rv, rk, rb)) => lk == rk && lb(bound + (lv -> rv))(rb)
+      case (AST.TypeAbs(lv, lk, lb), AST.TypeAbs(rv, rk, rb)) => lk == rk && lb(bound + (lv -> rv))(rb)
       case (AST.TypeApp(lf, la), AST.TypeApp(rf, ra)) => lf(bound)(rf) && la(bound)(ra)
       case _ => false
     }
@@ -439,7 +453,8 @@ def containsDataApplicationOf(t: TypeRec[Type], owner: TypeVariable): Boolean = 
   val alg: HCofreeAlgebra[AST, TypeAnn, Found] = [x] => (_, node) => node match {
     case AST.TypeVar(variable) => variable == owner
     case AST.Arrow(from, to) => from || to
-    case AST.ForAll(_, body) => body
+    case AST.ForAll(_, _, body) => body
+    case AST.TypeAbs(_, _, body) => body
     case AST.TypeApp(function, argument) => function || argument
     case _ => false
   }

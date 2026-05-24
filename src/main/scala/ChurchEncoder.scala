@@ -35,7 +35,7 @@ object ChurchEncoder {
 
   private def encodeConstructorFields(owner: TypeVariable, args: Seq[TypeRec[Type]], dataDef: DataDef, constructor: ConstructorDef): Encode[Seq[TypeRec[Type]]] =
     constructor.fields.traverse { field =>
-      val substituted = substMany(dataDef.params, args, field)
+      val substituted = substMany(dataDef.paramVars, args, field)
       val recursive = containsDataApplicationOf(substituted, owner)
       if (recursive && !dataDef.recursive)
         fail(s"Recursive data type ${owner.name} must be declared with data rec")
@@ -52,7 +52,7 @@ object ChurchEncoder {
         thunkIfNullary(constructor.fields, encodedFields.foldRight(resultType)(arrowT), resultType)
       }
     }.map { handlers =>
-      forallTypeT(resultVar, handlers.foldRight(resultType)(arrowT))
+      forallTypeT(resultVar, Kind.Star, handlers.foldRight(resultType)(arrowT))
     }
   }
 
@@ -66,11 +66,21 @@ object ChurchEncoder {
   private def rebuildExprNode(t: TypeRec[Type], node: AST[Child, Expr]): Encoded[Expr] =
     encodeType(t).flatMap(encodedTypeAnn => rebuildNode(ExprAnn(encodedTypeAnn), node))
 
+  private def etaExpandDataType(variable: TypeVariable, dataDef: DataDef, providedArgs: Seq[TypeRec[Type]]): Encoded[Type] = {
+    val missing = dataDef.params.drop(providedArgs.length)
+    val freshParams = missing.zipWithIndex.map { case ((_, k), i) =>
+      (TypeVariable(s"__eta_${variable.name}_${providedArgs.length + i}"), k)
+    }
+    val fullArgs = providedArgs ++ freshParams.map { case (v, _) => typeVarT(v) }
+    churchDataType(variable, fullArgs, dataDef).map { encodedBody =>
+      freshParams.foldRight(encodedBody) { case ((v, k), acc) => typeAbsT(v, k, acc) }
+    }
+  }
+
   private val typeEncoderAlg: HCofreeParaAlgebra[AST, TypeAnn, Encoded] = [x] => (ann, node) => node match {
     case AST.TypeVar(variable) => ask.flatMap { env =>
       env.dataTypes.get(variable) match {
-        case Some(dataDef) if dataDef.params.isEmpty => churchDataType(variable, Nil, dataDef)
-        case Some(dataDef) => fail(s"Data type ${variable.name} expects ${dataDef.params.length} arguments, got 0")
+        case Some(dataDef) => etaExpandDataType(variable, dataDef, Nil)
         case None => rebuildNode(ann, node)
       }
     }
@@ -80,10 +90,10 @@ object ChurchEncoder {
       head.projectT match {
         case AST.TypeVar(variable) => ask.flatMap { env =>
           env.dataTypes.get(variable) match {
-            case Some(dataDef) if dataDef.params.length == args.length => for {
-              encodedData <- churchDataType(variable, args, dataDef)
-            } yield encodedData
-            case Some(dataDef) => fail(s"Data type ${variable.name} expects ${dataDef.params.length} arguments, got ${args.length}")
+            case Some(dataDef) if args.length <= dataDef.params.length =>
+              etaExpandDataType(variable, dataDef, args)
+            case Some(dataDef) =>
+              fail(s"Data type ${variable.name} expects ${dataDef.params.length} arguments, got ${args.length}")
             case None => rebuildNode(ann, node)
           }
         }
@@ -95,8 +105,8 @@ object ChurchEncoder {
   private def encodeType(t: TypeRec[Type]): Encoded[Type] =
     t.paraAnn(typeEncoderAlg)
 
-  private def mkTyAbs(variable: TypeVariable, body: TypeRec[Expr]): TypeRec[Expr] =
-    tyAbsT(variable, forallTypeT(variable, typeOf(body)), body)
+  private def mkTyAbs(variable: TypeVariable, kind: Kind, body: TypeRec[Expr]): TypeRec[Expr] =
+    tyAbsT(variable, forallTypeT(variable, kind, typeOf(body)), kind, body)
 
   private def mkAbs(variable: Variable, paramType: TypeRec[Type], body: TypeRec[Expr]): TypeRec[Expr] =
     absT(variable, arrowT(paramType, typeOf(body)), paramType, body)
@@ -112,8 +122,10 @@ object ChurchEncoder {
     }
 
   private def constructorType(owner: TypeVariable, dataDef: DataDef, constructor: ConstructorDef): Encoded[Type] = {
-    val nominalResult = applyTypeConstructor(owner, dataDef.params.map(typeVarT))
-    val nominalType = dataDef.params.foldRight(constructor.fields.foldRight(nominalResult)(arrowT))(forallTypeT)
+    val nominalResult = applyTypeConstructor(owner, dataDef.paramVars.map(typeVarT))
+    val nominalType = dataDef.params.foldRight(constructor.fields.foldRight(nominalResult)(arrowT)) {
+      case ((v, k), body) => forallTypeT(v, k, body)
+    }
     encodeType(nominalType)
   }
 
@@ -123,12 +135,12 @@ object ChurchEncoder {
     }
 
   private def constructorValue(owner: TypeVariable, dataDef: DataDef, constructor: ConstructorDef): Encoded[Expr] = for {
-    typeArgs = dataDef.params.map(typeVarT)
+    typeArgs = dataDef.paramVars.map(typeVarT)
     resultVar = TypeVariable("R")
     resultType = typeVarT(resultVar)
     fieldVars = constructor.fields.indices.map(i => Variable(s"__${constructor.name.name}_field_$i"))
     handlerVars = dataDef.constructors.indices.map(i => Variable(s"__${constructor.name.name}_case_$i"))
-    fieldTypes <- constructor.fields.map(field => substMany(dataDef.params, typeArgs, field)).traverse(t => encodeType(t): Encode[TypeRec[Type]])
+    fieldTypes <- constructor.fields.map(field => substMany(dataDef.paramVars, typeArgs, field)).traverse(t => encodeType(t): Encode[TypeRec[Type]])
     handlerTypes <- dataDef.constructors.toList.traverse((c: ConstructorDef) => handlerType(owner, typeArgs, dataDef, c, resultType): Encode[TypeRec[Type]])
     selectedHandler = varrType(handlerVars(constructor.tag), handlerTypes(constructor.tag))
     thunkedHandler = if (constructor.fields.isEmpty) appT(resultType, selectedHandler, unitLitT(unitTypeT)) else selectedHandler
@@ -140,11 +152,11 @@ object ChurchEncoder {
     withHandlers = handlerVars.zip(handlerTypes).foldRight(appliedHandler) { case ((handlerVar, handlerT), body) =>
       mkAbs(handlerVar, handlerT, body)
     }
-    withResultType = mkTyAbs(resultVar, withHandlers)
+    withResultType = mkTyAbs(resultVar, Kind.Star, withHandlers)
     withFields = fieldVars.zip(fieldTypes).foldRight(withResultType) { case ((fieldVar, fieldType), body) =>
       mkAbs(fieldVar, fieldType, body)
     }
-    withTypeParams = dataDef.params.foldRight(withFields)(mkTyAbs)
+    withTypeParams = dataDef.params.foldRight(withFields) { case ((v, k), body) => mkTyAbs(v, k, body) }
   } yield withTypeParams
 
   private def encodeMatchCase(
@@ -183,7 +195,7 @@ object ChurchEncoder {
       case Some(constructor) => for {
         encodedBody <- foldCase.body.encoded
         fieldTypes <- encodeConstructorFields(owner, args, dataDef, constructor)
-        substitutedFields = constructor.fields.map(field => substMany(dataDef.params, args, field))
+        substitutedFields = constructor.fields.map(field => substMany(dataDef.paramVars, args, field))
         _ <- guard(foldCase.binders.length == fieldTypes.length, s"Constructor ${foldCase.constructor.name} expects ${fieldTypes.length} binders, got ${foldCase.binders.length}")
         handlerParamVars = foldCase.binders.zip(substitutedFields).zipWithIndex.map {
           case ((binder, field), index) if isDataApplicationOf(field, owner) => Variable(s"__fold_${binder.name}_tail_$index")
@@ -230,7 +242,7 @@ object ChurchEncoder {
       scrutType = typeOf(scrutinee.original)
       resultType <- encodeType(t)
       encodedScrutinee <- scrutinee.encoded
-      dataApp <- ask.flatMap(env => lift(dataTypeApplication(scrutType, env.dataTypes)(_.params)))
+      dataApp <- ask.flatMap(env => lift(dataTypeApplication(scrutType, env.dataTypes)(_.paramVars)))
       (owner, dataDef, args) = dataApp
       handlerTypes <- dataDef.constructors.traverse((c: ConstructorDef) => handlerType(owner, args, dataDef, c, resultType): Encode[TypeRec[Type]])
       resultApplied = tyAppT(handlerTypes.foldRight(resultType)(arrowT), encodedScrutinee, resultType)
@@ -249,7 +261,7 @@ object ChurchEncoder {
       resultType <- encodeType(t)
       encodedScrutineeType <- encodeType(scrutType)
       encodedScrutinee <- scrutinee.encoded
-      dataApp <- ask.flatMap(env => lift(dataTypeApplication(scrutType, env.dataTypes)(_.params)))
+      dataApp <- ask.flatMap(env => lift(dataTypeApplication(scrutType, env.dataTypes)(_.paramVars)))
       (owner, dataDef, args) = dataApp
       foldType = arrowT(encodedScrutineeType, resultType)
       foldRef = varrType(foldVariable, foldType)

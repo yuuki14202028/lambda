@@ -457,7 +457,7 @@ object Generator {
   @tailrec
   private def isFunctionType(t: TypeRec[Type]): Boolean = t.projectT match {
     case AST.Arrow(_, _) => true
-    case AST.ForAll(_, body) => isFunctionType(body)
+    case AST.ForAll(_, _, body) => isFunctionType(body)
     case _ => false
   }
 
@@ -562,7 +562,7 @@ object Generator {
       _   <- liftS(addFunc(liftedFn(lbl, bc)))
     } yield closureAlloc(lbl)
 
-    case AST.TyAbs(_, body) => body.code
+    case AST.TyAbs(_, _, body) => body.code
 
     case AST.Let(Variable(param), _, value, body) => for {
       vc <- value.code
@@ -629,8 +629,9 @@ object Generator {
     case AST.Primitive(_) => pure(Code.empty)
     case AST.TypeVar(_) => pure(Code.empty)
     case AST.Arrow(_, _)  => pure(Code.empty)
-    case AST.ForAll(_, _) => pure(Code.empty)
+    case AST.ForAll(_, _, _) => pure(Code.empty)
     case AST.TypeApp(_, _) => pure(Code.empty)
+    case AST.TypeAbs(_, _, _) => pure(Code.empty)
   }
 
   private val bindValueToHeap: Code = code(
@@ -668,7 +669,7 @@ object Generator {
 
   @tailrec
   private def unwrapTypeAbs(expr: TypeRec[Expr]): TypeRec[Expr] = expr.tail match {
-    case AST.TyAbs(_, body) => unwrapTypeAbs(body)
+    case AST.TyAbs(_, _, body) => unwrapTypeAbs(body)
     case _ => expr
   }
 

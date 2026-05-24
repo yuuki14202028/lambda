@@ -185,7 +185,7 @@
           <key>name</key>
           <string>meta.declaration.function.lambda</string>
           <key>begin</key>
-          <string>\b(let)\s+(?:(rec)\s+)?([A-Za-z][A-Za-z0-9_]*)(?=\s*(?:\[\s*[A-Za-z][A-Za-z0-9_]*\s*\]\s*)*\()</string>
+          <string>\b(let)\s+(?:(rec)\s+)?([A-Za-z][A-Za-z0-9_]*)(?=\s*(?:\[[^\]]*\]\s*)*\()</string>
           <key>beginCaptures</key>
           <dict>
             <key>1</key>
@@ -374,6 +374,52 @@
         </dict>
         <dict>
           <key>name</key>
+          <string>meta.abstraction.type-lambda.kinded.lambda</string>
+          <key>begin</key>
+          <string>(λ)\s*(\()\s*([A-Za-z][A-Za-z0-9_]*)\s*(:)\s*</string>
+          <key>beginCaptures</key>
+          <dict>
+            <key>1</key>
+            <dict>
+              <key>name</key>
+              <string>keyword.operator.lambda.type.lambda</string>
+            </dict>
+            <key>2</key>
+            <dict>
+              <key>name</key>
+              <string>punctuation.section.parens.begin.lambda</string>
+            </dict>
+            <key>3</key>
+            <dict>
+              <key>name</key>
+              <string>variable.parameter</string>
+            </dict>
+            <key>4</key>
+            <dict>
+              <key>name</key>
+              <string>punctuation.separator.kind-annotation.lambda</string>
+            </dict>
+          </dict>
+          <key>end</key>
+          <string>\)</string>
+          <key>endCaptures</key>
+          <dict>
+            <key>0</key>
+            <dict>
+              <key>name</key>
+              <string>punctuation.section.parens.end.lambda</string>
+            </dict>
+          </dict>
+          <key>patterns</key>
+          <array>
+            <dict>
+              <key>include</key>
+              <string>#kind</string>
+            </dict>
+          </array>
+        </dict>
+        <dict>
+          <key>name</key>
           <string>meta.abstraction.value.lambda</string>
           <key>match</key>
           <string>(λ)\s*([A-Za-z][A-Za-z0-9_]*)</string>
@@ -393,6 +439,52 @@
         </dict>
         <dict>
           <key>name</key>
+          <string>meta.abstraction.type.kinded.lambda</string>
+          <key>begin</key>
+          <string>(Λ)\s*(\()\s*([A-Za-z][A-Za-z0-9_]*)\s*(:)\s*</string>
+          <key>beginCaptures</key>
+          <dict>
+            <key>1</key>
+            <dict>
+              <key>name</key>
+              <string>keyword.operator.lambda.type.lambda</string>
+            </dict>
+            <key>2</key>
+            <dict>
+              <key>name</key>
+              <string>punctuation.section.parens.begin.lambda</string>
+            </dict>
+            <key>3</key>
+            <dict>
+              <key>name</key>
+              <string>variable.parameter</string>
+            </dict>
+            <key>4</key>
+            <dict>
+              <key>name</key>
+              <string>punctuation.separator.kind-annotation.lambda</string>
+            </dict>
+          </dict>
+          <key>end</key>
+          <string>\)</string>
+          <key>endCaptures</key>
+          <dict>
+            <key>0</key>
+            <dict>
+              <key>name</key>
+              <string>punctuation.section.parens.end.lambda</string>
+            </dict>
+          </dict>
+          <key>patterns</key>
+          <array>
+            <dict>
+              <key>include</key>
+              <string>#kind</string>
+            </dict>
+          </array>
+        </dict>
+        <dict>
+          <key>name</key>
           <string>meta.abstraction.type.lambda</string>
           <key>match</key>
           <string>(Λ)\s*([A-Za-z][A-Za-z0-9_]*)</string>
@@ -409,6 +501,52 @@
               <string>variable.parameter</string>
             </dict>
           </dict>
+        </dict>
+        <dict>
+          <key>name</key>
+          <string>meta.quantifier.forall.kinded.lambda</string>
+          <key>begin</key>
+          <string>(∀)\s*(\()\s*([A-Za-z][A-Za-z0-9_]*)\s*(:)\s*</string>
+          <key>beginCaptures</key>
+          <dict>
+            <key>1</key>
+            <dict>
+              <key>name</key>
+              <string>keyword.operator.quantifier.lambda</string>
+            </dict>
+            <key>2</key>
+            <dict>
+              <key>name</key>
+              <string>punctuation.section.parens.begin.lambda</string>
+            </dict>
+            <key>3</key>
+            <dict>
+              <key>name</key>
+              <string>variable.parameter</string>
+            </dict>
+            <key>4</key>
+            <dict>
+              <key>name</key>
+              <string>punctuation.separator.kind-annotation.lambda</string>
+            </dict>
+          </dict>
+          <key>end</key>
+          <string>\)</string>
+          <key>endCaptures</key>
+          <dict>
+            <key>0</key>
+            <dict>
+              <key>name</key>
+              <string>punctuation.section.parens.end.lambda</string>
+            </dict>
+          </dict>
+          <key>patterns</key>
+          <array>
+            <dict>
+              <key>include</key>
+              <string>#kind</string>
+            </dict>
+          </array>
         </dict>
         <dict>
           <key>name</key>
@@ -560,6 +698,47 @@
       <array>
         <dict>
           <key>name</key>
+          <string>meta.type-parameter.kinded.lambda</string>
+          <key>begin</key>
+          <string>(\[)\s*([A-Za-z][A-Za-z0-9_]*)\s*(:)\s*</string>
+          <key>beginCaptures</key>
+          <dict>
+            <key>1</key>
+            <dict>
+              <key>name</key>
+              <string>punctuation.definition.type-parameter.begin.lambda</string>
+            </dict>
+            <key>2</key>
+            <dict>
+              <key>name</key>
+              <string>variable.parameter</string>
+            </dict>
+            <key>3</key>
+            <dict>
+              <key>name</key>
+              <string>punctuation.separator.kind-annotation.lambda</string>
+            </dict>
+          </dict>
+          <key>end</key>
+          <string>(\])</string>
+          <key>endCaptures</key>
+          <dict>
+            <key>1</key>
+            <dict>
+              <key>name</key>
+              <string>punctuation.definition.type-parameter.end.lambda</string>
+            </dict>
+          </dict>
+          <key>patterns</key>
+          <array>
+            <dict>
+              <key>include</key>
+              <string>#kind</string>
+            </dict>
+          </array>
+        </dict>
+        <dict>
+          <key>name</key>
           <string>meta.type-parameter.lambda</string>
           <key>match</key>
           <string>(\[)\s*([A-Za-z][A-Za-z0-9_]*)\s*(\])</string>
@@ -581,6 +760,30 @@
               <string>punctuation.definition.type-parameter.end.lambda</string>
             </dict>
           </dict>
+        </dict>
+      </array>
+    </dict>
+    <key>kind</key>
+    <dict>
+      <key>patterns</key>
+      <array>
+        <dict>
+          <key>name</key>
+          <string>storage.type.kind.star.lambda</string>
+          <key>match</key>
+          <string>\*</string>
+        </dict>
+        <dict>
+          <key>name</key>
+          <string>keyword.operator.kind.arrow.lambda</string>
+          <key>match</key>
+          <string>→</string>
+        </dict>
+        <dict>
+          <key>name</key>
+          <string>punctuation.section.kind.lambda</string>
+          <key>match</key>
+          <string>[()]</string>
         </dict>
       </array>
     </dict>
