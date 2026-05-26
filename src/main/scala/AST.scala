@@ -324,16 +324,6 @@ def freeVars(expr: TypeRec[Expr]): Set[Variable] = {
   expr.cataAnn(alg)
 }
 
-def freshVariable(base: Variable, used: Set[Variable]): Variable = {
-  Iterator.from(0)
-    .map {
-      case 0 => Variable(s"${base.name}'")
-      case n => Variable(s"${base.name}'$n")
-    }
-    .find(v => !used.contains(v))
-    .get
-}
-
 def freshTypeVariable(base: TypeVariable, used: Set[TypeVariable]): TypeVariable = {
   Iterator.from(0)
     .map {
@@ -355,27 +345,33 @@ def renameTypeVar(from: TypeVariable, to: TypeVariable, in: TypeRec[Type]): Type
 }
 
 def substType(target: TypeVariable, replace: TypeRec[Type], in: TypeRec[Type]): TypeRec[Type] = {
-  val algebra: HCofreeAlgebra[AST, TypeAnn, TypeRec] = [x] => (ann, node) => node match {
-    case AST.TypeVar(variable) if variable == target => replace
-    case AST.ForAll(variable, kind, body) if variable != target =>
-      val replaceFreeVars = freeTypeVars(replace)
-      if (replaceFreeVars.contains(variable)) {
-        val used = replaceFreeVars ++ freeTypeVars(body) + target + variable
-        val fresh = freshTypeVariable(variable, used)
-        val renamedBody = renameTypeVar(variable, fresh, body)
-        forallTypeT(fresh, kind, renamedBody)
-      } else forallTypeT(variable, kind, body)
-    case AST.TypeAbs(variable, kind, body) if variable != target =>
-      val replaceFreeVars = freeTypeVars(replace)
-      if (replaceFreeVars.contains(variable)) {
-        val used = replaceFreeVars ++ freeTypeVars(body) + target + variable
-        val fresh = freshTypeVariable(variable, used)
-        val renamedBody = renameTypeVar(variable, fresh, body)
-        typeAbsT(fresh, kind, renamedBody)
-      } else typeAbsT(variable, kind, body)
-    case ast => HCofree(ann, ast)
+  val replaceFreeVars = freeTypeVars(replace)
+
+  def rebind(variable: TypeVariable, body: TypeRec[Type]): (TypeVariable, TypeRec[Type]) = {
+    if (replaceFreeVars.contains(variable)) {
+      val fresh = freshTypeVariable(variable, replaceFreeVars ++ freeTypeVars(body) + target + variable)
+      (fresh, renameTypeVar(variable, fresh, body))
+    } else (variable, body)
   }
-  in.cataAnn(algebra)
+
+  val coalg: HCofreeApoCoalgebra[AST, TypeAnn, TypeRec] = [x] => (seed: TypeRec[x]) => seed.tail match {
+    case AST.TypeVar(variable) if variable == target => Left(replace)
+    case AST.ForAll(variable, _, _) if variable == target => Left(seed)
+    case AST.TypeAbs(variable, _, _) if variable == target => Left(seed)
+    case AST.ForAll(variable, kind, body) =>
+      val (binder, newBody) = rebind(variable, body)
+      Right((seed.head, AST.ForAll(binder, kind, Right(newBody))))
+    case AST.TypeAbs(variable, kind, body) =>
+      val (binder, newBody) = rebind(variable, body)
+      Right((seed.head, AST.TypeAbs(binder, kind, Right(newBody))))
+    case AST.Arrow(from, to) =>
+      Right((seed.head, AST.Arrow(Right(from), Right(to))))
+    case AST.TypeApp(function, argument) =>
+      Right((seed.head, AST.TypeApp(Right(function), Right(argument))))
+    case _ => Left(seed)
+  }
+
+  apoAnn(in)(coalg)
 }
 
 private def substMany(params: Seq[TypeVariable], args: Seq[TypeRec[Type]], in: TypeRec[Type]): TypeRec[Type] = {

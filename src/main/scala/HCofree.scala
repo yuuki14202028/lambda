@@ -19,6 +19,31 @@ type HCofreeParaAlgebra[H[_[_], _], A[_], B[_]] =
 type HCofreeParaAlgebraM[H[_[_], _], G[_], A[_], B[_]] =
   [x] => (A[x], H[[y] =>> (HCofree[H, A, y], B[y]), x]) => G[B[x]]
 
+type HCofreeApoCoalgebra[H[_[_], _], A[_], B[_]] =
+  [x] => B[x] => Either[
+    HCofree[H, A, x],
+    (A[x], H[[y] =>> Either[HCofree[H, A, y], B[y]], x])
+  ]
+
+def apoAnn[H[_[_], _], A[_], B[_], I](
+  seed: B[I]
+)(coalg: HCofreeApoCoalgebra[H, A, B])(using hf: HFunctor[H]): HCofree[H, A, I] = {
+  coalg(seed) match {
+    case Left(done) => done
+    case Right((ann, layer)) =>
+      val tail = hf.map(layer)(new FunctionK[
+        [y] =>> Either[HCofree[H, A, y], B[y]],
+        [y] =>> HCofree[H, A, y]
+      ] {
+        def apply[Y](e: Either[HCofree[H, A, Y], B[Y]]): HCofree[H, A, Y] = e match {
+          case Left(tree) => tree
+          case Right(s) => apoAnn(s)(coalg)
+        }
+      })
+      HCofree(ann, tail)
+  }
+}
+
 def paraOriginals[H[_[_], _], A[_], B[_], I](
   node: H[[y] =>> (HCofree[H, A, y], B[y]), I]
 )(using hf: HFunctor[H]): H[[y] =>> HCofree[H, A, y], I] =
