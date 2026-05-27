@@ -378,25 +378,6 @@ private def substMany(params: Seq[TypeVariable], args: Seq[TypeRec[Type]], in: T
   params.zip(args).foldLeft(in) { case (acc, (param, arg)) => substType(param, arg, acc) }
 }
 
-def sameType(left: TypeRec[Type], right: TypeRec[Type]): Boolean = {
-  type Eq[I] = Map[TypeVariable, TypeVariable] => TypeRec[I] => Boolean
-  val alg: HCofreeAlgebra[AST, TypeAnn, Eq] = [x] => (_, node) => bound => other =>
-    (node, other.tail) match {
-      case (AST.Primitive(ln), AST.Primitive(rn)) => ln == rn
-      case (AST.TypeVar(lv), AST.TypeVar(rv)) =>
-        bound.get(lv) match {
-          case Some(b) => b == rv
-          case None => !bound.values.toSet.contains(rv) && lv == rv
-        }
-      case (AST.Arrow(lf, lt), AST.Arrow(rf, rt)) => lf(bound)(rf) && lt(bound)(rt)
-      case (AST.ForAll(lv, lk, lb), AST.ForAll(rv, rk, rb)) => lk == rk && lb(bound + (lv -> rv))(rb)
-      case (AST.TypeAbs(lv, lk, lb), AST.TypeAbs(rv, rk, rb)) => lk == rk && lb(bound + (lv -> rv))(rb)
-      case (AST.TypeApp(lf, la), AST.TypeApp(rf, ra)) => lf(bound)(rf) && la(bound)(ra)
-      case _ => false
-    }
-  left.cataAnn(alg)(Map.empty)(right)
-}
-
 def isNumericType(t: TypeRec[Type]): Boolean = {
   t.projectT match {
     case AST.Primitive(name) => BuiltinTypes.numericTypes.contains(name)

@@ -16,7 +16,7 @@ object TAnalyser {
   private def okT[I](t: TypeRec[I]): TC[I] = ReaderT.pure(t)
 
   private def expect(expected: TypeRec[Type], actual: TypeRec[Type]): Check[Unit] =
-    guard(Normalize.equalType(expected, actual), s"Type mismatch: expected ${expected.show}, actual ${actual.show}")
+    guard(Equivalence.beta(expected, actual), s"Type mismatch: expected ${expected.show}, actual ${actual.show}")
 
   private def expectNumeric(actual: TypeRec[Type]): Check[Unit] =
     guard(isNumericType(actual), s"Type mismatch: expected numeric, actual ${actual.show}")
@@ -46,9 +46,9 @@ object TAnalyser {
     } else right
     expectedRightType = if (isShortCircuit(op)) arrowT(unitTypeT, typeOf(right)) else typeOf(right)
     result <- destructArrow(fnType) match {
-      case Some((leftParam, afterLeft)) if Normalize.equalType(leftParam, typeOf(left)) =>
+      case Some((leftParam, afterLeft)) if Equivalence.beta(leftParam, typeOf(left)) =>
         destructArrow(afterLeft) match {
-          case Some((rightParam, resultType)) if Normalize.equalType(rightParam, expectedRightType) =>
+          case Some((rightParam, resultType)) if Equivalence.beta(rightParam, expectedRightType) =>
             val fnRef = varrType(fn, fnType)
             val appliedLeft = appT(afterLeft, fnRef, left)
             okT(appT(resultType, appliedLeft, rightArg))
@@ -70,7 +70,7 @@ object TAnalyser {
     fn = StandardLibrary.unaryOperatorName(op, typeName)
     fnType <- lift(env.values.get(fn).toRight(s"Operator $op is not defined for type ${typeOf(body).show}; expected function ${fn.name}"))
     result <- destructArrow(fnType) match {
-      case Some((paramType, resultType)) if Normalize.equalType(paramType, typeOf(body)) =>
+      case Some((paramType, resultType)) if Equivalence.beta(paramType, typeOf(body)) =>
         okT(appT(resultType, varrType(fn, fnType), body))
       case Some((paramType, _)) =>
         fail(s"Type mismatch: expected ${paramType.show}, actual ${typeOf(body).show}")
@@ -509,7 +509,7 @@ object TAnalyser {
       typedFunction <- function
       typedArgument <- argument
       resultType <- destructArrow(typeOf(typedFunction)) match {
-        case Some((from, to)) if Normalize.equalType(from, typeOf(typedArgument)) => okT(to)
+        case Some((from, to)) if Equivalence.beta(from, typeOf(typedArgument)) => okT(to)
         case Some((from, _)) => fail(s"Type mismatch: expected ${from.show}, actual ${typeOf(typedArgument).show}")
         case None => fail(s"Not a function: ${typeOf(typedFunction).show}")
       }
@@ -611,7 +611,7 @@ object TAnalyser {
       typedTypes <- types.cata(tcAlg).run(env)
       declaredType <- expandAndCheckStar(typedTypes, env)
       typedValue <- value.cata(tcAlg).run(env)
-      _ <- Either.cond(Normalize.equalType(declaredType, typeOf(typedValue)), (), s"Type mismatch: expected ${declaredType.show}, actual ${typeOf(typedValue).show}")
+      _ <- Either.cond(Equivalence.beta(declaredType, typeOf(typedValue)), (), s"Type mismatch: expected ${declaredType.show}, actual ${typeOf(typedValue).show}")
     } yield (topLetT(variable, typedTypes, typedValue), env.copy(values = env.values + (variable -> declaredType)))
 
     case AST.TopLetRec(variable, types, value) => for {
@@ -619,7 +619,7 @@ object TAnalyser {
       declaredType <- expandAndCheckStar(typedTypes, env)
       valueEnv = env.copy(values = env.values + (variable -> declaredType))
       typedValue <- value.cata(tcAlg).run(valueEnv)
-      _ <- Either.cond(Normalize.equalType(declaredType, typeOf(typedValue)), (), s"Type mismatch: expected ${declaredType.show}, actual ${typeOf(typedValue).show}")
+      _ <- Either.cond(Equivalence.beta(declaredType, typeOf(typedValue)), (), s"Type mismatch: expected ${declaredType.show}, actual ${typeOf(typedValue).show}")
     } yield (topLetRecT(variable, typedTypes, typedValue), valueEnv)
 
     case AST.TopImport(path) =>
@@ -687,7 +687,7 @@ object TAnalyser {
         }
       }.flatMap { case (typedDecls, env) =>
         env.values.get(Variable("main")) match {
-          case Some(t) if sameType(t, arrowT(unitTypeT, intTypeT)) =>
+          case Some(t) if Equivalence.alpha(t, arrowT(unitTypeT, intTypeT)) =>
             Right(programT(typedDecls, env))
           case Some(t) => Left(s"Top-level main must have type unit → i32, actual ${t.show}")
           case None => Left("Top-level main is not defined")

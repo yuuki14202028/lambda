@@ -177,7 +177,7 @@ object ChurchEncoder {
         }
         handler = if (constructor.fields.isEmpty) mkAbs(Variable("__unit"), unitTypeT, innerHandler) else innerHandler
         expectedType = thunkIfNullary(constructor.fields, fieldTypes.foldRight(resultType)(arrowT), resultType)
-        _ <- guard(sameType(typeOf(handler), expectedType), s"Match case ${matchCase.constructor.name} has unexpected handler type")
+        _ <- guard(Equivalence.alpha(typeOf(handler), expectedType), s"Match case ${matchCase.constructor.name} has unexpected handler type")
       } yield handler
     }
   }
@@ -215,7 +215,7 @@ object ChurchEncoder {
         }
         handler = if (constructor.fields.isEmpty) mkAbs(Variable("__unit"), unitTypeT, innerHandler) else innerHandler
         expectedType = thunkIfNullary(constructor.fields, fieldTypes.foldRight(resultType)(arrowT), resultType)
-        _ <- guard(sameType(typeOf(handler), expectedType), s"Fold case ${foldCase.constructor.name} has unexpected handler type")
+        _ <- guard(Equivalence.alpha(typeOf(handler), expectedType), s"Fold case ${foldCase.constructor.name} has unexpected handler type")
       } yield handler
     }
   }
