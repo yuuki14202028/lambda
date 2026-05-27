@@ -212,7 +212,7 @@ object Generator {
   }
 
   @tailrec
-  private def primitiveName(t: TypeRec[Type]): Option[String] = t.projectT match {
+  private def primitiveName(t: TypeRec[Type]): Option[String] = t.project match {
     case AST.Primitive(name) => Some(name)
     case AST.TypeApp(function, _) => primitiveName(function)
     case _ => None
@@ -455,7 +455,7 @@ object Generator {
     )
 
   @tailrec
-  private def isFunctionType(t: TypeRec[Type]): Boolean = t.projectT match {
+  private def isFunctionType(t: TypeRec[Type]): Boolean = t.project match {
     case AST.Arrow(_, _) => true
     case AST.ForAll(_, _, body) => isFunctionType(body)
     case _ => false
@@ -584,7 +584,7 @@ object Generator {
 
     case AST.App(f, a) =>
       @tailrec
-      def directName(expr: TypeRec[Expr]): Option[String] = expr.tail match {
+      def directName(expr: TypeRec[Expr]): Option[String] = expr.project match {
         case AST.Var(Variable(name)) => Some(name)
         case AST.TyApp(function, _) => directName(function)
         case _ => None
@@ -668,18 +668,18 @@ object Generator {
   )
 
   @tailrec
-  private def unwrapTypeAbs(expr: TypeRec[Expr]): TypeRec[Expr] = expr.tail match {
+  private def unwrapTypeAbs(expr: TypeRec[Expr]): TypeRec[Expr] = expr.project match {
     case AST.TyAbs(_, _, body) => unwrapTypeAbs(body)
     case _ => expr
   }
 
-  private def directFunctionValue(name: String, value: TypeRec[Expr]): Option[(String, TypeRec[Expr])] = unwrapTypeAbs(value).tail match {
+  private def directFunctionValue(name: String, value: TypeRec[Expr]): Option[(String, TypeRec[Expr])] = unwrapTypeAbs(value).project match {
     case AST.Abs(Variable(param), _, body) if freeVars(value).subsetOf(Set(Variable(name))) && !isFunctionType(typeOf(body)) =>
       Some(param -> body)
     case _ => None
   }
 
-  private def genDecl(decl: TypeRec[Decl], env: Env): GenS[(Code, Env)] = decl.tail match {
+  private def genDecl(decl: TypeRec[Decl], env: Env): GenS[(Code, Env)] = decl.project match {
     case AST.TopLet(Variable(param), _, value) =>
       value.paraAnn(genAlg).run(env).map(code => (code ++ bindValueToHeap, env.withHeap(param)))
 
@@ -709,13 +709,13 @@ object Generator {
     case AST.TopData(_, _, _, _) => State.pure((Code.empty, env))
   }
 
-  private def topLevelName(decl: TypeRec[Decl]): Option[Variable] = decl.tail match {
+  private def topLevelName(decl: TypeRec[Decl]): Option[Variable] = decl.project match {
     case AST.TopLet(variable, _, _) => Some(variable)
     case AST.TopLetRec(variable, _, _) => Some(variable)
     case AST.TopImport(_) | AST.TopType(_, _, _) | AST.TopData(_, _, _, _) => None
   }
 
-  private def topLevelFreeVars(decl: TypeRec[Decl]): Set[Variable] = decl.tail match {
+  private def topLevelFreeVars(decl: TypeRec[Decl]): Set[Variable] = decl.project match {
     case AST.TopLet(_, _, value) => freeVars(value)
     case AST.TopLetRec(variable, _, value) => freeVars(value) - variable
     case AST.TopImport(_) | AST.TopType(_, _, _) | AST.TopData(_, _, _, _) => Set.empty
@@ -747,7 +747,7 @@ object Generator {
   }
 
   def generateProgram(prog: TypeRec[AST.Program.type]): AssemblyProgram = {
-    val gen = prog.tail match {
+    val gen = prog.project match {
       case AST.Program(decls) => genProgram(decls)
     }
     val (finalSt, program) = gen.run(Env.empty).run(GenState(Vector.empty, 0, Set.empty, Vector.empty)).value

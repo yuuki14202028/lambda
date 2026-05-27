@@ -206,7 +206,7 @@ object TAnalyser {
 
   private def expandTypeSpine(spine: Option[TypeSpine], self: TypeRec[Type], env: Env): EitherS[TypeRec[Type]] =
     spine match {
-      case Some(TypeSpine(head, args)) => head.projectT match {
+      case Some(TypeSpine(head, args)) => head.project match {
         case AST.TypeVar(variable) if env.typeVars.contains(variable) => expandHigherKindedVar(variable, args, env)
         case AST.TypeVar(variable) => expandDefinedType(variable, args, env)
         case AST.Primitive(name) => expandPrimitive(name, args, env)

@@ -87,7 +87,7 @@ object ChurchEncoder {
     case AST.TypeApp(_, _) =>
       val original = originalNode(ann, node)
       val (head, args) = collectTypeApps(original)
-      head.projectT match {
+      head.project match {
         case AST.TypeVar(variable) => ask.flatMap { env =>
           env.dataTypes.get(variable) match {
             case Some(dataDef) if args.length <= dataDef.params.length =>
@@ -281,7 +281,7 @@ object ChurchEncoder {
     case (ExprAnn(t), _) => rebuildExprNode(t, node)
   }
 
-  private def encodeDecl(decl: TypeRec[Decl], env: DataEnv): EncodeResult[(Seq[TypeRec[Decl]], DataEnv)] = decl.tail match {
+  private def encodeDecl(decl: TypeRec[Decl], env: DataEnv): EncodeResult[(Seq[TypeRec[Decl]], DataEnv)] = decl.project match {
     case AST.TopData(variable, _, _, _) =>
       env.dataTypes.get(variable).toRight(EncodeError.InvariantViolation(s"Top-level data type ${variable.name} is missing from ProgramAnn")).flatMap { dataDef =>
         dataDef.constructors.traverse { constructor => for {
@@ -294,9 +294,9 @@ object ChurchEncoder {
       decl.paraAnn(encoderAlg).run(env).map(encodedDecl => (Seq(encodedDecl), env))
   }
 
-  def encode(program: TypeRec[AST.Program.type]): EncodeResult[TypeRec[AST.Program.type]] = program.tail match {
+  def encode(program: TypeRec[AST.Program.type]): EncodeResult[TypeRec[AST.Program.type]] = program.project match {
     case AST.Program(decls) =>
-      val initialEnv = program.head match {
+      val initialEnv = program.extract match {
         case ProgramAnn(env) => DataEnv.from(env)
       }
       decls.foldLeft(Right((Vector.empty[TypeRec[Decl]], initialEnv)): EncodeResult[(Vector[TypeRec[Decl]], DataEnv)]) {

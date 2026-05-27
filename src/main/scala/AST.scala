@@ -90,11 +90,9 @@ enum UnaryOps {
   }
 }
 
-case class Variable(name: String) {
-}
+case class Variable(name: String)
 
-case class TypeVariable(name: String) {
-}
+case class TypeVariable(name: String)
 
 object BuiltinTypes {
   val Ptr: String = "foreign.C.Ptr"
@@ -141,7 +139,6 @@ object BuiltinTypes {
     primitiveArities.get(name)
 }
 
-case class HFix[H[_[_], _], I](unfix: H[[x] =>> HFix[H, x], I])
 type Rec[I] = HFix[AST, I]
 
 def program(decls: Seq[Rec[Decl]]): Rec[AST.Program.type] = HFix(AST.Program(decls))
@@ -195,7 +192,7 @@ type TypeRec[I] = HCofree[AST, TypeAnn, I]
 
 private val eraseAnn: TypeRec ~> Rec = new (TypeRec ~> Rec) {
   def apply[I](t: TypeRec[I]): Rec[I] = {
-    HFix(summon[HFunctor[AST]].map(t.tail)(this))
+    HFix(summon[HFunctor[AST]].map(t.project)(this))
   }
 }
 
@@ -261,27 +258,21 @@ def stringTypeT: TypeRec[Type] = primitiveT(BuiltinTypes.CString)
 def boolTypeT: TypeRec[Type] = primitiveT("bool")
 def unitTypeT: TypeRec[Type] = primitiveT("unit")
 
-def typeOf(expr: TypeRec[Expr]): TypeRec[Type] = expr.head match {
+def typeOf(expr: TypeRec[Expr]): TypeRec[Type] = expr.extract match {
   case ExprAnn(t) => t
 }
 
-extension (r: TypeRec[Type]) {
-  def projectT: AST[TypeRec, Type] = r.tail
+def destructArrow(t: TypeRec[Type]): Option[(TypeRec[Type], TypeRec[Type])] = PartialFunction.condOpt(t.project) {
+  case AST.Arrow(from, to) => (from, to)
 }
 
-def destructArrow(t: TypeRec[Type]): Option[(TypeRec[Type], TypeRec[Type])] = t.projectT match {
-  case AST.Arrow(from, to) => Some((from, to))
-  case _ => None
+def destructForAllK(t: TypeRec[Type]): Option[(TypeVariable, Kind, TypeRec[Type])] = PartialFunction.condOpt(t.project) {
+  case AST.ForAll(variable, kind, body) => (variable, kind, body)
 }
 
-def destructForAllK(t: TypeRec[Type]): Option[(TypeVariable, Kind, TypeRec[Type])] = t.projectT match {
-  case AST.ForAll(variable, kind, body) => Some((variable, kind, body))
-  case _ => None
-}
-
-def freeTypeVars(t: TypeRec[Type]): Set[TypeVariable] = {
+def freeTypeVars(t: Rec[Type]): Set[TypeVariable] = {
   type FV[I] = Set[TypeVariable]
-  val alg: HCofreeAlgebra[AST, TypeAnn, FV] = [x] => (_, node) => node match {
+  val alg: Algebra[AST, FV] = [x] => (node: AST[FV, x]) => node match {
     case AST.TypeVar(v) => Set(v)
     case AST.ForAll(v, _, body) => body - v
     case AST.Arrow(from, to) => from ++ to
@@ -289,12 +280,13 @@ def freeTypeVars(t: TypeRec[Type]): Set[TypeVariable] = {
     case AST.TypeAbs(v, _, body) => body - v
     case _ => Set.empty
   }
-  t.cataAnn(alg)
+  t.cata(alg)
 }
+def freeTypeVars(t: TypeRec[Type]): Set[TypeVariable] = freeTypeVars(eraseAnn(t))
 
-def freeVars(expr: TypeRec[Expr]): Set[Variable] = {
+def freeVars(expr: Rec[Expr]): Set[Variable] = {
   type FV[I] = Set[Variable]
-  val alg: HCofreeAlgebra[AST, TypeAnn, FV] = [x] => (_, node) => node match {
+  val alg: Algebra[AST, FV] = [x] => (node: AST[FV, x]) => node match {
     case AST.Var(variable) => Set(variable)
     case AST.Abs(variable, _, body) => body - variable
     case AST.TyAbs(_, _, body) => body
@@ -321,8 +313,9 @@ def freeVars(expr: TypeRec[Expr]): Set[Variable] = {
     case AST.Num(_, _) | AST.Char(_) | AST.StringLit(_) | AST.Bool(_) | AST.UnitLit() => Set.empty
     case _ => Set.empty
   }
-  expr.cataAnn(alg)
+  expr.cata(alg)
 }
+def freeVars(expr: TypeRec[Expr]): Set[Variable] = freeVars(eraseAnn(expr))
 
 def freshTypeVariable(base: TypeVariable, used: Set[TypeVariable]): TypeVariable = {
   Iterator.from(0)
@@ -354,20 +347,20 @@ def substType(target: TypeVariable, replace: TypeRec[Type], in: TypeRec[Type]): 
     } else (variable, body)
   }
 
-  val coalg: HCofreeApoCoalgebra[AST, TypeAnn, TypeRec] = [x] => (seed: TypeRec[x]) => seed.tail match {
+  val coalg: HCofreeApoCoalgebra[AST, TypeAnn, TypeRec] = [x] => (seed: TypeRec[x]) => seed.project match {
     case AST.TypeVar(variable) if variable == target => Left(replace)
     case AST.ForAll(variable, _, _) if variable == target => Left(seed)
     case AST.TypeAbs(variable, _, _) if variable == target => Left(seed)
     case AST.ForAll(variable, kind, body) =>
       val (binder, newBody) = rebind(variable, body)
-      Right((seed.head, AST.ForAll(binder, kind, Right(newBody))))
+      Right((seed.extract, AST.ForAll(binder, kind, Right(newBody))))
     case AST.TypeAbs(variable, kind, body) =>
       val (binder, newBody) = rebind(variable, body)
-      Right((seed.head, AST.TypeAbs(binder, kind, Right(newBody))))
+      Right((seed.extract, AST.TypeAbs(binder, kind, Right(newBody))))
     case AST.Arrow(from, to) =>
-      Right((seed.head, AST.Arrow(Right(from), Right(to))))
+      Right((seed.extract, AST.Arrow(Right(from), Right(to))))
     case AST.TypeApp(function, argument) =>
-      Right((seed.head, AST.TypeApp(Right(function), Right(argument))))
+      Right((seed.extract, AST.TypeApp(Right(function), Right(argument))))
     case _ => Left(seed)
   }
 
@@ -378,26 +371,22 @@ private def substMany(params: Seq[TypeVariable], args: Seq[TypeRec[Type]], in: T
   params.zip(args).foldLeft(in) { case (acc, (param, arg)) => substType(param, arg, acc) }
 }
 
-def isNumericType(t: TypeRec[Type]): Boolean = {
-  t.projectT match {
-    case AST.Primitive(name) => BuiltinTypes.numericTypes.contains(name)
-    case _ => false
-  }
+def isNumericType(t: TypeRec[Type]): Boolean = t.project match {
+  case AST.Primitive(name) => BuiltinTypes.numericTypes.contains(name)
+  case _ => false
+}
+
+def isEquatableType(t: TypeRec[Type]): Boolean = t.project match {
+  case AST.Primitive(name) => BuiltinTypes.equatableTypes.contains(name)
+  case _ => false
 }
 
 def operatorTypeName(t: TypeRec[Type]): Option[String] = {
   val (head, _) = collectTypeApps(t)
-  head.projectT match {
+  head.project match {
     case AST.Primitive(name) => Some(name)
     case AST.TypeVar(variable) => Some(variable.name)
     case _ => None
-  }
-}
-
-def isEquatableType(t: TypeRec[Type]): Boolean = {
-  t.projectT match {
-    case AST.Primitive(name) => BuiltinTypes.equatableTypes.contains(name)
-    case _ => false
   }
 }
 
@@ -415,19 +404,20 @@ def collectTypeApps(t: TypeRec[Type]): (TypeRec[Type], Seq[TypeRec[Type]]) = {
   t.paraAnn(alg)
 }
 
-def isDataApplicationOf(t: TypeRec[Type], owner: TypeVariable): Boolean = {
-  type Found[I] = Boolean
-  val alg: HCofreeAlgebra[AST, TypeAnn, Found] = [x] => (_, node) => node match {
+def isDataApplicationOf(t: Rec[Type], owner: TypeVariable): Boolean = {
+  type FV[I] = Boolean
+  val alg: Algebra[AST, FV] = [x] => (node: AST[FV, x]) => node match {
     case AST.TypeVar(variable) => variable == owner
     case AST.TypeApp(headIsOwner, _) => headIsOwner
     case _ => false
   }
-  t.cataAnn(alg)
+  t.cata(alg)
 }
+def isDataApplicationOf(t: TypeRec[Type], owner: TypeVariable): Boolean = isDataApplicationOf(eraseAnn(t), owner)
 
-def containsDataApplicationOf(t: TypeRec[Type], owner: TypeVariable): Boolean = {
-  type Found[I] = Boolean
-  val alg: HCofreeAlgebra[AST, TypeAnn, Found] = [x] => (_, node) => node match {
+def containsDataApplicationOf(t: Rec[Type], owner: TypeVariable): Boolean = {
+  type FV[I] = Boolean
+  val alg: Algebra[AST, FV] = [x] => (node: AST[FV, x]) => node match {
     case AST.TypeVar(variable) => variable == owner
     case AST.Arrow(from, to) => from || to
     case AST.ForAll(_, _, body) => body
@@ -435,15 +425,15 @@ def containsDataApplicationOf(t: TypeRec[Type], owner: TypeVariable): Boolean = 
     case AST.TypeApp(function, argument) => function || argument
     case _ => false
   }
-  t.cataAnn(alg)
+  t.cata(alg)
 }
+def containsDataApplicationOf(t: TypeRec[Type], owner: TypeVariable): Boolean = containsDataApplicationOf(eraseAnn(t), owner)
 
-def dataTypeApplication[D](
-    t: TypeRec[Type],
-    dataTypes: Map[TypeVariable, D]
-)(paramsOf: D => Seq[TypeVariable]): Either[String, (TypeVariable, D, Seq[TypeRec[Type]])] = {
+def dataTypeApplication[D]
+                       (t: TypeRec[Type], dataTypes: Map[TypeVariable, D])
+                       (paramsOf: D => Seq[TypeVariable]): Either[String, (TypeVariable, D, Seq[TypeRec[Type]])] = {
   val (head, args) = collectTypeApps(t)
-  head.projectT match {
+  head.project match {
     case AST.TypeVar(variable) => dataTypes.get(variable) match {
       case Some(dataDef) if paramsOf(dataDef).length == args.length => Right((variable, dataDef, args))
       case Some(dataDef) => Left(s"Data type ${variable.name} expects ${paramsOf(dataDef).length} arguments, got ${args.length}")
