@@ -77,15 +77,16 @@ object ChurchEncoder {
     }
   }
 
-  private val typeEncoderAlg: HCofreeParaAlgebra[AST, TypeAnn, Encoded] = [x] => (ann, node) => node match {
+  private val typeEncoderAlg: RAlgebra[TypedAST, TypeRec, Encoded] = [x] =>
+    (he: TypedAST[Child, x]) => he.ast match {
     case AST.TypeVar(variable) => ask.flatMap { env =>
       env.dataTypes.get(variable) match {
         case Some(dataDef) => etaExpandDataType(variable, dataDef, Nil)
-        case None => rebuildNode(ann, node)
+        case None => rebuildNode(he.ann, he.ast)
       }
     }
     case AST.TypeApp(_, _) =>
-      val original = originalNode(ann, node)
+      val original = originalNode(he.ann, he.ast)
       val (head, args) = collectTypeApps(original)
       head.project match {
         case AST.TypeVar(variable) => ask.flatMap { env =>
@@ -94,16 +95,16 @@ object ChurchEncoder {
               etaExpandDataType(variable, dataDef, args)
             case Some(dataDef) =>
               fail(s"Data type ${variable.name} expects ${dataDef.params.length} arguments, got ${args.length}")
-            case None => rebuildNode(ann, node)
+            case None => rebuildNode(he.ann, he.ast)
           }
         }
-        case _ => rebuildNode(ann, node)
+        case _ => rebuildNode(he.ann, he.ast)
       }
-    case _ => rebuildNode(ann, node)
+    case _ => rebuildNode(he.ann, he.ast)
   }
 
   private def encodeType(t: TypeRec[Type]): Encoded[Type] =
-    t.paraAnn(typeEncoderAlg)
+    t.para(typeEncoderAlg)
 
   private def mkTyAbs(variable: TypeVariable, kind: Kind, body: TypeRec[Expr]): TypeRec[Expr] =
     tyAbsT(variable, forallTypeT(variable, kind, typeOf(body)), kind, body)
@@ -220,10 +221,11 @@ object ChurchEncoder {
     }
   }
 
-  private val encoderAlg: HCofreeParaAlgebra[AST, TypeAnn, Encoded] = [x] => (ann, node) => (ann, node) match {
-    case (ann: ProgramAnn, _) => rebuildNode(ann, node)
-    case (DeclAnn, _) => rebuildNode(DeclAnn, node)
-    case (TypeAnn, _) => encodeType(originalNode(TypeAnn, node))
+  private val encoderAlg: RAlgebra[TypedAST, TypeRec, Encoded] = [x] =>
+    (he: TypedAST[Child, x]) => (he.ann, he.ast) match {
+    case (ann: ProgramAnn, node) => rebuildNode(ann, node)
+    case (DeclAnn, node) => rebuildNode(DeclAnn, node)
+    case (TypeAnn, node) => encodeType(originalNode(TypeAnn, node))
     case (ExprAnn(t), AST.DataLet(variable, params, constructors, body, recursive)) => for {
       taggedConstructors = constructors.zipWithIndex.map { case (constructor, tag) =>
         ConstructorDef(constructor.name, variable, constructor.fields.map(_.original), tag)
@@ -278,7 +280,7 @@ object ChurchEncoder {
       foldValue = absT(foldArgument, foldType, encodedScrutineeType, encodedMatch)
       folded = appT(resultType, foldRef, encodedScrutinee)
     } yield letRecT(foldVariable, resultType, foldType, foldValue, folded)
-    case (ExprAnn(t), _) => rebuildExprNode(t, node)
+    case (ExprAnn(t), node) => rebuildExprNode(t, node)
   }
 
   private def encodeDecl(decl: TypeRec[Decl], env: DataEnv): EncodeResult[(Seq[TypeRec[Decl]], DataEnv)] = decl.project match {
@@ -291,7 +293,7 @@ object ChurchEncoder {
       }
 
     case _ =>
-      decl.paraAnn(encoderAlg).run(env).map(encodedDecl => (Seq(encodedDecl), env))
+      decl.para(encoderAlg).run(env).map(encodedDecl => (Seq(encodedDecl), env))
   }
 
   def encode(program: TypeRec[AST.Program.type]): EncodeResult[TypeRec[AST.Program.type]] = program.project match {

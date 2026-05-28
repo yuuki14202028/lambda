@@ -90,7 +90,29 @@ given HTraverse[AST] with {
 }
 
 type Algebra[H[_[_], _], A[_]] = [x] => H[A, x] => A[x]
-type AlgebraM[H[_[_], _], G[_], A[_]] = [x] => H[A, x] => G[A[x]]
+type RAlgebra[H[_[_], _], A[_], B[_]] =
+  [x] => H[[y] =>> (A[y], B[y]), x] => B[x]
+type ApoCoalgebra[H[_[_], _], B[_]] =
+  [x] => B[x] => Either[HFix[H, x], H[[y] =>> Either[HFix[H, y], B[y]], x]]
+
+def apo[H[_[_], _], B[_], I]
+       (seed: B[I])(coalg: ApoCoalgebra[H, B])
+       (using hf: HFunctor[H]): HFix[H, I] = {
+  coalg(seed) match {
+    case Left(done) => done
+    case Right(layer) =>
+      val tail = hf.map(layer)(new FunctionK[
+        [y] =>> Either[HFix[H, y], B[y]],
+        [y] =>> HFix[H, y]
+      ] {
+        def apply[Y](e: Either[HFix[H, Y], B[Y]]): HFix[H, Y] = e match {
+          case Left(tree) => tree
+          case Right(s) => apo(s)(coalg)
+        }
+      })
+      HFix(tail)
+  }
+}
 
 extension [H[_[_], _], I](self: HFix[H, I]) {
   def cata[A[_]](alg: Algebra[H, A])(using hf: HFunctor[H]): A[I] = {
@@ -100,10 +122,14 @@ extension [H[_[_], _], I](self: HFix[H, I]) {
     alg(mapped)
   }
 
-  def cataM[G[_], A[_]](alg: AlgebraM[H, G, A])(using ht: HTraverse[H], G: Monad[G]): G[A[I]] = {
-    val recursed: G[H[A, I]] = ht.traverse(self.unfix)(
-      [x] => (child: HFix[H, x]) => child.cataM(alg)
-    )
-    recursed.flatMap(alg(_))
+  def para[B[_]](alg: RAlgebra[H, [y] =>> HFix[H, y], B])(using hf: HFunctor[H]): B[I] = {
+    val mapped = hf.map(self.unfix)(new FunctionK[
+      [x] =>> HFix[H, x],
+      [x] =>> (HFix[H, x], B[x])
+    ] {
+      def apply[X](child: HFix[H, X]): (HFix[H, X], B[X]) =
+        (child, child.para(alg))
+    })
+    alg(mapped)
   }
 }

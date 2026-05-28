@@ -483,7 +483,8 @@ object Generator {
       ) ++ body ++ epilogue
     )
 
-  private val genAlg: HCofreeParaAlgebra[AST, TypeAnn, GenCode] = [x] => (ann, node) => node match {
+  private val genAlg: RAlgebra[TypedAST, TypeRec, GenCode] = [x] =>
+    (he: TypedAST[Child, x]) => he.ast match {
     case AST.Num(v, t) => pure(loadNum(v, t))
     case AST.Char(v) => pure(loadImm32(v.toInt))
     case AST.StringLit(v) => for {
@@ -547,7 +548,7 @@ object Generator {
       ask.map(env => varLookup(name, env))
 
     case AST.Foreign(Variable(name), _) => for {
-      sig = ann match {
+      sig = he.ann match {
         case ExprAnn(t) => destructForeignSig(t).getOrElse(sys.error(s"Foreign must have function type: ${t.show}"))
         case _ => sys.error("Foreign node must have expression annotation")
       }
@@ -681,21 +682,21 @@ object Generator {
 
   private def genDecl(decl: TypeRec[Decl], env: Env): GenS[(Code, Env)] = decl.project match {
     case AST.TopLet(Variable(param), _, value) =>
-      value.paraAnn(genAlg).run(env).map(code => (code ++ bindValueToHeap, env.withHeap(param)))
+      value.para(genAlg).run(env).map(code => (code ++ bindValueToHeap, env.withHeap(param)))
 
     case AST.TopLetRec(Variable(param), _, value) =>
       directFunctionValue(param, value) match {
         case Some((arg, body)) => for {
           label <- fresh(s"direct_$param")
           valueEnv = env.withDirectFunction(param, label)
-          bodyCode <- body.paraAnn(genAlg).run(valueEnv.withStack(arg, -16))
+          bodyCode <- body.para(genAlg).run(valueEnv.withStack(arg, -16))
           _ <- addFunc(directFn(label, arg, bodyCode))
         } yield {
           (Code.empty, valueEnv)
         }
         case None =>
           val valueEnv = env.withHeap(param)
-          value.paraAnn(genAlg).run(valueEnv).map { vc =>
+          value.para(genAlg).run(valueEnv).map { vc =>
             val recCode = allocateRecCell ++ vc ++ code(
               ins("ldr", r(x9), mem(x29, -16)),
               ins("str", r(x0), mem(x9))
@@ -728,7 +729,7 @@ object Generator {
       }
     }.flatMap { case (declCode, env) =>
       val main = appT(intTypeT, varrType(Variable("main"), arrowT(unitTypeT, intTypeT)), unitLitT(unitTypeT))
-      main.paraAnn(genAlg).run(env).map { mainCode =>
+      main.para(genAlg).run(env).map { mainCode =>
         AssemblyProgram(Set.empty, Vector.empty, mainFunction(declCode ++ mainCode), Vector.empty)
       }
     }

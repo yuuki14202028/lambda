@@ -1,91 +1,33 @@
 package com.yuuki14202028
 
+import cats.~>
 import cats.arrow.FunctionK
-import cats.Monad
-import cats.syntax.all._
 
-case class HCofree[H[_[_], _], A[_], I](extract: A[I], project: H[[x] =>> HCofree[H, A, x], I])
+case class HCofreeT[A[_], H[_[_], _], R[_], I](ask: A[I], lower: H[R, I])
 
-type HCofreeAlgebra[H[_[_], _], A[_], B[_]] = [x] => (A[x], H[B, x]) => B[x]
+given hCofreeTHFunctor[A[_], H[_[_], _]](using hf: HFunctor[H])
+    : HFunctor[[R[_], x] =>> HCofreeT[A, H, R, x]] with
+  def map[R[_], S[_], I](fa: HCofreeT[A, H, R, I])(f: R ~> S): HCofreeT[A, H, S, I] =
+    HCofreeT(fa.ask, hf.map(fa.lower)(f))
 
-type HCofreeAlgebraM[H[_[_], _], G[_], A[_], B[_]] = [x] => (A[x], H[B, x]) => G[B[x]]
+type HCofree[H[_[_], _], A[_], I] = HFix[[R[_], x] =>> HCofreeT[A, H, R, x], I]
 
-type HCofreeParaAlgebra[H[_[_], _], A[_], B[_]] =
-  [x] => (A[x], H[[y] =>> (HCofree[H, A, y], B[y]), x]) => B[x]
+object HCofree:
+  def apply[H[_[_], _], A[_], I](
+    extract: A[I],
+    project: H[[x] =>> HCofree[H, A, x], I]
+  ): HCofree[H, A, I] =
+    HFix[[R[_], x] =>> HCofreeT[A, H, R, x], I](HCofreeT(extract, project))
 
-type HCofreeParaAlgebraM[H[_[_], _], G[_], A[_], B[_]] =
-  [x] => (A[x], H[[y] =>> (HCofree[H, A, y], B[y]), x]) => G[B[x]]
-
-type HCofreeApoCoalgebra[H[_[_], _], A[_], B[_]] =
-  [x] => B[x] => Either[
-    HCofree[H, A, x],
-    (A[x], H[[y] =>> Either[HCofree[H, A, y], B[y]], x])
-  ]
-
-def apoAnn[H[_[_], _], A[_], B[_], I](
-  seed: B[I]
-)(coalg: HCofreeApoCoalgebra[H, A, B])(using hf: HFunctor[H]): HCofree[H, A, I] = {
-  coalg(seed) match {
-    case Left(done) => done
-    case Right((ann, layer)) =>
-      val tail = hf.map(layer)(new FunctionK[
-        [y] =>> Either[HCofree[H, A, y], B[y]],
-        [y] =>> HCofree[H, A, y]
-      ] {
-        def apply[Y](e: Either[HCofree[H, A, Y], B[Y]]): HCofree[H, A, Y] = e match {
-          case Left(tree) => tree
-          case Right(s) => apoAnn(s)(coalg)
-        }
-      })
-      HCofree(ann, tail)
-  }
+extension [H[_[_], _], A[_], I](self: HCofree[H, A, I]) {
+  def extract: A[I] = self.unfix.ask
+  def project: H[[x] =>> HCofree[H, A, x], I] = self.unfix.lower
 }
 
-def paraOriginals[H[_[_], _], A[_], B[_], I](
-  node: H[[y] =>> (HCofree[H, A, y], B[y]), I]
-)(using hf: HFunctor[H]): H[[y] =>> HCofree[H, A, y], I] =
+def paraOriginals[H[_[_], _], A[_], B[_], I]
+                 (node: H[[y] =>> (HCofree[H, A, y], B[y]), I])
+                 (using hf: HFunctor[H]): H[[y] =>> HCofree[H, A, y], I] = {
   hf.map(node)(new FunctionK[[y] =>> (HCofree[H, A, y], B[y]), [y] =>> HCofree[H, A, y]] {
     def apply[Y](p: (HCofree[H, A, Y], B[Y])): HCofree[H, A, Y] = p._1
   })
-
-def paraRecursed[H[_[_], _], A[_], B[_], I](
-  node: H[[y] =>> (HCofree[H, A, y], B[y]), I]
-)(using hf: HFunctor[H]): H[B, I] =
-  hf.map(node)(new FunctionK[[y] =>> (HCofree[H, A, y], B[y]), B] {
-    def apply[Y](p: (HCofree[H, A, Y], B[Y])): B[Y] = p._2
-  })
-
-extension [H[_[_], _], A[_], I](self: HCofree[H, A, I]) {
-  def cataAnn[B[_]](alg: HCofreeAlgebra[H, A, B])(using hf: HFunctor[H]): B[I] = {
-    val mapped = hf.map(self.project)(new FunctionK[[x] =>> HCofree[H, A, x], B] {
-      def apply[X](child: HCofree[H, A, X]): B[X] = child.cataAnn(alg)
-    })
-    alg(self.extract, mapped)
-  }
-
-  def cataAnnM[G[_], B[_]](alg: HCofreeAlgebraM[H, G, A, B])(using ht: HTraverse[H], G: Monad[G]): G[B[I]] = {
-    val recursed: G[H[B, I]] = ht.traverse(self.project)(
-      [x] => (child: HCofree[H, A, x]) => child.cataAnnM(alg)
-    )
-    recursed.flatMap(t => alg(self.extract, t))
-  }
-
-  def paraAnn[B[_]](alg: HCofreeParaAlgebra[H, A, B])(using hf: HFunctor[H]): B[I] = {
-    val mapped = hf.map(self.project)(new FunctionK[
-      [x] =>> HCofree[H, A, x],
-      [x] =>> (HCofree[H, A, x], B[x])
-    ] {
-      def apply[X](child: HCofree[H, A, X]): (HCofree[H, A, X], B[X]) =
-        (child, child.paraAnn(alg))
-    })
-    alg(self.extract, mapped)
-  }
-
-  def paraAnnM[G[_], B[_]](alg: HCofreeParaAlgebraM[H, G, A, B])(using ht: HTraverse[H], G: Monad[G]): G[B[I]] = {
-    type Pair[x] = (HCofree[H, A, x], B[x])
-    val recursed: G[H[Pair, I]] = ht.traverse[G, [x] =>> HCofree[H, A, x], Pair, I](self.project)(
-      [x] => (child: HCofree[H, A, x]) => child.paraAnnM(alg).map(b => (child, b))
-    )
-    recursed.flatMap(t => alg(self.extract, t))
-  }
 }

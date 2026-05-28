@@ -89,9 +89,9 @@ extension [I](t: Rec[I]) {
   def show: String = t.cata(showAlg)
 }
 
-val typedShowAlg: HCofreeAlgebra[AST, TypeAnn, ShowResult] = [x] => (ann, node) => {
-  val shown = showAlg[x](node)
-  ann match {
+val typedShowAlg: Algebra[TypedAST, ShowResult] = [x] => (he: TypedAST[ShowResult, x]) => {
+  val shown = showAlg[x](he.ast)
+  he.ann match {
     case ProgramAnn(_)     => shown
     case DeclAnn           => shown
     case ExprAnn(exprType) => s"($shown)[${exprType.show}]"
@@ -100,5 +100,6 @@ val typedShowAlg: HCofreeAlgebra[AST, TypeAnn, ShowResult] = [x] => (ann, node) 
 }
 
 extension [I](t: TypeRec[I]) {
-  def show: String = t.cataAnn(typedShowAlg)
+  @scala.annotation.targetName("showAnn")
+  def show: String = t.cata(typedShowAlg)
 }

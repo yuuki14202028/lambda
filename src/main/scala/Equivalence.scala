@@ -4,8 +4,8 @@ object Equivalence {
   
   def alpha(left: TypeRec[Type], right: TypeRec[Type]): Boolean = {
     type Eq[I] = Map[TypeVariable, TypeVariable] => TypeRec[I] => Boolean
-    val alg: HCofreeAlgebra[AST, TypeAnn, Eq] = [x] => (_, node) => bound => other =>
-      (node, other.project) match {
+    val alg: Algebra[TypedAST, Eq] = [x] => (he: TypedAST[Eq, x]) => bound => other =>
+      (he.ast, other.project) match {
         case (AST.Primitive(ln), AST.Primitive(rn)) => ln == rn
         case (AST.TypeVar(lv), AST.TypeVar(rv)) =>
           bound.get(lv) match {
@@ -18,21 +18,21 @@ object Equivalence {
         case (AST.TypeApp(lf, la), AST.TypeApp(rf, ra)) => lf(bound)(rf) && la(bound)(ra)
         case _ => false
       }
-    left.cataAnn(alg)(Map.empty)(right)
-  }  
-  
+    left.cata(alg)(Map.empty)(right)
+  }
+
   def normalize(t: TypeRec[Type]): TypeRec[Type] = {
-    val alg: HCofreeAlgebra[AST, TypeAnn, TypeRec] = [x] => (ann, node) => node match {
-      case AST.TypeApp(function, argument) =>
+    val alg: Algebra[TypedAST, TypeRec] = [x] => (he: TypedAST[TypeRec, x]) => he match {
+      case HCofreeT(ann, AST.TypeApp(function, argument)) =>
         function.project match {
           case AST.TypeAbs(variable, _, body) =>
             normalize(substType(variable, argument, body))
           case _ =>
             HCofree(ann, AST.TypeApp(function, argument))
         }
-      case ast => HCofree(ann, ast)
+      case HCofreeT(ann, ast) => HCofree(ann, ast)
     }
-    t.cataAnn(alg)
+    t.cata(alg)
   }
 
   def beta(left: TypeRec[Type], right: TypeRec[Type]): Boolean = {

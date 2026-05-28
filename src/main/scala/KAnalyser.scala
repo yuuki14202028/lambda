@@ -25,17 +25,17 @@ object KAnalyser {
   private def dataKind(params: Seq[(TypeVariable, Kind)]): Kind =
     params.foldRight(Kind.Star: Kind) { case ((_, k), acc) => Kind.Arrow(k, acc) }
 
-  private val alg: HCofreeParaAlgebra[AST, TypeAnn, KC] = [x] => (_, node) => node match {
+  private val alg: RAlgebra[TypedAST, TypeRec, KC] = [x] =>
+    (he: TypedAST[[y] =>> (TypeRec[y], KC[y]), x]) => he.ast match {
     case AST.Primitive(name) => lift(primitiveKind(name))
 
     case AST.TypeVar(v) => for {
       env <- ask
       kind <- lift(env.typeVars.get(v) match {
         case Some(k) => Right(k)
-        case None =>
-          env.dataTypes.get(v).map(d => dataKind(d.params))
-            .orElse(env.typeAliases.get(v).map(a => dataKind(a.params)))
-            .toRight(s"Type variable ${v.name} is not defined")
+        case None => env.dataTypes.get(v).map(d => dataKind(d.params))
+          .orElse(env.typeAliases.get(v).map(a => dataKind(a.params)))
+          .toRight(s"Type variable ${v.name} is not defined")
       })
     } yield kind
 
@@ -70,5 +70,5 @@ object KAnalyser {
   }
 
   def kindOf(t: TypeRec[Type], env: Env): Either[String, Kind] =
-    t.paraAnn(alg).run(env)
+    t.para(alg).run(env)
 }

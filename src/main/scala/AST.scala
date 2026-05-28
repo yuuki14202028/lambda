@@ -189,6 +189,12 @@ def boolType: Rec[Type] = primitive("bool")
 def unitType: Rec[Type] = primitive("unit")
 
 type TypeRec[I] = HCofree[AST, TypeAnn, I]
+type TypedAST[R[_], x] = HCofreeT[TypeAnn, AST, R, x]
+
+extension[R[_], x](self: TypedAST[R, x]) {
+  def ann: TypeAnn[x] = self.ask
+  def ast: AST[R, x] = self.lower
+}
 
 private val eraseAnn: TypeRec ~> Rec = new (TypeRec ~> Rec) {
   def apply[I](t: TypeRec[I]): Rec[I] = {
@@ -282,6 +288,7 @@ def freeTypeVars(t: Rec[Type]): Set[TypeVariable] = {
   }
   t.cata(alg)
 }
+@scala.annotation.targetName("freeTypeVarsAnn")
 def freeTypeVars(t: TypeRec[Type]): Set[TypeVariable] = freeTypeVars(eraseAnn(t))
 
 def freeVars(expr: Rec[Expr]): Set[Variable] = {
@@ -315,6 +322,7 @@ def freeVars(expr: Rec[Expr]): Set[Variable] = {
   }
   expr.cata(alg)
 }
+@scala.annotation.targetName("freeVarsAnn")
 def freeVars(expr: TypeRec[Expr]): Set[Variable] = freeVars(eraseAnn(expr))
 
 def freshTypeVariable(base: TypeVariable, used: Set[TypeVariable]): TypeVariable = {
@@ -328,13 +336,13 @@ def freshTypeVariable(base: TypeVariable, used: Set[TypeVariable]): TypeVariable
 }
 
 def renameTypeVar(from: TypeVariable, to: TypeVariable, in: TypeRec[Type]): TypeRec[Type] = {
-  val algebra: HCofreeAlgebra[AST, TypeAnn, TypeRec] = [x] => (ann, node) => node match {
-    case AST.TypeVar(variable) if variable == from => typeVarT(to)
-    case AST.ForAll(variable, kind, body) if variable == from => forallTypeT(to, kind, body)
-    case AST.TypeAbs(variable, kind, body) if variable == from => typeAbsT(to, kind, body)
-    case ast => HCofree(ann, ast)
+  val algebra: Algebra[TypedAST, TypeRec] = [x] => (he: TypedAST[TypeRec, x]) => he match {
+    case HCofreeT(_, AST.TypeVar(variable)) if variable == from => typeVarT(to)
+    case HCofreeT(_, AST.ForAll(variable, kind, body)) if variable == from => forallTypeT(to, kind, body)
+    case HCofreeT(_, AST.TypeAbs(variable, kind, body)) if variable == from => typeAbsT(to, kind, body)
+    case HCofreeT(ann, ast) => HCofree(ann, ast)
   }
-  in.cataAnn(algebra)
+  in.cata(algebra)
 }
 
 def substType(target: TypeVariable, replace: TypeRec[Type], in: TypeRec[Type]): TypeRec[Type] = {
@@ -347,24 +355,24 @@ def substType(target: TypeVariable, replace: TypeRec[Type], in: TypeRec[Type]): 
     } else (variable, body)
   }
 
-  val coalg: HCofreeApoCoalgebra[AST, TypeAnn, TypeRec] = [x] => (seed: TypeRec[x]) => seed.project match {
+  val coalg: ApoCoalgebra[TypedAST, TypeRec] = [x] => (seed: TypeRec[x]) => seed.project match {
     case AST.TypeVar(variable) if variable == target => Left(replace)
     case AST.ForAll(variable, _, _) if variable == target => Left(seed)
     case AST.TypeAbs(variable, _, _) if variable == target => Left(seed)
     case AST.ForAll(variable, kind, body) =>
       val (binder, newBody) = rebind(variable, body)
-      Right((seed.extract, AST.ForAll(binder, kind, Right(newBody))))
+      Right(HCofreeT(seed.extract, AST.ForAll(binder, kind, Right(newBody))))
     case AST.TypeAbs(variable, kind, body) =>
       val (binder, newBody) = rebind(variable, body)
-      Right((seed.extract, AST.TypeAbs(binder, kind, Right(newBody))))
+      Right(HCofreeT(seed.extract, AST.TypeAbs(binder, kind, Right(newBody))))
     case AST.Arrow(from, to) =>
-      Right((seed.extract, AST.Arrow(Right(from), Right(to))))
+      Right(HCofreeT(seed.extract, AST.Arrow(Right(from), Right(to))))
     case AST.TypeApp(function, argument) =>
-      Right((seed.extract, AST.TypeApp(Right(function), Right(argument))))
+      Right(HCofreeT(seed.extract, AST.TypeApp(Right(function), Right(argument))))
     case _ => Left(seed)
   }
 
-  apoAnn(in)(coalg)
+  apo(in)(coalg)
 }
 
 private def substMany(params: Seq[TypeVariable], args: Seq[TypeRec[Type]], in: TypeRec[Type]): TypeRec[Type] = {
@@ -392,16 +400,17 @@ def operatorTypeName(t: TypeRec[Type]): Option[String] = {
 
 def collectTypeApps(t: TypeRec[Type]): (TypeRec[Type], Seq[TypeRec[Type]]) = {
   type Collected[I] = (TypeRec[I], Seq[TypeRec[Type]])
-  val alg: HCofreeParaAlgebra[AST, TypeAnn, Collected] = [x] => (ann, node) => node match {
-    case AST.TypeApp(function, argument) =>
-      val (_, (head, args)) = function
-      val (origArg, _) = argument
-      (head, args :+ origArg)
-    case _ =>
-      val self = HCofree[AST, TypeAnn, x](ann, paraOriginals[AST, TypeAnn, Collected, x](node))
-      (self, Seq.empty)
-  }
-  t.paraAnn(alg)
+  val alg: RAlgebra[TypedAST, TypeRec, Collected] = [x] =>
+    (he: TypedAST[[y] =>> (TypeRec[y], Collected[y]), x]) => he match {
+      case HCofreeT(_, AST.TypeApp(function, argument)) =>
+        val (_, (head, args)) = function
+        val (origArg, _) = argument
+        (head, args :+ origArg)
+      case HCofreeT(ann, node) =>
+        val self = HCofree(ann, paraOriginals[AST, TypeAnn, Collected, x](node))
+        (self, Seq.empty)
+    }
+  t.para(alg)
 }
 
 def isDataApplicationOf(t: Rec[Type], owner: TypeVariable): Boolean = {
@@ -413,6 +422,7 @@ def isDataApplicationOf(t: Rec[Type], owner: TypeVariable): Boolean = {
   }
   t.cata(alg)
 }
+@scala.annotation.targetName("isDataApplicationOfAnn")
 def isDataApplicationOf(t: TypeRec[Type], owner: TypeVariable): Boolean = isDataApplicationOf(eraseAnn(t), owner)
 
 def containsDataApplicationOf(t: Rec[Type], owner: TypeVariable): Boolean = {
@@ -427,6 +437,7 @@ def containsDataApplicationOf(t: Rec[Type], owner: TypeVariable): Boolean = {
   }
   t.cata(alg)
 }
+@scala.annotation.targetName("containsDataApplicationOfAnn")
 def containsDataApplicationOf(t: TypeRec[Type], owner: TypeVariable): Boolean = containsDataApplicationOf(eraseAnn(t), owner)
 
 def dataTypeApplication[D]

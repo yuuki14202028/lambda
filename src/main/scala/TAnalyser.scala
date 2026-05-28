@@ -227,37 +227,38 @@ object TAnalyser {
         Left(s"Primitive type $name is not defined")
     }
 
-  private val expandAlg: HCofreeParaAlgebra[AST, TypeAnn, Expand] = [x] => (ann, node) => env => node match {
-    case AST.TypeVar(variable) =>
+  private val expandAlg: RAlgebra[TypedAST, TypeRec, Expand] = [x] =>
+    (he: TypedAST[[y] =>> (TypeRec[y], Expand[y]), x]) => env => he match {
+    case HCofreeT(_, AST.TypeVar(variable)) =>
       TypeExpansion(expandTypeName(variable, env), Some(typeNameSpine(variable)))
 
-    case AST.Primitive(name) =>
+    case HCofreeT(_, AST.Primitive(name)) =>
       TypeExpansion(expandPrimitive(name, Seq.empty, env), Some(TypeSpine(primitiveT(name), Seq.empty)))
 
-    case AST.ForAll(variable, kind, body) =>
+    case HCofreeT(_, AST.ForAll(variable, kind, body)) =>
       val value = for {
         _ <- Either.cond(!env.typeVars.contains(variable), (), s"Type variable ${variable.name} is already defined")
         eb <- body._2(env.copy(typeVars = env.typeVars + (variable -> kind))).value
       } yield forallTypeT(variable, kind, eb)
       TypeExpansion(value)
 
-    case AST.TypeAbs(variable, kind, body) =>
+    case HCofreeT(_, AST.TypeAbs(variable, kind, body)) =>
       val value = for {
         _ <- Either.cond(!env.typeVars.contains(variable), (), s"Type variable ${variable.name} is already defined")
         eb <- body._2(env.copy(typeVars = env.typeVars + (variable -> kind))).value
       } yield typeAbsT(variable, kind, eb)
       TypeExpansion(value)
 
-    case AST.TypeApp(function, argument) =>
+    case HCofreeT(ann, node @ AST.TypeApp(function, argument)) =>
       val self = HCofree(ann, paraOriginals(node))
       val spine = function._2(env).spine.map(_.append(argument._2))
       TypeExpansion(expandTypeSpine(spine, self, env), spine)
 
-    case ast => TypeExpansion(rebuild(ann, ast, env))
+    case HCofreeT(ann, ast) => TypeExpansion(rebuild(ann, ast, env))
   }
 
   private def expandType(t: TypeRec[Type], env: Env): EitherS[TypeRec[Type]] = {
-    t.paraAnn(expandAlg)(env).value
+    t.para(expandAlg)(env).value
   }
 
   private def expandAndCheckStar(t: TypeRec[Type], env: Env): EitherS[TypeRec[Type]] = for {
