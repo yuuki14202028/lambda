@@ -1,7 +1,7 @@
 package com.yuuki14202028
 
 import cats.syntax.all._
-import cats.data.ReaderT
+import cats.data.{ReaderT, StateT}
 
 object TAnalyser {
 
@@ -607,93 +607,68 @@ object TAnalyser {
     case AST.TypeApp(function, argument) => (function, argument).mapN(typeAppT)
   }
 
-  private def checkDecl(decl: Rec[Decl], env: Env): EitherS[(TypeRec[Decl], Env)] = decl.unfix match {
-    case AST.TopLet(variable, types, value) => for {
-      typedTypes <- types.cata(tcAlg).run(env)
-      declaredType <- expandAndCheckStar(typedTypes, env)
-      typedValue <- value.cata(tcAlg).run(env)
-      _ <- Either.cond(Equivalence.beta(declaredType, typeOf(typedValue)), (), s"Type mismatch: expected ${declaredType.show}, actual ${typeOf(typedValue).show}")
-    } yield (topLetT(variable, typedTypes, typedValue), env.copy(values = env.values + (variable -> declaredType)))
+  // Checks one declaration against the current environment and yields the
+  // environment extended with it, so declarations are scoped left-to-right.
+  private def checkDecl(decl: Rec[Decl]): StateT[EitherS, Env, TypeRec[Decl]] =
+    StateT { env =>
+      for {
+        typedDecl <- decl.cata(tcAlg).run(env)
+        nextEnv <- extendEnv(typedDecl, env)
+      } yield (nextEnv, typedDecl)
+    }
 
-    case AST.TopLetRec(variable, types, value) => for {
-      typedTypes <- types.cata(tcAlg).run(env)
-      declaredType <- expandAndCheckStar(typedTypes, env)
-      valueEnv = env.copy(values = env.values + (variable -> declaredType))
-      typedValue <- value.cata(tcAlg).run(valueEnv)
-      _ <- Either.cond(Equivalence.beta(declaredType, typeOf(typedValue)), (), s"Type mismatch: expected ${declaredType.show}, actual ${typeOf(typedValue).show}")
-    } yield (topLetRecT(variable, typedTypes, typedValue), valueEnv)
+  private def extendEnv(decl: TypeRec[Decl], env: Env): EitherS[Env] = decl.project match {
+    case AST.TopLet(variable, typedTypes, _) =>
+      expandAndCheckStar(typedTypes, env).map(declaredType =>
+        env.copy(values = env.values + (variable -> declaredType)))
+
+    case AST.TopLetRec(variable, typedTypes, _) =>
+      expandAndCheckStar(typedTypes, env).map(declaredType =>
+        env.copy(values = env.values + (variable -> declaredType)))
 
     case AST.TopImport(path) =>
       Left(s"Unresolved import: $path")
 
-    case AST.TopType(variable, params, alias) => for {
-      _ <- Either.cond(
-        !env.typeVars.contains(variable) && !env.typeAliases.contains(variable) && !env.dataTypes.contains(variable),
-        (),
-        s"Type alias ${variable.name} is already defined"
-      )
-      _ <- Either.cond(params.map(_._1).distinct.length == params.length, (), s"Type alias ${variable.name} has duplicate parameters")
-      _ <- Either.cond(params.forall { case (p, _) => !env.typeVars.contains(p) }, (), s"Type alias ${variable.name} has a parameter that is already defined")
-      aliasEnv = env.copy(typeVars = env.typeVars ++ params)
-      typedAlias <- alias.cata(tcAlg).run(aliasEnv)
-      expandedAlias <- expandAndCheckStar(typedAlias, aliasEnv)
-    } yield (topTypeT(variable, params, typedAlias), env.copy(typeAliases = env.typeAliases + (variable -> TypeAlias(params, expandedAlias))))
+    case AST.TopType(variable, params, typedAlias) =>
+      val aliasEnv = env.copy(typeVars = env.typeVars ++ params)
+      expandAndCheckStar(typedAlias, aliasEnv).map(expandedAlias =>
+        env.copy(typeAliases = env.typeAliases + (variable -> TypeAlias(params, expandedAlias))))
 
-    case AST.TopData(variable, params, constructors, recursive) => for {
-      _ <- Either.cond(
-        !env.typeVars.contains(variable) && !env.typeAliases.contains(variable) && !env.dataTypes.contains(variable),
-        (),
-        s"Data type ${variable.name} is already defined"
-      )
-      _ <- Either.cond(params.map(_._1).distinct.length == params.length, (), s"Data type ${variable.name} has duplicate parameters")
-      _ <- Either.cond(params.forall { case (p, _) => !env.typeVars.contains(p) }, (), s"Data type ${variable.name} has a parameter that is already defined")
-      constructorNames = constructors.map(_.name)
-      _ <- Either.cond(constructorNames.distinct.length == constructorNames.length, (), s"Data type ${variable.name} has duplicate constructors")
-      _ <- Either.cond(
-        constructorNames.forall(name => !env.values.contains(name) && !env.constructors.contains(name)),
-        (),
-        s"Data type ${variable.name} has a constructor that is already defined"
-      )
-      placeholder = DataDef(params, Seq.empty, recursive)
-      fieldEnv = env.copy(typeVars = env.typeVars ++ params, dataTypes = env.dataTypes + (variable -> placeholder))
-      typedConstructors <- constructors.toList.traverse { c =>
-        c.fields.toList.traverse(field => field.cata(tcAlg).run(fieldEnv)).map(fs => DataConstructor(c.name, fs))
-      }
-      expandedConstructors <- typedConstructors.zipWithIndex.toList.traverse { case (c, tag) =>
-        c.fields.toList.traverse(field => expandAndCheckStar(field, fieldEnv)).map(fs => ConstructorDef(c.name, variable, fs, tag))
-      }
-      _ <- Either.cond(
-        recursive || !expandedConstructors.exists(_.fields.exists(field => containsDataApplicationOf(field, variable))),
-        (),
-        s"Recursive data type ${variable.name} must be declared with data rec"
-      )
-      dataDef = DataDef(params, expandedConstructors, recursive)
-      constructorDefs = constructorNames.zip(expandedConstructors).toMap
-      constructorTypes = constructorNames.zip(expandedConstructors).map { case (name, c) =>
-        name -> constructorType(variable, params, c.fields)
-      }.toMap
-      nextEnv = env.copy(
+    case AST.TopData(variable, params, typedConstructors, recursive) =>
+      val placeholder = DataDef(params, Seq.empty, recursive)
+      val fieldEnv = env.copy(typeVars = env.typeVars ++ params, dataTypes = env.dataTypes + (variable -> placeholder))
+      for {
+        expandedConstructors <- typedConstructors.zipWithIndex.toList.traverse { case (c, tag) =>
+          c.fields.toList.traverse(field => expandAndCheckStar(field, fieldEnv)).map(fs => ConstructorDef(c.name, variable, fs, tag))
+        }
+        _ <- Either.cond(
+          recursive || !expandedConstructors.exists(_.fields.exists(field => containsDataApplicationOf(field, variable))),
+          (),
+          s"Recursive data type ${variable.name} must be declared with data rec"
+        )
+        dataDef = DataDef(params, expandedConstructors, recursive)
+        constructorNames = typedConstructors.map(_.name)
+        constructorDefs = constructorNames.zip(expandedConstructors).toMap
+        constructorTypes = constructorNames.zip(expandedConstructors).map { case (name, c) =>
+          name -> constructorType(variable, params, c.fields)
+        }.toMap
+      } yield env.copy(
         values = env.values ++ constructorTypes,
         dataTypes = env.dataTypes + (variable -> dataDef),
         constructors = env.constructors ++ constructorDefs
       )
-    } yield (topDataT(variable, params, typedConstructors, recursive), nextEnv)
+  }
+
+  private def checkMain(env: Env): EitherS[Unit] = env.values.get(Variable("main")) match {
+    case Some(t) if Equivalence.alpha(t, arrowT(unitTypeT, intTypeT)) => Right(())
+    case Some(t) => Left(s"Top-level main must have type unit → i32, actual ${t.show}")
+    case None => Left("Top-level main is not defined")
   }
 
   def validate(prog: Rec[AST.Program.type]): EitherS[TypeRec[AST.Program.type]] = prog.unfix match {
-    case AST.Program(decls) =>
-      decls.foldLeft(Right((Vector.empty[TypeRec[Decl]], Env.empty)): EitherS[(Vector[TypeRec[Decl]], Env)]) {
-        case (acc, decl) => acc.flatMap { case (typedDecls, env) =>
-          checkDecl(decl, env).map { case (typedDecl, nextEnv) => (typedDecls :+ typedDecl, nextEnv) }
-        }
-      }.flatMap { case (typedDecls, env) =>
-        env.values.get(Variable("main")) match {
-          case Some(t) if Equivalence.alpha(t, arrowT(unitTypeT, intTypeT)) =>
-            Right(programT(typedDecls, env))
-          case Some(t) => Left(s"Top-level main must have type unit → i32, actual ${t.show}")
-          case None => Left("Top-level main is not defined")
-        }
-      }
+    case AST.Program(decls) => decls.traverse(checkDecl).run(Env.empty).flatMap { case (env, typedDecls) =>
+      checkMain(env).as(programT(typedDecls, env))
+    }
   }
 
 }

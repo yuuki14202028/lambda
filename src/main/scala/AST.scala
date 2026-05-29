@@ -335,17 +335,18 @@ def freshTypeVariable(base: TypeVariable, used: Set[TypeVariable]): TypeVariable
     .get
 }
 
-def renameTypeVar(from: TypeVariable, to: TypeVariable, in: TypeRec[Type]): TypeRec[Type] = {
-  val algebra: Algebra[TypedAST, TypeRec] = [x] => (he: TypedAST[TypeRec, x]) => he match {
-    case HCofreeT(_, AST.TypeVar(variable)) if variable == from => typeVarT(to)
-    case HCofreeT(_, AST.ForAll(variable, kind, body)) if variable == from => forallTypeT(to, kind, body)
-    case HCofreeT(_, AST.TypeAbs(variable, kind, body)) if variable == from => typeAbsT(to, kind, body)
-    case HCofreeT(ann, ast) => HCofree(ann, ast)
-  }
-  in.cata(algebra)
-}
-
 def substType(target: TypeVariable, replace: TypeRec[Type], in: TypeRec[Type]): TypeRec[Type] = {
+
+  def renameTypeVar(from: TypeVariable, to: TypeVariable, in: TypeRec[Type]): TypeRec[Type] = {
+    val algebra: Algebra[TypedAST, TypeRec] = [x] => (he: TypedAST[TypeRec, x]) => he match {
+      case HCofreeT(_, AST.TypeVar(variable)) if variable == from => typeVarT(to)
+      case HCofreeT(_, AST.ForAll(variable, kind, body)) if variable == from => forallTypeT(to, kind, body)
+      case HCofreeT(_, AST.TypeAbs(variable, kind, body)) if variable == from => typeAbsT(to, kind, body)
+      case HCofreeT(ann, ast) => HCofree(ann, ast)
+    }
+    in.cata(algebra)
+  }
+
   val replaceFreeVars = freeTypeVars(replace)
 
   def rebind(variable: TypeVariable, body: TypeRec[Type]): (TypeVariable, TypeRec[Type]) = {
