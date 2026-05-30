@@ -8,35 +8,22 @@ def main(args: String*): Unit = {
   val asmPath = args.drop(1).headOption.map(Paths.get(_)).getOrElse(Paths.get("build/out.s"))
   val src = Files.readString(srcPath)
 
-  ParserAST.programParser.parseAll(src) match {
-    case Left(err) =>
-      Console.err.println(s"Parse error: $err")
-      sys.exit(1)
+  val result = for {
+    ast <- ParserAST.programParser.parseAll(src).left.map(err => s"Parse error: $err")
+    resolved <- ImportResolver.resolve(ast, srcPath)
+    _ = println(resolved.show)
+    typed <- TAnalyser.validate(resolved).left.map(err => s"Type error: $err")
+    encoded <- ChurchEncoder.encode(typed).left.map(err => s"Encode error: $err")
+  } yield encoded
 
-    case Right(ast) =>
-      val resolved = ImportResolver.resolve(ast, srcPath) match {
-        case Left(err) =>
-          Console.err.println(err)
-          sys.exit(1)
-        case Right(resolved) => resolved
-      }
-      println(resolved.show)
-      val typed = TAnalyser.validate(resolved) match {
-        case Left(err) =>
-          Console.err.println(s"Type error: $err")
-          sys.exit(1)
-        case Right(typed) => typed
-      }
-      val encoded = ChurchEncoder.encode(typed) match {
-        case Left(err) =>
-          Console.err.println(s"Encode error: $err")
-          sys.exit(1)
-        case Right(encoded) => encoded
-      }
+  result match {
+    case Left(err) => Console.err.println(err)
+    case Right(encoded) => {
       println(eraseAnn(encoded).show)
       val asm = Generator.generate(encoded)
       val outDir = asmPath.getParent
       if (outDir != null) Files.createDirectories(outDir)
       Files.writeString(asmPath, asm)
+    }
   }
 }
