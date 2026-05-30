@@ -483,8 +483,7 @@ object Generator {
       ) ++ body ++ epilogue
     )
 
-  private val genAlg: RAlgebra[TypedAST, TypeRec, GenCode] = [x] =>
-    (he: TypedAST[Child, x]) => he.ast match {
+  private val genAlg: RAlgebra[TypedAST, TypeRec, GenCode] = [x] => he => he.ast match {
     case AST.Num(v, t) => pure(loadNum(v, t))
     case AST.Char(v) => pure(loadImm32(v.toInt))
     case AST.StringLit(v) => for {

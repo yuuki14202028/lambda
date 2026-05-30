@@ -277,8 +277,7 @@ def destructForAllK(t: TypeRec[Type]): Option[(TypeVariable, Kind, TypeRec[Type]
 }
 
 def freeTypeVars(t: Rec[Type]): Set[TypeVariable] = {
-  type FV[I] = Set[TypeVariable]
-  val alg: Algebra[AST, FV] = [x] => (node: AST[FV, x]) => node match {
+  val alg: Algebra[AST, [I] =>> Set[TypeVariable]] = [x] => node => node match {
     case AST.TypeVar(v) => Set(v)
     case AST.ForAll(v, _, body) => body - v
     case AST.Arrow(from, to) => from ++ to
@@ -292,8 +291,7 @@ def freeTypeVars(t: Rec[Type]): Set[TypeVariable] = {
 def freeTypeVars(t: TypeRec[Type]): Set[TypeVariable] = freeTypeVars(eraseAnn(t))
 
 def freeVars(expr: Rec[Expr]): Set[Variable] = {
-  type FV[I] = Set[Variable]
-  val alg: Algebra[AST, FV] = [x] => (node: AST[FV, x]) => node match {
+  val alg: Algebra[AST, [I] =>> Set[Variable]] = [x] => node => node match {
     case AST.Var(variable) => Set(variable)
     case AST.Abs(variable, _, body) => body - variable
     case AST.TyAbs(_, _, body) => body
@@ -338,7 +336,7 @@ def freshTypeVariable(base: TypeVariable, used: Set[TypeVariable]): TypeVariable
 def substType(target: TypeVariable, replace: TypeRec[Type], in: TypeRec[Type]): TypeRec[Type] = {
 
   def renameTypeVar(from: TypeVariable, to: TypeVariable, in: TypeRec[Type]): TypeRec[Type] = {
-    val algebra: Algebra[TypedAST, TypeRec] = [x] => (he: TypedAST[TypeRec, x]) => he match {
+    val algebra: Algebra[TypedAST, TypeRec] = [x] => he => he match {
       case HCofreeT(_, AST.TypeVar(variable)) if variable == from => typeVarT(to)
       case HCofreeT(_, AST.ForAll(variable, kind, body)) if variable == from => forallTypeT(to, kind, body)
       case HCofreeT(_, AST.TypeAbs(variable, kind, body)) if variable == from => typeAbsT(to, kind, body)
@@ -356,7 +354,7 @@ def substType(target: TypeVariable, replace: TypeRec[Type], in: TypeRec[Type]): 
     } else (variable, body)
   }
 
-  val coalg: ApoCoalgebra[TypedAST, TypeRec] = [x] => (seed: TypeRec[x]) => seed.project match {
+  val coalg: ApoCoalgebra[TypedAST, TypeRec] = [x] => seed => seed.project match {
     case AST.TypeVar(variable) if variable == target => Left(replace)
     case AST.ForAll(variable, _, _) if variable == target => Left(seed)
     case AST.TypeAbs(variable, _, _) if variable == target => Left(seed)
@@ -401,22 +399,20 @@ def operatorTypeName(t: TypeRec[Type]): Option[String] = {
 
 def collectTypeApps(t: TypeRec[Type]): (TypeRec[Type], Seq[TypeRec[Type]]) = {
   type Collected[I] = (TypeRec[I], Seq[TypeRec[Type]])
-  val alg: RAlgebra[TypedAST, TypeRec, Collected] = [x] =>
-    (he: TypedAST[[y] =>> (TypeRec[y], Collected[y]), x]) => he match {
-      case HCofreeT(_, AST.TypeApp(function, argument)) =>
-        val (_, (head, args)) = function
-        val (origArg, _) = argument
-        (head, args :+ origArg)
-      case HCofreeT(ann, node) =>
-        val self = HCofree(ann, paraOriginals[AST, TypeAnn, Collected, x](node))
-        (self, Seq.empty)
-    }
+  val alg: RAlgebra[TypedAST, TypeRec, Collected] = [x] => he => he match {
+    case HCofreeT(_, AST.TypeApp(function, argument)) =>
+      val (_, (head, args)) = function
+      val (origArg, _) = argument
+      (head, args :+ origArg)
+    case HCofreeT(ann, node) =>
+      val self = HCofree(ann, paraOriginals[AST, TypeAnn, Collected, x](node))
+      (self, Seq.empty)
+  }
   t.para(alg)
 }
 
 def isDataApplicationOf(t: Rec[Type], owner: TypeVariable): Boolean = {
-  type FV[I] = Boolean
-  val alg: Algebra[AST, FV] = [x] => (node: AST[FV, x]) => node match {
+  val alg: Algebra[AST, [I] =>> Boolean] = [x] => node => node match {
     case AST.TypeVar(variable) => variable == owner
     case AST.TypeApp(headIsOwner, _) => headIsOwner
     case _ => false
@@ -427,8 +423,7 @@ def isDataApplicationOf(t: Rec[Type], owner: TypeVariable): Boolean = {
 def isDataApplicationOf(t: TypeRec[Type], owner: TypeVariable): Boolean = isDataApplicationOf(eraseAnn(t), owner)
 
 def containsDataApplicationOf(t: Rec[Type], owner: TypeVariable): Boolean = {
-  type FV[I] = Boolean
-  val alg: Algebra[AST, FV] = [x] => (node: AST[FV, x]) => node match {
+  val alg: Algebra[AST, [I] =>> Boolean] = [x] => node => node match {
     case AST.TypeVar(variable) => variable == owner
     case AST.Arrow(from, to) => from || to
     case AST.ForAll(_, _, body) => body

@@ -5,7 +5,7 @@ object Equivalence {
   def alpha(left: TypeRec[Type], right: TypeRec[Type]): Boolean = {
     type Bound = (Map[TypeVariable, TypeVariable], Map[TypeVariable, TypeVariable])
     type Eq[I] = Bound => TypeRec[I] => Boolean
-    val alg: Algebra[TypedAST, Eq] = [x] => (he: TypedAST[Eq, x]) => bound => other =>
+    val alg: Algebra[TypedAST, Eq] = [x] => he => bound => other => {
       val (l2r, r2l) = bound
       (he.ast, other.project) match {
         case (AST.Primitive(ln), AST.Primitive(rn)) => ln == rn
@@ -23,11 +23,12 @@ object Equivalence {
         case (AST.TypeApp(lf, la), AST.TypeApp(rf, ra)) => lf(bound)(rf) && la(bound)(ra)
         case _ => false
       }
+    }
     left.cata(alg)((Map.empty, Map.empty))(right)
   }
 
   def normalize(t: TypeRec[Type]): TypeRec[Type] = {
-    val alg: Algebra[TypedAST, TypeRec] = [x] => (he: TypedAST[TypeRec, x]) => he match {
+    val alg: Algebra[TypedAST, TypeRec] = [x] => he => he match {
       case HCofreeT(ann, AST.TypeApp(function, argument)) =>
         function.project match {
           case AST.TypeAbs(variable, _, body) =>

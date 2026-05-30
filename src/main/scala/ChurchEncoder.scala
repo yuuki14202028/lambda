@@ -77,8 +77,7 @@ object ChurchEncoder {
     }
   }
 
-  private val typeEncoderAlg: RAlgebra[TypedAST, TypeRec, Encoded] = [x] =>
-    (he: TypedAST[Child, x]) => he.ast match {
+  private val typeEncoderAlg: RAlgebra[TypedAST, TypeRec, Encoded] = [x] => he => he.ast match {
     case AST.TypeVar(variable) => ask.flatMap { env =>
       env.dataTypes.get(variable) match {
         case Some(dataDef) => etaExpandDataType(variable, dataDef, Nil)

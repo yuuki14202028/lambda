@@ -89,8 +89,11 @@ extension [I](t: Rec[I]) {
   def show: String = t.cata(showAlg)
 }
 
-val typedShowAlg: Algebra[TypedAST, ShowResult] = [x] => (he: TypedAST[ShowResult, x]) => {
-  val shown = showAlg[x](he.ast)
+val typedShowAlg: Algebra[TypedAST, ShowResult] = [x] => he => {
+  he match {
+    case HCofreeT(ExprAnn(exprType), AST.TypeApp(function, argument)) => {}
+  }
+  val shown = showAlg(he.ast)
   he.ann match {
     case ProgramAnn(_)     => shown
     case DeclAnn           => shown
