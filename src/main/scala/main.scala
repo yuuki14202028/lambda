@@ -14,12 +14,12 @@ def main(args: String*): Unit = {
     _ = println(resolved.show)
     typed <- TAnalyser.validate(resolved).left.map(err => s"Type error: $err")
     encoded <- ChurchEncoder.encode(typed).left.map(err => s"Encode error: $err")
+    _ = println(eraseAnn(encoded).show)
   } yield encoded
 
   result match {
     case Left(err) => Console.err.println(err)
     case Right(encoded) => {
-      println(eraseAnn(encoded).show)
       val asm = Generator.generate(encoded)
       val outDir = asmPath.getParent
       if (outDir != null) Files.createDirectories(outDir)
