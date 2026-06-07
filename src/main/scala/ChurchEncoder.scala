@@ -102,7 +102,7 @@ object ChurchEncoder {
     case _ => rebuildNode(he.ann, he.ast)
   }
 
-  private def encodeType(t: TypeRec[Type]): Encoded[Type] =
+  private def encodeType(t: TypeRec[Type]): Encode[TypeRec[Type]] =
     t.para(typeEncoderAlg)
 
   private def mkTyAbs(variable: TypeVariable, kind: Kind, body: TypeRec[Expr]): TypeRec[Expr] =
@@ -129,7 +129,7 @@ object ChurchEncoder {
     encodeType(nominalType)
   }
 
-  private def handlerType(owner: TypeVariable, args: Seq[TypeRec[Type]], dataDef: DataDef, constructor: ConstructorDef, resultType: TypeRec[Type]): Encoded[Type] =
+  private def handlerType(owner: TypeVariable, args: Seq[TypeRec[Type]], dataDef: DataDef, constructor: ConstructorDef, resultType: TypeRec[Type]): Encode[TypeRec[Type]] =
     encodeConstructorFields(owner, args, dataDef, constructor).map { encodedFields =>
       thunkIfNullary(constructor.fields, encodedFields.foldRight(resultType)(arrowT), resultType)
     }
@@ -140,8 +140,8 @@ object ChurchEncoder {
     resultType = typeVarT(resultVar)
     fieldVars = constructor.fields.indices.map(i => Variable(s"__${constructor.name.name}_field_$i"))
     handlerVars = dataDef.constructors.indices.map(i => Variable(s"__${constructor.name.name}_case_$i"))
-    fieldTypes <- constructor.fields.map(field => substMany(dataDef.paramVars, typeArgs, field)).traverse(t => encodeType(t): Encode[TypeRec[Type]])
-    handlerTypes <- dataDef.constructors.toList.traverse((c: ConstructorDef) => handlerType(owner, typeArgs, dataDef, c, resultType): Encode[TypeRec[Type]])
+    fieldTypes <- constructor.fields.map(field => substMany(dataDef.paramVars, typeArgs, field)).traverse(encodeType)
+    handlerTypes <- dataDef.constructors.traverse(c => handlerType(owner, typeArgs, dataDef, c, resultType))
     selectedHandler = varrType(handlerVars(constructor.tag), handlerTypes(constructor.tag))
     thunkedHandler = if (constructor.fields.isEmpty) appT(resultType, selectedHandler, unitLitT(unitTypeT)) else selectedHandler
     appliedHandler = fieldVars.zip(fieldTypes).zipWithIndex.foldLeft(thunkedHandler) {
@@ -245,7 +245,7 @@ object ChurchEncoder {
       encodedScrutinee <- scrutinee.encoded
       dataApp <- ask.flatMap(env => lift(dataTypeApplication(scrutType, env.dataTypes)(_.paramVars)))
       (owner, dataDef, args) = dataApp
-      handlerTypes <- dataDef.constructors.traverse((c: ConstructorDef) => handlerType(owner, args, dataDef, c, resultType): Encode[TypeRec[Type]])
+      handlerTypes <- dataDef.constructors.traverse(c => handlerType(owner, args, dataDef, c, resultType))
       resultApplied = tyAppT(handlerTypes.foldRight(resultType)(arrowT), encodedScrutinee, resultType)
       handlers <- dataDef.constructors.traverse { constructor =>
         cases.find(_.constructor == constructor.name)
@@ -267,7 +267,7 @@ object ChurchEncoder {
       foldType = arrowT(encodedScrutineeType, resultType)
       foldRef = varrType(foldVariable, foldType)
       foldArgRef = varrType(foldArgument, encodedScrutineeType)
-      handlerTypes <- dataDef.constructors.traverse((c: ConstructorDef) => handlerType(owner, args, dataDef, c, resultType): Encode[TypeRec[Type]])
+      handlerTypes <- dataDef.constructors.traverse(c => handlerType(owner, args, dataDef, c, resultType))
       resultApplied = tyAppT(handlerTypes.foldRight(resultType)(arrowT), foldArgRef, resultType)
       handlers <- dataDef.constructors.traverse { constructor =>
         cases.find(_.constructor == constructor.name)
