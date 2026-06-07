@@ -161,10 +161,9 @@ object TAnalyser {
   private case class TypeExpansion[I](value: EitherS[TypeRec[I]], spine: Option[TypeSpine] = None)
   private type Expand[I] = Env => TypeExpansion[I]
 
-  private def rebuild[I](ann: TypeAnn[I], node: AST[[y] =>> (TypeRec[y], Expand[y]), I], env: Env): EitherS[TypeRec[I]] =
-    summon[HTraverse[AST]]
-      .traverse(node)([y] => (child: (TypeRec[y], Expand[y])) => child._2(env).value)
-      .map(HCofree(ann, _))
+  private def rebuild[I](ann: TypeAnn[I], node: AST[[y] =>> (TypeRec[y], Expand[y]), I], env: Env): EitherS[TypeRec[I]] = {
+    node.htraverse([y] => child => child._2(env).value).map(HCofree(ann, _))
+  }
 
   private def typeNameSpine(variable: TypeVariable): TypeSpine =
     TypeSpine(typeVarT(variable), Seq.empty)
@@ -183,14 +182,12 @@ object TAnalyser {
       case Some(TypeAlias(params, body)) =>
         if (args.isEmpty) Right(aliasAsTypeAbs(params, body))
         else expectArity("Type alias", variable, params.length, args.length) {
-          args.toList.traverse(arg => arg(env).value).map(expandedArgs => substMany(params.map(_._1), expandedArgs, body))
+          args.traverse(arg => arg(env).value).map(expandedArgs => substMany(params.map(_._1), expandedArgs, body))
         }
       case None => env.dataTypes.get(variable) match {
         case Some(DataDef(params, _, _)) =>
-          if (args.length > params.length)
-            arityError("Data type", variable, params.length, args.length)
-          else
-            args.toList.traverse(arg => arg(env).value).map(expandedArgs => applyTypeConstructor(variable, expandedArgs))
+          if (args.length > params.length) arityError("Data type", variable, params.length, args.length)
+          else args.traverse(arg => arg(env).value).map(expandedArgs => applyTypeConstructor(variable, expandedArgs))
         case None => Left(s"Type variable ${variable.name} is not defined")
       }
     }
@@ -200,8 +197,8 @@ object TAnalyser {
     else expandDefinedType(variable, Seq.empty, env)
 
   private def expandHigherKindedVar(variable: TypeVariable, args: Seq[Expand[Type]], env: Env): EitherS[TypeRec[Type]] =
-    args.toList.traverse(arg => arg(env).value).map { expandedArgs =>
-      expandedArgs.foldLeft(typeVarT(variable)) { (acc, arg) => typeAppT(acc, arg) }
+    args.traverse(arg => arg(env).value).map { expandedArgs =>
+      expandedArgs.foldLeft(typeVarT(variable))(typeAppT)
     }
 
   private def expandTypeSpine(spine: Option[TypeSpine], self: TypeRec[Type], env: Env): EitherS[TypeRec[Type]] =
@@ -218,9 +215,9 @@ object TAnalyser {
   private def expandPrimitive(name: String, args: Seq[Expand[Type]], env: Env): EitherS[TypeRec[Type]] =
     BuiltinTypes.arity(name) match {
       case Some(expected) if expected == args.length =>
-        args.toList.traverse(arg => arg(env).value).map(expandedArgs =>
-          expandedArgs.foldLeft(primitiveT(name)) { (acc, arg) => typeAppT(acc, arg) }
-        )
+        args.traverse(arg => arg(env).value).map { expandedArgs =>
+          expandedArgs.foldLeft(primitiveT(name))(typeAppT)
+        }
       case Some(expected) =>
         Left(s"Primitive type $name expects $expected arguments, got ${args.length}")
       case None =>
@@ -282,7 +279,7 @@ object TAnalyser {
 
   private val tcAlg: Algebra[AST, TC] = [x] => (node: AST[TC, x]) => node match {
 
-    case AST.Program(decls) => decls.toList.traverse(identity).map(decls => programT(decls))
+    case AST.Program(decls) => decls.traverse(identity).map(decls => programT(decls))
 
     case AST.TopLet(variable, types, value) => for {
       typedTypes <- types
@@ -328,8 +325,8 @@ object TAnalyser {
       )
       placeholder = DataDef(params, Seq.empty, recursive)
       fieldEnv = env.copy(typeVars = env.typeVars ++ params, dataTypes = env.dataTypes + (variable -> placeholder))
-      typedConstructors <- constructors.toList.traverse { c =>
-        c.fields.toList.traverse(field => field.local((_: Env) => fieldEnv)).map(fs => DataConstructor(c.name, fs))
+      typedConstructors <- constructors.traverse { c =>
+        c.fields.traverse(field => field.local((_: Env) => fieldEnv)).map(fs => DataConstructor(c.name, fs))
       }
     } yield topDataT(variable, params, typedConstructors, recursive)
 
@@ -395,12 +392,12 @@ object TAnalyser {
       )
       placeholder = DataDef(params, Seq.empty, recursive)
       fieldEnv = env.copy(typeVars = env.typeVars ++ params, dataTypes = env.dataTypes + (variable -> placeholder))
-      typedConstructors <- constructors.toList.traverse { c =>
-        c.fields.toList.traverse(field => field.local((_: Env) => fieldEnv)).map(fs => DataConstructor(c.name, fs))
+      typedConstructors <- constructors.traverse { c =>
+        c.fields.traverse(field => field.local((_: Env) => fieldEnv)).map(fs => DataConstructor(c.name, fs))
       }
       expandedConstructors <- lift {
-        typedConstructors.zipWithIndex.toList.traverse { case (c, tag) =>
-          c.fields.toList.traverse(field => expandAndCheckStar(field, fieldEnv)).map(fs => ConstructorDef(c.name, variable, fs, tag))
+        typedConstructors.zipWithIndex.traverse { case (c, tag) =>
+          c.fields.traverse(field => expandAndCheckStar(field, fieldEnv)).map(fs => ConstructorDef(c.name, variable, fs, tag))
         }
       }
       _ <- guard(
@@ -428,7 +425,7 @@ object TAnalyser {
       caseNames = cases.map(_.constructor)
       _ <- guard(caseNames.distinct.length == caseNames.length, s"Match has duplicate cases")
       expectedConstructors <- lift {
-        dataDef.constructors.toList.traverse { cdef =>
+        dataDef.constructors.traverse { cdef =>
           env.constructors.collectFirst { case (name, c) if c == cdef => name }
             .toRight(s"Constructor for data type ${dataName.name} is not defined")
         }
@@ -441,7 +438,7 @@ object TAnalyser {
           s"Non-exhaustive or invalid match: missing ${missing.map(_.name).mkString(", ")}, invalid ${extra.map(_.name).mkString(", ")}"
         )
       }
-      typedCases <- cases.toList.traverse { matchCase =>
+      typedCases <- cases.traverse { matchCase =>
         val cdef = env.constructors(matchCase.constructor)
         val fieldTypes = dataDef.paramVars.zip(typeArgs).foldLeft(cdef.fields) { case (fields, (param, arg)) =>
           fields.map(field => substType(param, arg, field))
@@ -472,7 +469,7 @@ object TAnalyser {
       caseNames = cases.map(_.constructor)
       _ <- guard(caseNames.distinct.length == caseNames.length, s"Fold has duplicate cases")
       expectedConstructors <- lift {
-        dataDef.constructors.toList.traverse { cdef =>
+        dataDef.constructors.traverse { cdef =>
           env.constructors.collectFirst { case (name, c) if c == cdef => name }
             .toRight(s"Constructor for data type ${dataName.name} is not defined")
         }
@@ -485,7 +482,7 @@ object TAnalyser {
           s"Non-exhaustive or invalid fold: missing ${missing.map(_.name).mkString(", ")}, invalid ${extra.map(_.name).mkString(", ")}"
         )
       }
-      typedCases <- cases.toList.traverse { foldCase =>
+      typedCases <- cases.traverse { foldCase =>
         val cdef = env.constructors(foldCase.constructor)
         val fieldTypes = dataDef.paramVars.zip(typeArgs).foldLeft(cdef.fields) { case (fields, (param, arg)) =>
           fields.map(field => substType(param, arg, field))
@@ -549,7 +546,7 @@ object TAnalyser {
     case AST.UnitLit() => okT(unitLitT(unitTypeT))
 
     case AST.Block(discarded, result) => for {
-      typedDiscarded <- discarded.toList.traverse(identity)
+      typedDiscarded <- discarded.traverse(identity)
       typedResult <- result.traverse(identity)
       resultType = typedResult.map(typeOf).getOrElse(unitTypeT)
     } yield blockT(resultType, typedDiscarded, typedResult)
@@ -561,7 +558,7 @@ object TAnalyser {
     } yield resolved
 
     case AST.Intrinsic(op, args) => for {
-      typedArgs <- args.toList.traverse(identity)
+      typedArgs <- args.traverse(identity)
       checked <- checkIntrinsic(op, typedArgs)
     } yield checked
 
@@ -638,8 +635,8 @@ object TAnalyser {
       val placeholder = DataDef(params, Seq.empty, recursive)
       val fieldEnv = env.copy(typeVars = env.typeVars ++ params, dataTypes = env.dataTypes + (variable -> placeholder))
       for {
-        expandedConstructors <- typedConstructors.zipWithIndex.toList.traverse { case (c, tag) =>
-          c.fields.toList.traverse(field => expandAndCheckStar(field, fieldEnv)).map(fs => ConstructorDef(c.name, variable, fs, tag))
+        expandedConstructors <- typedConstructors.zipWithIndex.traverse { case (c, tag) =>
+          c.fields.traverse(field => expandAndCheckStar(field, fieldEnv)).map(fs => ConstructorDef(c.name, variable, fs, tag))
         }
         _ <- Either.cond(
           recursive || !expandedConstructors.exists(_.fields.exists(field => containsDataApplicationOf(field, variable))),

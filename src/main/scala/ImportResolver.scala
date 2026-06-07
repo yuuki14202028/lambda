@@ -17,25 +17,23 @@ object ImportResolver {
 
   private def resolveDecl(decl: Rec[Decl], baseDir: Path, seen: Set[Path]): ResolveResult[(Vector[Rec[Decl]], Set[Path])] =
     decl.unfix match {
-      case AST.TopImport(importPath) =>
+      case AST.TopImport(importPath) => {
         val path = resolvePath(baseDir, importPath)
         if (seen.contains(path)) Right(Vector.empty -> seen)
         else resolveFile(path, seen + path)
-      case _ =>
-        Right(Vector(decl) -> seen)
+      }
+      case _ => Right(Vector(decl) -> seen)
     }
 
-  private def resolveFile(path: Path, seen: Set[Path]): ResolveResult[(Vector[Rec[Decl]], Set[Path])] =
-    for {
-      src <- try Right(Files.readString(path)) catch {
-        case e: Exception => Left(s"Import error: ${path}: ${e.getMessage}")
-      }
-      ast <- ParserAST.programParser.parseAll(src).left.map(err => s"Parse error in import ${path}: $err")
-      result <- ast.unfix match {
-        case AST.Program(decls) =>
-          resolveDecls(decls.toVector, path.getParent, seen)
-      }
-    } yield result
+  private def resolveFile(path: Path, seen: Set[Path]): ResolveResult[(Vector[Rec[Decl]], Set[Path])] = for {
+    src <- try Right(Files.readString(path)) catch {
+      case e: Exception => Left(s"Import error: $path: ${e.getMessage}")
+    }
+    ast <- ParserAST.programParser.parseAll(src).left.map(err => s"Parse error in import $path: $err")
+    result <- ast.unfix match {
+      case AST.Program(decls) => resolveDecls(decls.toVector, path.getParent, seen)
+    }
+  } yield result
 
   private def resolveDecls(decls: Vector[Rec[Decl]], baseDir: Path, seen: Set[Path]): ResolveResult[(Vector[Rec[Decl]], Set[Path])] =
     decls.foldLeft(Right(Vector.empty[Rec[Decl]] -> seen): ResolveResult[(Vector[Rec[Decl]], Set[Path])]) {

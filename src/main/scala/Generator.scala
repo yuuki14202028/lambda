@@ -11,9 +11,9 @@ object Generator {
   }
   case class HeapBinding(name: String) extends Binding
   case class StackBinding(name: String, offset: Int) extends Binding
-  case class Env(values: List[Binding], directFunctions: Map[String, Label]) {
-    def withHeap(name: String): Env = copy(values = HeapBinding(name) :: values)
-    def withStack(name: String, offset: Int): Env = copy(values = StackBinding(name, offset) :: values)
+  case class Env(values: Seq[Binding], directFunctions: Map[String, Label]) {
+    def withHeap(name: String): Env = copy(values = HeapBinding(name) +: values)
+    def withStack(name: String, offset: Int): Env = copy(values = StackBinding(name, offset) +: values)
     def withDirectFunction(name: String, label: Label): Env = copy(directFunctions = directFunctions.updated(name, label))
   }
 
@@ -735,7 +735,7 @@ object Generator {
   }
 
   private def render(program: AssemblyProgram): String = {
-    val externs = program.externs.toList.sorted.map(sym => Directive("extern", Vector(s"_$sym")).render)
+    val externs = program.externs.toSeq.sorted.map(sym => Directive("extern", Vector(s"_$sym")).render)
     val strings =
       if (program.strings.isEmpty) Nil
       else Directive("section", Vector("__TEXT,__cstring,cstring_literals")).render ::

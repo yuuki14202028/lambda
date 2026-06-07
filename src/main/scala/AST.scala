@@ -1,7 +1,5 @@
 package com.yuuki14202028
 
-import cats.~>
-
 sealed trait NodeType
 case object ExprNode extends NodeType
 case object TypeNode extends NodeType
@@ -196,11 +194,8 @@ extension[R[_], x](self: TypedAST[R, x]) {
   def ast: AST[R, x] = self.lower
 }
 
-private val eraseAnn: TypeRec ~> Rec = new (TypeRec ~> Rec) {
-  def apply[I](t: TypeRec[I]): Rec[I] = {
-    HFix(summon[HFunctor[AST]].map(t.project)(this))
-  }
-}
+private val eraseAnn: TypeRec ~> Rec =
+  [I] => (t: TypeRec[I]) => HFix(t.project.hmap(eraseAnn))
 
 def programT(decls: Seq[TypeRec[Decl]], env: Env = Env.empty): TypeRec[AST.Program.type] =
   HCofree(ProgramAnn(env), AST.Program(decls))
@@ -404,9 +399,7 @@ def collectTypeApps(t: TypeRec[Type]): (TypeRec[Type], Seq[TypeRec[Type]]) = {
       val (_, (head, args)) = function
       val (origArg, _) = argument
       (head, args :+ origArg)
-    case HCofreeT(ann, node) =>
-      val self = HCofree(ann, paraOriginals[AST, TypeAnn, Collected, x](node))
-      (self, Seq.empty)
+    case HCofreeT(ann, node) => (HCofree(ann, paraOriginals(node)), Seq.empty)
   }
   t.para(alg)
 }

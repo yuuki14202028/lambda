@@ -2,6 +2,7 @@ package com.yuuki14202028
 
 import cats.parse.{Numbers, Parser, Parser0}
 import cats.parse.Rfc5234.{alpha, digit}
+
 object ParserAST {
   private val sp: Parser0[Unit]  = Parser.charIn(" \t\n\r").rep0.void
   private val sp1: Parser0[Unit] = Parser.charIn(" \t").rep0.void
@@ -11,15 +12,15 @@ object ParserAST {
     alpha | digit | Parser.char('_').as('_')
   private val identifier: Parser[String] =
     (identStart ~ identChar.rep0).map { case (head, tail) =>
-      (head :: tail.toList).mkString
+      (head :: tail).mkString
     }
   private val typeIdentifier: Parser[String] =
     (identifier ~ (Parser.char('.') *> identifier).backtrack.rep0).map { case (head, tail) =>
-      (head :: tail.toList).mkString(".")
+      (head :: tail).mkString(".")
     }
   private val importPath: Parser[String] = {
     val plain = Parser.charWhere(ch => ch != '"' && ch != '\n' && ch != '\r')
-    Parser.char('"') *> plain.rep0.map(_.toList.mkString) <* Parser.char('"')
+    Parser.char('"') *> plain.rep0.map(_.mkString) <* Parser.char('"')
   }
 
   lazy val expr: Parser[Rec[Expr]] =
@@ -58,16 +59,16 @@ object ParserAST {
     (name ~ types ~ body).map { case ((n, t), b) => abs(Variable(n), t, b) }
   }
 
-  private def functionType(params: List[(String, Rec[Type])], returnType: Rec[Type]): Rec[Type] =
+  private def functionType(params: Seq[(String, Rec[Type])], returnType: Rec[Type]): Rec[Type] =
     params.map(_._2).foldRight(returnType)(arrow)
 
-  private def functionValue(params: List[(String, Rec[Type])], value: Rec[Expr]): Rec[Expr] =
+  private def functionValue(params: Seq[(String, Rec[Type])], value: Rec[Expr]): Rec[Expr] =
     params.foldRight(value) { case ((name, types), body) => abs(Variable(name), types, body) }
 
-  private def polymorphicType(params: List[(TypeVariable, Kind)], bodyType: Rec[Type]): Rec[Type] =
+  private def polymorphicType(params: Seq[(TypeVariable, Kind)], bodyType: Rec[Type]): Rec[Type] =
     params.foldRight(bodyType) { case ((v, k), body) => forallType(v, k, body) }
 
-  private def polymorphicValue(params: List[(TypeVariable, Kind)], value: Rec[Expr]): Rec[Expr] =
+  private def polymorphicValue(params: Seq[(TypeVariable, Kind)], value: Rec[Expr]): Rec[Expr] =
     params.foldRight(value) { case ((v, k), body) => tyAbs(v, k, body) }
 
   private lazy val kindedTypeParamP: Parser[(TypeVariable, Kind)] = {
@@ -77,14 +78,14 @@ object ParserAST {
     }
   }
 
-  private lazy val typeParamsP: Parser[List[(TypeVariable, Kind)]] =
-    kindedTypeParamP.rep.map(_.toList)
+  private lazy val typeParamsP: Parser0[Seq[(TypeVariable, Kind)]] =
+    kindedTypeParamP.rep0
 
-  private lazy val functionParamsP: Parser[List[(String, Rec[Type])]] = {
-    val namedParam = ((identifier <* sp <* Parser.char(':') <* sp) ~ typeP)
+  private lazy val functionParamsP: Parser0[Seq[(String, Rec[Type])]] = {
+    val namedParam = (identifier <* sp <* Parser.char(':') <* sp) ~ typeP
     val unitParam = Parser.char('(') *> sp *> Parser.char(')').as(("_", unitType))
     val param = unitParam.backtrack | (Parser.char('(') *> sp *> namedParam <* sp <* Parser.char(')'))
-    param.rep.map(_.toList)
+    param.rep0
   }
 
   private lazy val letExprP: Parser[Rec[Expr]] = {
@@ -113,8 +114,8 @@ object ParserAST {
   private lazy val valueP: Parser0[Rec[Expr]]   = sp *> Parser.char('=') *> sp *> expr
 
   private lazy val binding: Parser[(Boolean, Variable, Rec[Type], Rec[Expr])] = {
-    val typeParams = (sp.with1.soft *> typeParamsP).?.map(_.getOrElse(Nil))
-    val params = (sp.with1.soft *> functionParamsP).?.map(_.getOrElse(Nil))
+    val typeParams = sp *> typeParamsP
+    val params = sp *> functionParamsP
     (letHead ~ typeParams ~ params ~ typeAnnP ~ valueP).map {
       case (((((recursive, name), typeParams), params), returnType), value) =>
         (recursive, Variable(name),
@@ -126,7 +127,7 @@ object ParserAST {
   private lazy val topImportP: Parser[Rec[Decl]] =
     (Parser.string("import") *> gap *> importPath).map(topImport)
 
-  private lazy val typeBinding: Parser[(TypeVariable, List[(TypeVariable, Kind)], Rec[Type])] = {
+  private lazy val typeBinding: Parser[(TypeVariable, Seq[(TypeVariable, Kind)], Rec[Type])] = {
     val name = Parser.string("type") *> gap *> identifier
     val params = kindedTypeParamP.rep0
     val alias = sp *> Parser.char('=') *> sp *> typeP
@@ -151,7 +152,7 @@ object ParserAST {
     }
   }
 
-  private lazy val dataBinding: Parser[(Boolean, TypeVariable, List[(TypeVariable, Kind)], List[DataConstructor[[x] =>> Rec[x]]])] = {
+  private lazy val dataBinding: Parser[(Boolean, TypeVariable, Seq[(TypeVariable, Kind)], Seq[DataConstructor[[x] =>> Rec[x]]])] = {
     val recursive = Parser.string("data") *> gap *> (Parser.string("rec").as(true) <* gap).?.map(_.getOrElse(false))
     val name = identifier
     val params = kindedTypeParamP.rep0
@@ -375,10 +376,7 @@ object ParserAST {
     val semi = sp *> Parser.char(';') <* sp
     val discarded = (Parser.defer(expr) <* semi).backtrack.rep0
     val result = Parser.defer(expr).?
-    (Parser.char('{') *> sp *> discarded ~ result <* sp <* Parser.char('}')).map {
-      case (discarded, result) =>
-        block(discarded.toList, result)
-    }
+    (Parser.char('{') *> sp *> discarded ~ result <* sp <* Parser.char('}')).map(block)
   }
 
   val foreignP: Parser[Rec[Expr]] = {
@@ -438,7 +436,7 @@ object ParserAST {
       Parser.char('0').as('\u0000')
     )
     val plain = Parser.charWhere(ch => ch != '"' && ch != '\\' && ch != '\n' && ch != '\r')
-    (Parser.char('"') *> (escaped | plain).rep0 <* Parser.char('"')).map(chars => stringLit(chars.toList.mkString))
+    (Parser.char('"') *> (escaped | plain).rep0 <* Parser.char('"')).map(chars => stringLit(chars.mkString))
   }
 
   val boolP: Parser[Rec[Expr]] =

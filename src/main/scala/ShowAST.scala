@@ -90,9 +90,6 @@ extension [I](t: Rec[I]) {
 }
 
 val typedShowAlg: Algebra[TypedAST, ShowResult] = [x] => he => {
-  he match {
-    case HCofreeT(ExprAnn(exprType), AST.TypeApp(function, argument)) => {}
-  }
   val shown = showAlg(he.ast)
   he.ann match {
     case ProgramAnn(_)     => shown
