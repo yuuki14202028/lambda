@@ -12,6 +12,41 @@ object ParserAST {
   private val sp1: Parser0[Unit] = Parser.charIn(" \t").rep0.void
   private val gap: Parser[Unit] = Parser.charIn(" \t\n\r").rep.void
 
+  private def spaced(sep: Parser[Unit]): Parser[Unit] = sp.with1 *> sep <* sp
+
+  extension [A](p: Parser[A]) {
+    private infix def -*>[B](right: Parser0[B]): Parser[B] = p *> sp *> right
+    private infix def -+>[B](right: Parser0[B]): Parser[B] = p *> gap *> right
+    private infix def <*-[B](close: Parser0[B]): Parser[A] = p <* sp <* close
+    private def parens: Parser[A] = '(' -*> p <*- ')'
+    private def brackets: Parser[A] = '[' -*> p <*- ']'
+  }
+
+  private val unitParens: Parser[Unit] = '(' -*> ')'
+
+  private def binaryLevel(op: Parser[BinOps], next: => Parser[Rec[Expr]]): Parser[Rec[Expr]] = {
+    val operand = Parser.defer(next)
+    val tail = (sp.with1.soft *> op ~ (sp.with1 *> operand)).rep0
+    (operand ~ tail).map { case (init, ops) =>
+      ops.foldLeft(init) { case (acc, (o, r)) => binop(o, acc, r) }
+    }
+  }
+
+  private def arrowChain[A](atom: Parser[A], whole: => Parser[A])(make: (A, A) => A): Parser[A] = {
+    val arrowTail = sp.with1.soft *> '→' -*> Parser.defer(whole)
+    (atom ~ arrowTail.?).map {
+      case (from, Some(to)) => make(from, to)
+      case (a, None) => a
+    }
+  }
+
+  private def binderP[A](sigil: Char, body: => Parser[A])(make: (TypeVariable, Kind, A) => A): Parser[A] = {
+    val plain = identifier.map(n => (TypeVariable(n), Kind.Star))
+    val annotated = (identifier.map(TypeVariable.apply) ~ (spaced(':') *> kindP)).parens
+    val nameKind = Parser.char(sigil) -*> (annotated.backtrack | plain)
+    (nameKind ~ (spaced('.') *> Parser.defer(body))).map { case ((v, k), b) => make(v, k, b) }
+  }
+
   private val identStart: Parser[Char] = alpha | Parser.char('_').as('_')
   private val identChar: Parser[Char] = alpha | digit | '_'.as('_')
   private val identifier: Parser[String] = (identStart ~ identChar.rep0).map(_ :: _).map(_.mkString)
@@ -25,35 +60,22 @@ object ParserAST {
     Parser.defer(dataLetP | foldP.backtrack | matchP | typeLetP | tyAbsP | absP | letExprP | ifP | logicalOr)
 
 
-  lazy val tyAbsP: Parser[Rec[Expr]] = {
-    val plain = identifier.map(n => (TypeVariable(n), Kind.Star))
-    val annotated = '(' *> sp *> identifier.map(TypeVariable.apply) ~ (sp *> ':' *> sp *> kindP) <* sp <* ')'
-    val nameKind = 'Λ' *> sp *> (annotated.backtrack | plain)
-    val body = sp *> '.' *> sp *> Parser.defer(expr)
-    (nameKind ~ body).map { case ((v, k), b) => tyAbs(v, k, b) }
-  }
+  lazy val tyAbsP: Parser[Rec[Expr]] = binderP('Λ', expr)(tyAbs)
 
   lazy val kindP: Parser[Kind] = Parser.defer(kindArrowP)
 
-  private lazy val kindArrowP: Parser[Kind] = {
-    val arrowTail = sp.with1.soft *> '→' *> sp *> Parser.defer(kindP)
-    (kindAtomP ~ arrowTail.?).map {
-      case (from, Some(to)) => Kind.Arrow(from, to)
-      case (k, None) => k
-    }
-  }
+  private lazy val kindArrowP: Parser[Kind] = arrowChain(kindAtomP, kindP)(Kind.Arrow.apply)
 
   private lazy val kindAtomP: Parser[Kind] = {
     val star = '*'.as(Kind.Star)
-    val parens = '(' *> sp *> Parser.defer(kindArrowP) <* sp <* ')'
-    star | parens
+    star | Parser.defer(kindArrowP).parens
   }
 
   lazy val absP: Parser[Rec[Expr]] = {
-    val name = 'λ' *> sp *> identifier
-    val types = sp *> ':' *> sp *> typeP
-    val body = sp *> '.' *> sp *> Parser.defer(expr)
-    (name ~ types ~ body).map { case ((n, t), b) => abs(Variable(n), t, b) }
+    val name = 'λ' -*> identifier
+    ((name ~ (spaced(':') *> typeP)) ~ (spaced('.') *> Parser.defer(expr))).map {
+      case ((n, t), b) => abs(Variable(n), t, b)
+    }
   }
 
   private def functionType(params: Seq[(String, Rec[Type])], returnType: Rec[Type]): Rec[Type] =
@@ -69,16 +91,16 @@ object ParserAST {
     params.foldRight(value) { case ((v, k), body) => tyAbs(v, k, body) }
 
   private lazy val typeParamP: Parser[(TypeVariable, Kind)] = {
-    val kindAnn = (sp *> ':' *> sp *> kindP).?
-    (Parser.char('[') *> sp *> identifier ~ kindAnn <* sp <* Parser.char(']')).map {
+    val kindAnn = (spaced(':') *> kindP).?
+    (identifier ~ kindAnn).brackets.map {
       case (n, k) => (TypeVariable(n), k.getOrElse(Kind.Star))
     }
   }
 
   private lazy val functionParamsP: Parser0[Seq[(String, Rec[Type])]] = {
-    val namedParam = (identifier <* sp <* ':' <* sp) ~ typeP
-    val unitParam = '(' *> sp *> ')'.as(("_", unitType))
-    val param = unitParam.backtrack | ('(' *> sp *> namedParam <* sp <* ')')
+    val namedParam = identifier ~ (spaced(':') *> typeP)
+    val unitParam = unitParens.as(("_", unitType))
+    val param = unitParam.backtrack | namedParam.parens
     param.rep0
   }
 
@@ -101,10 +123,10 @@ object ParserAST {
     head ~ identifier
   }
 
-  private lazy val inBody: Parser0[Rec[Expr]] = sp *> "in" *> sp *> Parser.defer(expr)
+  private lazy val inBody: Parser0[Rec[Expr]] = spaced("in") *> Parser.defer(expr)
 
-  private lazy val typeAnnP: Parser0[Rec[Type]] = sp *> ':' *> sp *> typeP
-  private lazy val valueP: Parser0[Rec[Expr]]   = sp *> '=' *> sp *> expr
+  private lazy val typeAnnP: Parser0[Rec[Type]] = spaced(':') *> typeP
+  private lazy val valueP: Parser0[Rec[Expr]] = spaced('=') *> expr
 
   private lazy val binding: Parser[(Boolean, Variable, Rec[Type], Rec[Expr])] = {
     val typeParams = sp *> typeParamP.rep0
@@ -119,34 +141,31 @@ object ParserAST {
     }
   }
 
-  private lazy val topImportP: Parser[Rec[Decl]] =
-    ("import" *> gap *> importPath).map(topImport)
+  private lazy val topImportP: Parser[Rec[Decl]] = ("import" -+> importPath).map(topImport)
 
   private lazy val typeBinding: Parser[(TypeVariable, Seq[(TypeVariable, Kind)], Rec[Type])] = {
-    val name = "type" *> gap *> identifier
+    val name = "type" -+> identifier
     val params = typeParamP.rep0
-    val alias = sp *> '=' *> sp *> typeP
-    (name ~ params ~ alias).map { case ((name, params), alias) =>
+    (name ~ params ~ (spaced('=') *> typeP)).map { case ((name, params), alias) =>
       (TypeVariable(name), params, alias)
     }
   }
 
-  lazy val typeLetP: Parser[Rec[Expr]] =
-    (typeBinding ~ inBody).map { case ((v, params, alias), body) =>
-      typeLet(v, params, alias, body)
-    }
+  lazy val typeLetP: Parser[Rec[Expr]] = (typeBinding ~ inBody).map { case ((v, params, alias), body) =>
+    typeLet(v, params, alias, body)
+  }
 
   private lazy val topTypeP: Parser[Rec[Decl]] = typeBinding.map(topType)
 
   private lazy val dataConstructorP: Parser[DataConstructor[[x] =>> Rec[x]]] = {
-    val name = '|' *> sp *> identifier.map(Variable.apply)
-    val field = '(' *> sp *> typeP <* sp <* ')'
+    val name = '|' -*> identifier.map(Variable.apply)
+    val field = typeP.parens
     (name ~ field.rep0).map(DataConstructor.apply)
   }
 
   private lazy val dataBinding: Parser[(Boolean, TypeVariable, Seq[(TypeVariable, Kind)], Seq[DataConstructor[[x] =>> Rec[x]]])] = {
-    val recursive = "data" *> gap *> ("rec".as(true) <* gap).?.map(_.getOrElse(false))
-    val constructors = sp *> '=' *> sp *> dataConstructorP.repSep(gap)
+    val recursive = "data" -+> ("rec".as(true) <* gap).?.map(_.getOrElse(false))
+    val constructors = spaced('=') *> dataConstructorP.repSep(gap)
     (recursive ~ identifier ~ typeParamP.rep0 ~ constructors).map { case (((recursive, name), params), constructors) =>
       (recursive, TypeVariable(name), params, constructors.toList)
     }
@@ -165,41 +184,22 @@ object ParserAST {
 
   lazy val typeP: Parser[Rec[Type]] = Parser.defer(forAllP | typeLambdaP | arrowTypeP)
 
-  lazy val typeLambdaP: Parser[Rec[Type]] = {
-    val plain = identifier.map(n => (TypeVariable(n), Kind.Star))
-    val annotated = '(' *> sp *> identifier.map(TypeVariable.apply) ~ (sp *> ':' *> sp *> kindP) <* sp <* ')'
-    val nameKind = 'λ' *> sp *> (annotated.backtrack | plain)
-    val body = sp *> '.' *> sp *> Parser.defer(typeP)
-    (nameKind ~ body).map { case ((v, k), b) => typeAbs(v, k, b) }
-  }
+  lazy val typeLambdaP: Parser[Rec[Type]] = binderP('λ', typeP)(typeAbs)
 
-  lazy val forAllP: Parser[Rec[Type]] = {
-    val plain = identifier.map(n => (TypeVariable(n), Kind.Star))
-    val annotated = '(' *> sp *> identifier.map(TypeVariable.apply) ~ (sp *> ':' *> sp *> kindP) <* sp <* ')'
-    val nameKind = '∀' *> sp *> (annotated.backtrack | plain)
-    val body = sp *> '.' *> sp *> Parser.defer(typeP)
-    (nameKind ~ body).map { case ((v, k), b) => forallType(v, k, b) }
-  }
+  lazy val forAllP: Parser[Rec[Type]] = binderP('∀', typeP)(forallType)
 
-  lazy val arrowTypeP: Parser[Rec[Type]] = {
-    val arrowTail = sp.with1.soft *> '→' *> sp *> Parser.defer(typeP)
-    (typeAppP ~ arrowTail.?).map {
-      case (from, Some(to)) => arrow(from, to)
-      case (t, None) => t
-    }
-  }
+  lazy val arrowTypeP: Parser[Rec[Type]] = arrowChain(typeAppP, typeP)(arrow)
 
   private lazy val typeAppP: Parser[Rec[Type]] = {
-    val typeArg = '[' *> sp *> Parser.defer(typeP) <* sp <* ']'
+    val typeArg = Parser.defer(typeP).brackets
     (typeAtomP ~ typeArg.rep0).map { case (init, args) =>
       args.foldLeft(init)(typeApp)
     }
   }
 
   private lazy val typeAtomP: Parser[Rec[Type]] = {
-    val parens = '(' *> sp *> Parser.defer(typeP) <* sp <* ')'
-    val unit = ('(' *> sp *> ')').as(unitType).backtrack
-    unit | namedTypeP | parens
+    val unit = unitParens.as(unitType).backtrack
+    unit | namedTypeP | Parser.defer(typeP).parens
   }
 
   private lazy val namedTypeP: Parser[Rec[Type]] =
@@ -212,35 +212,35 @@ object ParserAST {
     identifier.map(n => typeVar(TypeVariable(n)))
 
   lazy val ifP: Parser[Rec[Expr]] = {
-    val cond = "if" *> gap *> expr
-    val trueBranch = sp *> "then" *> gap *> expr
-    val elseBranch = sp *> "else" *> gap *> expr
+    val cond = "if" -+> expr
+    val trueBranch = sp.with1 *> ("then" -+> expr)
+    val elseBranch = sp.with1 *> ("else" -+> expr)
     (cond ~ trueBranch ~ elseBranch).map { case ((cond, tr), el) =>
       iff(cond, tr, el)
     }
   }
 
   private lazy val matchCaseP: Parser[MatchCase[[x] =>> Rec[x]]] = {
-    val name = '|' *> sp *> identifier.map(Variable.apply)
-    val binder = '(' *> sp *> identifier.map(Variable.apply) <* sp <* ')'
-    val body = sp *> "->" *> sp *> Parser.defer(expr)
+    val name = '|' -*> identifier.map(Variable.apply)
+    val binder = identifier.map(Variable.apply).parens
+    val body = spaced("->") *> Parser.defer(expr)
     ((name ~ binder.rep0) ~ body).map { case ((name, binders), body) =>
       MatchCase(name, binders, body)
     }
   }
 
   lazy val matchP: Parser[Rec[Expr]] = {
-    val scrutinee = "match" *> gap *> expr
-    val cases = sp *> "with" *> gap *> matchCaseP.repSep(gap)
+    val scrutinee = "match" -+> expr
+    val cases = sp.with1 *> ("with" -+> matchCaseP.repSep(gap))
     (scrutinee ~ cases).map { case (scrutinee, cases) =>
       matchExpr(scrutinee, cases.toList)
     }
   }
 
   lazy val foldP: Parser[Rec[Expr]] = {
-    val scrutinee = "fold" *> gap *> expr
-    val resultType = sp *> "as" *> gap *> typeP
-    val cases = sp *> "with" *> gap *> matchCaseP.repSep(gap)
+    val scrutinee = "fold" -+> expr
+    val resultType = sp.with1 *> ("as" -+> typeP)
+    val cases = sp.with1 *> ("with" -+> matchCaseP.repSep(gap))
     (scrutinee ~ resultType ~ cases).map { case ((scrutinee, resultType), cases) =>
       foldExpr(scrutinee, resultType, cases.toList)
     }
@@ -259,91 +259,33 @@ object ParserAST {
     ('&' <* Parser.not(Parser.char('&'))).backtrack.as(BinOps.And)
 
   private val caseStartLookahead: Parser[Unit] =
-    '|' *> sp *> identifier *> sp *> ('('.void | "->".void)
+    '|' -*> identifier -*> ('('.void | "->".void)
 
   private val bitOrOp: Parser[BinOps] =
     (Parser.not(caseStartLookahead.backtrack).with1 *> '|' <* Parser.not(Parser.char('|'))).backtrack.as(BinOps.Or)
 
   private val xorOp: Parser[BinOps] = '^'.as(BinOps.Xor)
 
-  lazy val logicalOr: Parser[Rec[Expr]] = {
-    val and = Parser.defer(logicalAnd)
-    val tail = (sp.with1.soft *> "||".as(BinOps.ShortOr) ~ (sp.with1 *> and)).rep0
-    (and ~ tail).map { case (init, ops) =>
-      ops.foldLeft(init) { case (acc, (op, r)) => binop(op, acc, r) }
-    }
-  }
-
-  lazy val logicalAnd: Parser[Rec[Expr]] = {
-    val bitOr = Parser.defer(bitwiseOr)
-    val tail = (sp.with1.soft *> "&&".as(BinOps.ShortAnd) ~ (sp.with1 *> bitOr)).rep0
-    (bitOr ~ tail).map { case (init, ops) =>
-      ops.foldLeft(init) { case (acc, (op, r)) => binop(op, acc, r) }
-    }
-  }
-
-  lazy val bitwiseOr: Parser[Rec[Expr]] = {
-    val xor = Parser.defer(bitwiseXor)
-    val tail = (sp.with1.soft *> bitOrOp ~ (sp.with1 *> xor)).rep0
-    (xor ~ tail).map { case (init, ops) =>
-      ops.foldLeft(init) { case (acc, (op, r)) => binop(op, acc, r) }
-    }
-  }
-
-  lazy val bitwiseXor: Parser[Rec[Expr]] = {
-    val and = Parser.defer(bitwiseAnd)
-    val tail = (sp.with1.soft *> xorOp ~ (sp.with1 *> and)).rep0
-    (and ~ tail).map { case (init, ops) =>
-      ops.foldLeft(init) { case (acc, (op, r)) => binop(op, acc, r) }
-    }
-  }
-
-  lazy val bitwiseAnd: Parser[Rec[Expr]] = {
-    val eq = Parser.defer(equitive)
-    val tail = (sp.with1.soft *> bitAndOp ~ (sp.with1 *> eq)).rep0
-    (eq ~ tail).map { case (init, ops) =>
-      ops.foldLeft(init) { case (acc, (op, r)) => binop(op, acc, r) }
-    }
-  }
-
-  lazy val equitive: Parser[Rec[Expr]] = {
-    val eq  = Parser.defer(additive)
-    val tail = (sp.with1.soft *> eqOp ~ (sp.with1 *> eq)).rep0
-    (eq ~ tail).map { case (init, ops) =>
-      ops.foldLeft(init) { case (acc, (op, r)) => binop(op, acc, r) }
-    }
-  }
-
-  lazy val additive: Parser[Rec[Expr]] = {
-    val mul  = Parser.defer(multiplicative)
-    val tail = (sp.with1.soft *> addOp ~ (sp.with1 *> mul)).rep0
-    (mul ~ tail).map { case (init, ops) =>
-      ops.foldLeft(init) { case (acc, (op, r)) => binop(op, acc, r) }
-    }
-  }
-
-  lazy val multiplicative: Parser[Rec[Expr]] = {
-    val un   = Parser.defer(unaryP)
-    val tail = (sp.with1.soft *> mulOp ~ (sp.with1 *> un)).rep0
-    (un ~ tail).map { case (init, ops) =>
-      ops.foldLeft(init) { case (acc, (op, r)) => binop(op, acc, r) }
-    }
-  }
+  lazy val logicalOr: Parser[Rec[Expr]]      = binaryLevel("||".as(BinOps.ShortOr), logicalAnd)
+  lazy val logicalAnd: Parser[Rec[Expr]]     = binaryLevel("&&".as(BinOps.ShortAnd), bitwiseOr)
+  lazy val bitwiseOr: Parser[Rec[Expr]]      = binaryLevel(bitOrOp, bitwiseXor)
+  lazy val bitwiseXor: Parser[Rec[Expr]]     = binaryLevel(xorOp, bitwiseAnd)
+  lazy val bitwiseAnd: Parser[Rec[Expr]]     = binaryLevel(bitAndOp, equitive)
+  lazy val equitive: Parser[Rec[Expr]]       = binaryLevel(eqOp, additive)
+  lazy val additive: Parser[Rec[Expr]]       = binaryLevel(addOp, multiplicative)
+  lazy val multiplicative: Parser[Rec[Expr]] = binaryLevel(mulOp, unaryP)
 
   lazy val unaryP: Parser[Rec[Expr]] = {
-    val neg = ('-' *> sp *> Parser.defer(unaryP)).map(b => unop(UnaryOps.Neg, b))
-    val not = ('!' *> sp *> Parser.defer(unaryP)).map(b => unop(UnaryOps.Not, b))
+    val neg = ('-' -*> Parser.defer(unaryP)).map(b => unop(UnaryOps.Neg, b))
+    val not = ('!' -*> Parser.defer(unaryP)).map(b => unop(UnaryOps.Not, b))
     neg | not | Parser.defer(appP)
   }
 
   lazy val appP: Parser[Rec[Expr]] = {
     type Postfix = Either[Rec[Expr], Rec[Type]]
-    val unitArg: Parser[Postfix] =
-      ('(' *> sp *> ')').as(Left(unitLit)).backtrack
-    val exprArg: Parser[Postfix] =
-      ('(' *> sp *> Parser.defer(expr) <* sp <* ')').map(Left.apply)
-    val typeArg: Parser[Postfix] =
-      ('[' *> sp *> Parser.defer(typeP) <* sp <* ']').map(Right.apply)
+    val unitArg: Parser[Postfix] = unitParens.as(Left(unitLit)).backtrack
+    val exprArg: Parser[Postfix] = Parser.defer(expr).parens.map(Left.apply)
+    val typeArg: Parser[Postfix] = Parser.defer(typeP).brackets.map(Right.apply)
     (atom ~ (unitArg | exprArg | typeArg).rep0).map { case (f, args) =>
       args.foldLeft(f) {
         case (acc, Left(a)) => app(acc, a)
@@ -352,27 +294,23 @@ object ParserAST {
     }
   }
 
-  lazy val atom: Parser[Rec[Expr]] = {
-    val parens = '(' *> sp *> Parser.defer(expr) <* sp <* ')'
-    Parser.defer(blockP | unitP.backtrack | numP | charP | stringP | boolP | foreignP | intrinsicP | varP | parens)
-  }
+  lazy val atom: Parser[Rec[Expr]] =
+    Parser.defer(blockP | unitP.backtrack | numP | charP | stringP | boolP | foreignP | intrinsicP | varP | Parser.defer(expr).parens)
 
   lazy val blockP: Parser[Rec[Expr]] = {
-    val semi = sp *> ';' <* sp
-    val discarded = (Parser.defer(expr) <* semi).backtrack.rep0
+    val discarded = (Parser.defer(expr) <* spaced(';')).backtrack.rep0
     val result = Parser.defer(expr).?
-    ('{' *> sp *> discarded ~ result <* sp <* '}').map(block)
+    ('{' -*> discarded ~ result <*- '}').map(block)
   }
 
   val foreignP: Parser[Rec[Expr]] = {
-    val types = '[' *> sp *> typeP <* sp <* ']'
-    ("foreign" *> types ~ (sp1.with1 *> identifier.map(Variable.apply))).map(_.swap).map(foreign)
+    ("foreign" *> typeP.brackets ~ (sp1.with1 *> identifier.map(Variable.apply))).map(_.swap).map(foreign)
   }
 
   val intrinsicP: Parser[Rec[Expr]] = {
-    val name = '[' *> sp *> identifier <* sp <* ']'
+    val name = identifier.brackets
     val op = name.map(n => StandardLibrary.intrinsicOp(n).getOrElse(sys.error(s"Unknown intrinsic $n")))
-    val arg = '(' *> sp *> Parser.defer(expr) <* sp <* ')'
+    val arg = Parser.defer(expr).parens
     ("intrinsic" *> op ~ arg.rep).map { case (op, args) =>
       intrinsic(op, args.toList)
     }
@@ -399,9 +337,8 @@ object ParserAST {
     val digits = Numbers.digits
     val exponent = Parser.charIn("eE") ~ Parser.charIn("+-").? ~ digits
     val floatValue = (digits ~ '.' ~ digits ~ exponent.?).string
-    val intValue = digits
     val floatLit = (floatValue ~ floatSuffixP.?).map { case (value, suffix) => num(value, suffix.getOrElse("f64")) }
-    val intLit = (intValue ~ intSuffixP.?).map { case (value, suffix) => num(value, suffix.getOrElse("i32")) }
+    val intLit = (digits ~ intSuffixP.?).map { case (value, suffix) => num(value, suffix.getOrElse("i32")) }
     floatLit.backtrack | intLit
   }
 
@@ -422,10 +359,10 @@ object ParserAST {
 
   val boolP: Parser[Rec[Expr]] = "true".as(bool(true)) | "false".as(bool(false))
 
-  val unitP: Parser[Rec[Expr]] = ('(' *> sp *> ')').as(unitLit)
+  val unitP: Parser[Rec[Expr]] = unitParens.as(unitLit)
 
   val programParser: Parser0[Rec[AST.Program.type]] = {
-    val sep = (sp1.with1 *> Parser.charIn("\n;").rep <* sp).void
+    val sep = (sp1.with1 *> Parser.charIn("\n;").rep.void <* sp)
     sp *> topDeclP.repSep(sep).map(decls => program(decls.toList)) <* sp
   }
 }
