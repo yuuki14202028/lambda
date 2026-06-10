@@ -8,6 +8,20 @@ data Maybe[a] =
   | Nothing
   | Just(a)
 
+trait Show[a] {
+  def show(x: a): i32
+}
+
+impl Show[i32] {
+  def show = λx: i32. printInt("%d")(x)
+}
+
+impl[a] Show[Maybe[a]] where [Show[a]] {
+  def show = λm: Maybe[a]. match m with
+    | Nothing -> printStr("nothing")
+    | Just(x) -> show[a](x)
+}
+
 trait Monad[m: * → *] {
   def ret[a](x: a): m[a]
   def bind[a][b](v: m[a])(f: a → m[b]): m[b]
@@ -29,6 +43,4 @@ let compute(): Maybe[i32] =
       ret[Maybe][i32](step2 + 1)))
 
 let main(): i32 =
-  match compute() with
-    | Nothing -> printStr("result = nothing\n")
-    | Just(r) -> printInt("result = %d\n")(r)
+  printStr("result = ") + show[Maybe[i32]](compute()) + printStr("\n")

@@ -294,8 +294,11 @@ object ChurchEncoder {
     case AST.TopTrait(variable, _, _, _) =>
       Left(EncodeError.InvariantViolation(s"TopTrait ${variable.name} must be desugared by TraitEncoder before Church encoding"))
 
-    case AST.TopImpl(variable, _, _) =>
+    case AST.TopImpl(variable, _, _, _, _) =>
       Left(EncodeError.InvariantViolation(s"TopImpl ${variable.name} must be desugared by TraitEncoder before Church encoding"))
+
+    case AST.TopLetWhere(variable, _, _, _, _, _) =>
+      Left(EncodeError.InvariantViolation(s"TopLetWhere ${variable.name} must be desugared by TraitEncoder before Church encoding"))
 
     case _ =>
       decl.para(encoderAlg).run(env).map(encodedDecl => (Seq(encodedDecl), env))

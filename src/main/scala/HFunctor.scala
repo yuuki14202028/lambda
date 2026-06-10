@@ -48,11 +48,19 @@ given HTraverse[AST] with {
         (f(m.sig), m.body.traverse(b => f(b))).mapN((sig, body) => MethodSig[S](m.name, sig, body))
       }
       (supersG, methodsG).mapN(AST.TopTrait(v, params, _, _))
-    case AST.TopImpl(v, target, methods) =>
+    case AST.TopImpl(v, params, targets, context, methods) =>
+      val contextG = context.traverse { c =>
+        c.arg.traverse(a => f(a)).map(args => Constraint[S](c.name, args))
+      }
       val methodsG = methods.traverse { m =>
         (m.sig.traverse(s => f(s)), f(m.body)).mapN((sig, body) => MethodImpl[S](m.name, sig, body))
       }
-      (f(target), methodsG).mapN(AST.TopImpl(v, _, _))
+      (targets.traverse(t => f(t)), contextG, methodsG).mapN(AST.TopImpl(v, params, _, _, _))
+    case AST.TopLetWhere(v, params, constraints, types, value, recursive) =>
+      val constraintsG = constraints.traverse { c =>
+        c.arg.traverse(a => f(a)).map(args => Constraint[S](c.name, args))
+      }
+      (constraintsG, f(types), f(value)).mapN(AST.TopLetWhere(v, params, _, _, _, recursive))
     case AST.Abs(v, types, body) =>
       (f(types), f(body)).mapN(AST.Abs(v, _, _))
     case AST.TyAbs(v, k, body) =>

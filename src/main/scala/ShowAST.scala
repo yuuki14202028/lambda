@@ -7,6 +7,11 @@ private def showKindedParam(param: (TypeVariable, Kind)): String = param match {
   case (v, k) => s"[${v.name}: ${k.show}]"
 }
 
+private def showConstraints(constraints: Seq[Constraint[[x] =>> ShowResult[x]]]): String = constraints match {
+  case Seq() => ""
+  case _ => constraints.map(c => s"[${c.name.name}${c.arg.map(a => s"[$a]").mkString}]").mkString(" where ", " ", "")
+}
+
 val showAlg: Algebra[AST, ShowResult] = [x] => node => node match {
   case AST.Program(decls)          => decls.mkString("\n")
   case AST.TopLet(v, types, value) => s"let ${v.name}: $types = $value"
@@ -24,18 +29,21 @@ val showAlg: Algebra[AST, ShowResult] = [x] => node => node match {
     s"data ${if (recursive) "rec " else ""}${v.name}$suffix = $ctorText"
   case AST.TopTrait(v, params, supers, methods) =>
     val suffix = params.map(showKindedParam).mkString
-    val superText = supers match {
-      case Seq() => ""
-      case _ => supers.map(c => s"[${c.name.name}${c.arg.map(a => s"[$a]").mkString}]").mkString(" where ", " ", "")
-    }
+    val superText = showConstraints(supers)
     val methodText = methods.map(m => s"  def ${m.name.name}: ${m.sig}").mkString("\n")
     s"trait ${v.name}$suffix$superText {\n$methodText\n}"
-  case AST.TopImpl(v, target, methods) =>
+  case AST.TopImpl(v, params, targets, context, methods) =>
+    val suffix = params.map(showKindedParam).mkString
+    val targetText = targets.map(t => s"[$t]").mkString
+    val contextText = showConstraints(context)
     val methodText = methods.map { m =>
       val sigText = m.sig.map(s => s": $s").getOrElse("")
       s"  def ${m.name.name}$sigText = ${m.body}"
     }.mkString("\n")
-    s"impl ${v.name}[$target] {\n$methodText\n}"
+    s"impl$suffix ${v.name}$targetText$contextText {\n$methodText\n}"
+  case AST.TopLetWhere(v, params, constraints, types, value, recursive) =>
+    val suffix = params.map(showKindedParam).mkString
+    s"let ${if (recursive) "rec " else ""}${v.name}$suffix${showConstraints(constraints)}: $types = $value"
   case AST.Abs(v, types, body)     => s"λ${v.name}: $types. $body"
   case AST.TyAbs(v, Kind.Star, body) => s"Λ${v.name}. $body"
   case AST.TyAbs(v, k, body)         => s"Λ(${v.name}: ${k.show}). $body"

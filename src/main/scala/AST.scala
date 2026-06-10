@@ -17,7 +17,8 @@ enum AST[R[_], I] {
   case TopType(variable: TypeVariable, params: Seq[(TypeVariable, Kind)], alias: R[Type]) extends AST[R, Decl]
   case TopData(variable: TypeVariable, params: Seq[(TypeVariable, Kind)], constructors: Seq[DataConstructor[R]], recursive: Boolean) extends AST[R, Decl]
   case TopTrait(variable: TypeVariable, params: Seq[(TypeVariable, Kind)], supers: Seq[Constraint[R]], methods: Seq[MethodSig[R]]) extends AST[R, Decl]
-  case TopImpl(variable: TypeVariable, target: R[Type], methods: Seq[MethodImpl[R]]) extends AST[R, Decl]
+  case TopImpl(variable: TypeVariable, params: Seq[(TypeVariable, Kind)], targets: Seq[R[Type]], context: Seq[Constraint[R]], methods: Seq[MethodImpl[R]]) extends AST[R, Decl]
+  case TopLetWhere(variable: Variable, params: Seq[(TypeVariable, Kind)], constraints: Seq[Constraint[R]], types: R[Type], value: R[Expr], recursive: Boolean) extends AST[R, Decl]
   case Abs(variable: Variable, types: R[Type], body: R[Expr]) extends AST[R, Expr]
   case TyAbs(variable: TypeVariable, kind: Kind, body: R[Expr]) extends AST[R, Expr]
   case Let(variable: Variable, types: R[Type], value: R[Expr], body: R[Expr]) extends AST[R, Expr]
@@ -154,7 +155,10 @@ def topType(variable: TypeVariable, params: Seq[(TypeVariable, Kind)], alias: Re
 def topData(variable: TypeVariable, params: Seq[(TypeVariable, Kind)], constructors: Seq[DataConstructor[[x] =>> Rec[x]]], recursive: Boolean = false): Rec[Decl] =
   HFix(AST.TopData(variable, params, constructors, recursive))
 def topTrait(v: TypeVariable, p: Seq[(TypeVariable, Kind)], s: Seq[Constraint[Rec]], m: Seq[MethodSig[Rec]]): Rec[Decl] = HFix(AST.TopTrait(v, p, s, m))
-def topImpl(variable: TypeVariable, target: Rec[Type], methods: Seq[MethodImpl[Rec]]): Rec[Decl] = HFix(AST.TopImpl(variable, target, methods))
+def topImpl(variable: TypeVariable, params: Seq[(TypeVariable, Kind)], targets: Seq[Rec[Type]], context: Seq[Constraint[Rec]], methods: Seq[MethodImpl[Rec]]): Rec[Decl] =
+  HFix(AST.TopImpl(variable, params, targets, context, methods))
+def topLetWhere(variable: Variable, params: Seq[(TypeVariable, Kind)], constraints: Seq[Constraint[Rec]], types: Rec[Type], value: Rec[Expr], recursive: Boolean): Rec[Decl] =
+  HFix(AST.TopLetWhere(variable, params, constraints, types, value, recursive))
 def abs(variable: Variable, types: Rec[Type], body: Rec[Expr]): Rec[Expr] = HFix(AST.Abs(variable, types, body))
 def tyAbs(variable: TypeVariable, kind: Kind, body: Rec[Expr]): Rec[Expr] = HFix(AST.TyAbs(variable, kind, body))
 def let(variable: Variable, types: Rec[Type], value: Rec[Expr], body: Rec[Expr]): Rec[Expr] = HFix(AST.Let(variable, types, value, body))
@@ -219,8 +223,10 @@ def topDataT(variable: TypeVariable, params: Seq[(TypeVariable, Kind)], construc
   HCofree(DeclAnn, AST.TopData(variable, params, constructors, recursive))
 def topTraitT(variable: TypeVariable, params: Seq[(TypeVariable, Kind)], supers: Seq[Constraint[TypeRec]], methods: Seq[MethodSig[TypeRec]]): TypeRec[Decl] =
   HCofree(DeclAnn, AST.TopTrait(variable, params, supers, methods))
-def topImplT(variable: TypeVariable, target: TypeRec[Type], methods: Seq[MethodImpl[TypeRec]]): TypeRec[Decl] =
-  HCofree(DeclAnn, AST.TopImpl(variable, target, methods))
+def topImplT(variable: TypeVariable, params: Seq[(TypeVariable, Kind)], targets: Seq[TypeRec[Type]], context: Seq[Constraint[TypeRec]], methods: Seq[MethodImpl[TypeRec]]): TypeRec[Decl] =
+  HCofree(DeclAnn, AST.TopImpl(variable, params, targets, context, methods))
+def topLetWhereT(variable: Variable, params: Seq[(TypeVariable, Kind)], constraints: Seq[Constraint[TypeRec]], types: TypeRec[Type], value: TypeRec[Expr], recursive: Boolean): TypeRec[Decl] =
+  HCofree(DeclAnn, AST.TopLetWhere(variable, params, constraints, types, value, recursive))
 def absT(variable: Variable, t: TypeRec[Type], types: TypeRec[Type], body: TypeRec[Expr]): TypeRec[Expr] =
   HCofree(ExprAnn(t), AST.Abs(variable, types, body))
 def tyAbsT(variable: TypeVariable, t: TypeRec[Type], kind: Kind, body: TypeRec[Expr]): TypeRec[Expr] =
@@ -381,7 +387,7 @@ def substType(target: TypeVariable, replace: TypeRec[Type], in: TypeRec[Type]): 
   apo(in)(coalg)
 }
 
-private def substMany(params: Seq[TypeVariable], args: Seq[TypeRec[Type]], in: TypeRec[Type]): TypeRec[Type] = {
+def substMany(params: Seq[TypeVariable], args: Seq[TypeRec[Type]], in: TypeRec[Type]): TypeRec[Type] = {
   params.zip(args).foldLeft(in) { case (acc, (param, arg)) => substType(param, arg, acc) }
 }
 
@@ -457,6 +463,23 @@ def dataTypeApplication[D]
 
 def applyTypeConstructor(head: TypeVariable, args: Seq[TypeRec[Type]]): TypeRec[Type] =
   args.foldLeft(typeVarT(head)) { (acc, arg) => typeAppT(acc, arg) }
+
+@scala.annotation.tailrec
+def countLeadingForalls(t: TypeRec[Type], acc: Int = 0): Int = destructForAllK(t) match {
+  case Some((_, _, body)) => countLeadingForalls(body, acc + 1)
+  case None => acc
+}
+
+def stripLeadingForalls(t: TypeRec[Type], count: Int): Either[String, (Seq[(TypeVariable, Kind)], TypeRec[Type])] = {
+  @scala.annotation.tailrec
+  def loop(current: TypeRec[Type], remaining: Int, acc: List[(TypeVariable, Kind)]): Either[String, (Seq[(TypeVariable, Kind)], TypeRec[Type])] =
+    if (remaining == 0) Right((acc.reverse, current))
+    else destructForAllK(current) match {
+      case Some((v, k, body)) => loop(body, remaining - 1, (v, k) :: acc)
+      case None => Left(s"expected $count leading ∀ binders, got ${count - remaining}: ${t.show}")
+    }
+  loop(t, count, Nil)
+}
 
 def typeConstructorHead(t: TypeRec[Type]): Option[(String, Seq[TypeRec[Type]])] = {
   val (head, args) = collectTypeApps(t)

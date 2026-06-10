@@ -111,10 +111,26 @@ object ParserAST {
     })
   }
 
+  private lazy val constraintP: Parser[Constraint[Rec]] =
+    (identifier.map(TypeVariable.apply) ~ typeP.brackets.rep0).map(Constraint.apply).brackets
+
+  private lazy val whereClauseP: Parser0[Seq[Constraint[Rec]]] =
+    (spaced("where") *> (constraintP ~ (sp.with1.soft *> constraintP).backtrack.rep0)).backtrack.?.map {
+      case Some((h, t)) => h :: t
+      case None => Nil
+    }
+
   private lazy val topLetP: Parser[Rec[Decl]] = {
-    binding.map {
-      case (true, v, t, value) => topLetRec(v, t, value)
-      case (false, v, t, value) => topLet(v, t, value)
+    val typeParams = sp *> typeParamP.rep0
+    val params = sp *> functionParamsP
+    (letHead ~ typeParams ~ params ~ whereClauseP ~ typeAnnP ~ valueP).map {
+      case ((((((recursive, name), typeParams), params), constraints), returnType), value) =>
+        val fullType = polymorphicType(typeParams, functionType(params, returnType))
+        val fullValue = polymorphicValue(typeParams, functionValue(params, value))
+        if (constraints.isEmpty) {
+          if (recursive) topLetRec(Variable(name), fullType, fullValue)
+          else topLet(Variable(name), fullType, fullValue)
+        } else topLetWhere(Variable(name), typeParams, constraints, fullType, fullValue, recursive)
     }
   }
 
@@ -183,11 +199,7 @@ object ParserAST {
     val head = "trait" -+> identifier.map(TypeVariable.apply)
     val typeParams = sp *> typeParamP.rep0
     val params = sp *> functionParamsP
-    val constraint = (identifier.map(TypeVariable.apply) ~ typeP.brackets.rep0).map(Constraint.apply).brackets
-    val supers = (spaced("where") *> (constraint ~ (sp.with1.soft *> constraint).backtrack.rep0)).backtrack.?.map {
-      case Some((h, t)) => h :: t
-      case None => Nil
-    }
+    val supers = whereClauseP
     val method = ((("def" -+> identifier.map(Variable.apply)) ~ typeParams ~ params ~ typeAnnP).map {
       case (((name, typeParams), params), returnType) =>
         val sig = polymorphicType(typeParams, functionType(params, returnType))
@@ -200,8 +212,9 @@ object ParserAST {
   }
 
   lazy val implP: Parser[Rec[Decl]] = {
-    val head = "impl" -+> identifier.map(TypeVariable.apply)
-    val target = sp *> typeP.brackets
+    val implParams = ("impl" *> sp *> typeParamP.rep.map(_.toList)).backtrack | ("impl" *> gap).as(List.empty[(TypeVariable, Kind)])
+    val head = implParams ~ (sp.with1 *> identifier.map(TypeVariable.apply))
+    val targets = sp *> typeP.brackets.rep.map(_.toList)
     val typeParams = sp *> typeParamP.rep0
     val params = sp *> functionParamsP
     val returnAnn = typeAnnP.backtrack.?
@@ -212,8 +225,8 @@ object ParserAST {
         MethodImpl(name, sig, body)
     } <* sp).rep
     val body = sp.with1 *> ('{' -*> method <*- '}')
-    (head ~ target ~ body).map {
-      case ((name, target), methods) => topImpl(name, target, methods.toList)
+    (head ~ targets ~ whereClauseP ~ body).map {
+      case ((((implParams, name), targets), context), methods) => topImpl(name, implParams, targets, context, methods.toList)
     }
   }
 
