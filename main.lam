@@ -1,24 +1,32 @@
 import "stdlib/operators"
 import "stdlib/functor"
 
-let printInt: foreign.C.String → i32 → i32 = foreign[foreign.C.String → i32 → i32] printf
 let printStr: foreign.C.String → i32 = foreign[foreign.C.String → i32] printf
+let intToStr: i32 → foreign.C.String = foreign[i32 → foreign.C.String] int_to_string
+
+let identity[a](x: a): a = x
 
 data Maybe[a] =
   | Nothing
   | Just(a)
 
 trait Show[a] {
-  def show(x: a): i32
+  def show(x: a): foreign.C.String
 }
 
+let printf[a](x: a) where [Show[a]]: i32 = printStr(show[a](x))
+
 impl Show[i32] {
-  def show = λx: i32. printInt("%d")(x)
+  def show = λx: i32. intToStr(x)
+}
+
+impl Show[foreign.C.String] {
+  def show = identity[foreign.C.String]
 }
 
 impl[a] Show[Maybe[a]] where [Show[a]] {
   def show = λm: Maybe[a]. match m with
-    | Nothing -> printStr("nothing")
+    | Nothing -> "Nothing"
     | Just(x) -> show[a](x)
 }
 
@@ -43,4 +51,4 @@ let compute(): Maybe[i32] =
       ret[Maybe][i32](step2 + 1)))
 
 let main(): i32 =
-  printStr("result = ") + show[Maybe[i32]](compute()) + printStr("\n")
+  printf[foreign.C.String]("result = ") + printf[Maybe[i32]](compute()) + printf[foreign.C.String]("\n")
