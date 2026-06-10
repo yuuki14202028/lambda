@@ -40,6 +40,19 @@ given HTraverse[AST] with {
       ctors.traverse { c =>
         c.fields.traverse(field => f(field)).map(fs => DataConstructor[S](c.name, fs))
       }.map(AST.TopData(v, params, _, recursive))
+    case AST.TopTrait(v, params, supers, methods) =>
+      val supersG = supers.traverse { c =>
+        c.arg.traverse(a => f(a)).map(args => Constraint[S](c.name, args))
+      }
+      val methodsG = methods.traverse { m =>
+        (f(m.sig), m.body.traverse(b => f(b))).mapN((sig, body) => MethodSig[S](m.name, sig, body))
+      }
+      (supersG, methodsG).mapN(AST.TopTrait(v, params, _, _))
+    case AST.TopImpl(v, target, methods) =>
+      val methodsG = methods.traverse { m =>
+        (m.sig.traverse(s => f(s)), f(m.body)).mapN((sig, body) => MethodImpl[S](m.name, sig, body))
+      }
+      (f(target), methodsG).mapN(AST.TopImpl(v, _, _))
     case AST.Abs(v, types, body) =>
       (f(types), f(body)).mapN(AST.Abs(v, _, _))
     case AST.TyAbs(v, k, body) =>

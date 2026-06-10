@@ -22,6 +22,20 @@ val showAlg: Algebra[AST, ShowResult] = [x] => node => node match {
       s"| ${ctor.name.name}$fields"
     }.mkString(" ")
     s"data ${if (recursive) "rec " else ""}${v.name}$suffix = $ctorText"
+  case AST.TopTrait(v, params, supers, methods) =>
+    val suffix = params.map(showKindedParam).mkString
+    val superText = supers match {
+      case Seq() => ""
+      case _ => supers.map(c => s"[${c.name.name}${c.arg.map(a => s"[$a]").mkString}]").mkString(" where ", " ", "")
+    }
+    val methodText = methods.map(m => s"  def ${m.name.name}: ${m.sig}").mkString("\n")
+    s"trait ${v.name}$suffix$superText {\n$methodText\n}"
+  case AST.TopImpl(v, target, methods) =>
+    val methodText = methods.map { m =>
+      val sigText = m.sig.map(s => s": $s").getOrElse("")
+      s"  def ${m.name.name}$sigText = ${m.body}"
+    }.mkString("\n")
+    s"impl ${v.name}[$target] {\n$methodText\n}"
   case AST.Abs(v, types, body)     => s"λ${v.name}: $types. $body"
   case AST.TyAbs(v, Kind.Star, body) => s"Λ${v.name}. $body"
   case AST.TyAbs(v, k, body)         => s"Λ(${v.name}: ${k.show}). $body"

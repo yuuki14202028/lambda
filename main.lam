@@ -1,4 +1,5 @@
 import "stdlib/operators"
+import "stdlib/functor"
 
 let printInt: foreign.C.String → i32 → i32 = foreign[foreign.C.String → i32 → i32] printf
 let printStr: foreign.C.String → i32 = foreign[foreign.C.String → i32] printf
@@ -7,32 +8,25 @@ data Maybe[a] =
   | Nothing
   | Just(a)
 
-data Monad[m: * → *] = | MkMonad(∀a. a → m[a])(∀a. ∀b. m[a] → (a → m[b]) → m[b])
+trait Monad[m: * → *] {
+  def ret[a](x: a): m[a]
+  def bind[a][b](v: m[a])(f: a → m[b]): m[b]
+}
 
-let maybeReturn[a](x: a): Maybe[a] = Just[a](x)
-
-let maybeBind[a][b](m: Maybe[a])(f: a → Maybe[b]): Maybe[b] =
-  match m with
+impl Monad[Maybe] {
+  def ret[a](x:a): m[a] = Just[a](x)
+  def bind[a][b](m: Maybe[a])(f: a → Maybe[b]): Maybe[b] = match m with
     | Nothing -> Nothing[b]
     | Just(x) -> f(x)
-
-let maybeMonad: Monad[Maybe] = MkMonad[Maybe](maybeReturn)(maybeBind)
-
-let mreturn[m: * → *](d: Monad[m]): ∀a. a → m[a] =
-  match d with
-    | MkMonad(r)(__b) -> r
-
-let mbind[m: * → *](d: Monad[m]): ∀a. ∀b. m[a] → (a → m[b]) → m[b] =
-  match d with
-    | MkMonad(__r)(b) -> b
+}
 
 let safeDiv(x: i32)(y: i32): Maybe[i32] =
   if y == 0 then Nothing[i32] else Just[i32](x / y)
 
 let compute(): Maybe[i32] =
-  mbind[Maybe](maybeMonad)[i32][i32](safeDiv(100)(5))(λstep1: i32.
-    mbind[Maybe](maybeMonad)[i32][i32](safeDiv(step1)(2))(λstep2: i32.
-      mreturn[Maybe](maybeMonad)[i32](step2 + 1)))
+  bind[Maybe][i32][i32](safeDiv(120)(5))(λstep1: i32.
+    bind[Maybe][i32][i32](safeDiv(step1)(3))(λstep2: i32.
+      ret[Maybe][i32](step2 + 1)))
 
 let main(): i32 =
   match compute() with

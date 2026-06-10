@@ -179,8 +179,46 @@ object ParserAST {
     topData(v, params, constructors, recursive)
   }
 
+  lazy val traitP: Parser[Rec[Decl]] = {
+    val head = "trait" -+> identifier.map(TypeVariable.apply)
+    val typeParams = sp *> typeParamP.rep0
+    val params = sp *> functionParamsP
+    val constraint = (identifier.map(TypeVariable.apply) ~ typeP.brackets.rep0).map(Constraint.apply).brackets
+    val supers = (spaced("where") *> (constraint ~ (sp.with1.soft *> constraint).backtrack.rep0)).backtrack.?.map {
+      case Some((h, t)) => h :: t
+      case None => Nil
+    }
+    val method = ((("def" -+> identifier.map(Variable.apply)) ~ typeParams ~ params ~ typeAnnP).map {
+      case (((name, typeParams), params), returnType) =>
+        val sig = polymorphicType(typeParams, functionType(params, returnType))
+        MethodSig(name, sig, None)
+    } <* sp).rep
+    val body = sp.with1 *> ('{' -*> method <*- '}')
+    (head ~ typeParams ~ supers ~ body).map {
+      case (((f, t), s), m) => topTrait(f, t, s, m.toList)
+    }
+  }
+
+  lazy val implP: Parser[Rec[Decl]] = {
+    val head = "impl" -+> identifier.map(TypeVariable.apply)
+    val target = sp *> typeP.brackets
+    val typeParams = sp *> typeParamP.rep0
+    val params = sp *> functionParamsP
+    val returnAnn = typeAnnP.backtrack.?
+    val method = ((("def" -+> identifier.map(Variable.apply)) ~ typeParams ~ params ~ returnAnn ~ valueP).map {
+      case ((((name, typeParams), params), returnType), value) =>
+        val body = polymorphicValue(typeParams, functionValue(params, value))
+        val sig = returnType.map(rt => polymorphicType(typeParams, functionType(params, rt)))
+        MethodImpl(name, sig, body)
+    } <* sp).rep
+    val body = sp.with1 *> ('{' -*> method <*- '}')
+    (head ~ target ~ body).map {
+      case ((name, target), methods) => topImpl(name, target, methods.toList)
+    }
+  }
+
   private lazy val topDeclP: Parser[Rec[Decl]] =
-    Parser.defer(topImportP.backtrack | topDataP.backtrack | topTypeP.backtrack | topLetP)
+    Parser.defer(topImportP.backtrack | topDataP.backtrack | topTypeP.backtrack | traitP.backtrack | implP.backtrack | topLetP)
 
   lazy val typeP: Parser[Rec[Type]] = Parser.defer(forAllP | typeLambdaP | arrowTypeP)
 

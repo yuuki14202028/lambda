@@ -111,7 +111,7 @@
             </dict>
           </dict>
           <key>end</key>
-          <string>(?=^\s*(?:import|let|type|data)\b|\z)</string>
+          <string>(?=^\s*(?:import|let|type|data|trait|impl)\b|\z)</string>
           <key>patterns</key>
           <array>
             <dict>
@@ -125,6 +125,130 @@
             <dict>
               <key>include</key>
               <string>#types</string>
+            </dict>
+            <dict>
+              <key>include</key>
+              <string>#operators</string>
+            </dict>
+            <dict>
+              <key>include</key>
+              <string>#punctuation</string>
+            </dict>
+          </array>
+        </dict>
+        <dict>
+          <key>name</key>
+          <string>meta.declaration.trait.lambda</string>
+          <key>begin</key>
+          <string>\b(trait)\s+([A-Za-z][A-Za-z0-9_]*)</string>
+          <key>beginCaptures</key>
+          <dict>
+            <key>1</key>
+            <dict>
+              <key>name</key>
+              <string>keyword.declaration.trait.lambda</string>
+            </dict>
+            <key>2</key>
+            <dict>
+              <key>name</key>
+              <string>entity.name.class</string>
+            </dict>
+          </dict>
+          <key>end</key>
+          <string>(?=^\s*(?:import|let|type|data|trait|impl)\b|\z)</string>
+          <key>patterns</key>
+          <array>
+            <dict>
+              <key>include</key>
+              <string>#method</string>
+            </dict>
+            <dict>
+              <key>include</key>
+              <string>#type-parameters</string>
+            </dict>
+            <dict>
+              <key>include</key>
+              <string>#value-parameters</string>
+            </dict>
+            <dict>
+              <key>include</key>
+              <string>#constructors</string>
+            </dict>
+            <dict>
+              <key>include</key>
+              <string>#types</string>
+            </dict>
+            <dict>
+              <key>include</key>
+              <string>#expressions</string>
+            </dict>
+            <dict>
+              <key>include</key>
+              <string>#keywords</string>
+            </dict>
+            <dict>
+              <key>include</key>
+              <string>#operators</string>
+            </dict>
+            <dict>
+              <key>include</key>
+              <string>#punctuation</string>
+            </dict>
+          </array>
+        </dict>
+        <dict>
+          <key>name</key>
+          <string>meta.declaration.impl.lambda</string>
+          <key>begin</key>
+          <string>\b(impl)\s+([A-Za-z][A-Za-z0-9_]*)</string>
+          <key>beginCaptures</key>
+          <dict>
+            <key>1</key>
+            <dict>
+              <key>name</key>
+              <string>keyword.declaration.impl.lambda</string>
+            </dict>
+            <key>2</key>
+            <dict>
+              <key>name</key>
+              <string>entity.name.class</string>
+            </dict>
+          </dict>
+          <key>end</key>
+          <string>(?=^\s*(?:import|let|type|data|trait|impl)\b|\z)</string>
+          <key>patterns</key>
+          <array>
+            <dict>
+              <key>include</key>
+              <string>#method</string>
+            </dict>
+            <dict>
+              <key>include</key>
+              <string>#type-parameters</string>
+            </dict>
+            <dict>
+              <key>include</key>
+              <string>#value-parameters</string>
+            </dict>
+            <dict>
+              <key>include</key>
+              <string>#literals</string>
+            </dict>
+            <dict>
+              <key>include</key>
+              <string>#expressions</string>
+            </dict>
+            <dict>
+              <key>include</key>
+              <string>#constructors</string>
+            </dict>
+            <dict>
+              <key>include</key>
+              <string>#types</string>
+            </dict>
+            <dict>
+              <key>include</key>
+              <string>#keywords</string>
             </dict>
             <dict>
               <key>include</key>
@@ -639,13 +763,13 @@
           <key>name</key>
           <string>variable.function.lambda</string>
           <key>match</key>
-          <string>\b(?!(?:if|then|else|import|let|rec|type|data|in|match|fold|as|with|foreign|intrinsic|inst|true|false)\b)[a-z][A-Za-z0-9_]*\b(?=\s*(?:\[|\())</string>
+          <string>\b(?!(?:if|then|else|import|let|rec|type|data|trait|impl|def|where|in|match|fold|as|with|foreign|intrinsic|inst|true|false)\b)[a-z][A-Za-z0-9_]*\b(?=\s*(?:\[|\())</string>
         </dict>
         <dict>
           <key>name</key>
           <string>variable.other.lambda</string>
           <key>match</key>
-          <string>\b(?!(?:if|then|else|import|let|rec|type|data|in|match|fold|as|with|foreign|intrinsic|inst|true|false)\b)[a-z][A-Za-z0-9_]*\b</string>
+          <string>\b(?!(?:if|then|else|import|let|rec|type|data|trait|impl|def|where|in|match|fold|as|with|foreign|intrinsic|inst|true|false)\b)[a-z][A-Za-z0-9_]*\b</string>
         </dict>
       </array>
     </dict>
@@ -689,6 +813,37 @@
           <string>constant.language.constructor.lambda</string>
           <key>match</key>
           <string>\b[A-Z][A-Za-z0-9_]*\b</string>
+        </dict>
+      </array>
+    </dict>
+    <key>method</key>
+    <dict>
+      <key>patterns</key>
+      <array>
+        <dict>
+          <key>name</key>
+          <string>meta.declaration.method.lambda</string>
+          <key>match</key>
+          <string>\b(def)\s+([A-Za-z][A-Za-z0-9_]*)</string>
+          <key>captures</key>
+          <dict>
+            <key>1</key>
+            <dict>
+              <key>name</key>
+              <string>keyword.declaration.def.lambda</string>
+            </dict>
+            <key>2</key>
+            <dict>
+              <key>name</key>
+              <string>entity.name.function.lambda</string>
+            </dict>
+          </dict>
+        </dict>
+        <dict>
+          <key>name</key>
+          <string>keyword.control.where.lambda</string>
+          <key>match</key>
+          <string>\bwhere\b</string>
         </dict>
       </array>
     </dict>
@@ -1000,7 +1155,13 @@
           <key>name</key>
           <string>keyword.declaration.lambda</string>
           <key>match</key>
-          <string>\b(?:let|rec|type|data)\b</string>
+          <string>\b(?:let|rec|type|data|trait|impl|def)\b</string>
+        </dict>
+        <dict>
+          <key>name</key>
+          <string>keyword.control.where.lambda</string>
+          <key>match</key>
+          <string>\bwhere\b</string>
         </dict>
         <dict>
           <key>name</key>

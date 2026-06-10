@@ -16,6 +16,8 @@ enum AST[R[_], I] {
   case TopImport(path: String) extends AST[R, Decl]
   case TopType(variable: TypeVariable, params: Seq[(TypeVariable, Kind)], alias: R[Type]) extends AST[R, Decl]
   case TopData(variable: TypeVariable, params: Seq[(TypeVariable, Kind)], constructors: Seq[DataConstructor[R]], recursive: Boolean) extends AST[R, Decl]
+  case TopTrait(variable: TypeVariable, params: Seq[(TypeVariable, Kind)], supers: Seq[Constraint[R]], methods: Seq[MethodSig[R]]) extends AST[R, Decl]
+  case TopImpl(variable: TypeVariable, target: R[Type], methods: Seq[MethodImpl[R]]) extends AST[R, Decl]
   case Abs(variable: Variable, types: R[Type], body: R[Expr]) extends AST[R, Expr]
   case TyAbs(variable: TypeVariable, kind: Kind, body: R[Expr]) extends AST[R, Expr]
   case Let(variable: Variable, types: R[Type], value: R[Expr], body: R[Expr]) extends AST[R, Expr]
@@ -48,6 +50,10 @@ enum AST[R[_], I] {
 
 case class DataConstructor[R[_]](name: Variable, fields: Seq[R[Type]])
 case class MatchCase[R[_]](constructor: Variable, binders: Seq[Variable], body: R[Expr])
+
+case class Constraint[R[_]](name: TypeVariable, arg: Seq[R[Type]])
+case class MethodSig[R[_]](name: Variable, sig: R[Type], body: Option[R[Expr]])
+case class MethodImpl[R[_]](name: Variable, sig: Option[R[Type]], body: R[Expr])
 
 enum BinOps {
   case Add, Sub, Mul, Div, Mod,
@@ -147,6 +153,8 @@ def topType(variable: TypeVariable, params: Seq[(TypeVariable, Kind)], alias: Re
   HFix(AST.TopType(variable, params, alias))
 def topData(variable: TypeVariable, params: Seq[(TypeVariable, Kind)], constructors: Seq[DataConstructor[[x] =>> Rec[x]]], recursive: Boolean = false): Rec[Decl] =
   HFix(AST.TopData(variable, params, constructors, recursive))
+def topTrait(v: TypeVariable, p: Seq[(TypeVariable, Kind)], s: Seq[Constraint[Rec]], m: Seq[MethodSig[Rec]]): Rec[Decl] = HFix(AST.TopTrait(v, p, s, m))
+def topImpl(variable: TypeVariable, target: Rec[Type], methods: Seq[MethodImpl[Rec]]): Rec[Decl] = HFix(AST.TopImpl(variable, target, methods))
 def abs(variable: Variable, types: Rec[Type], body: Rec[Expr]): Rec[Expr] = HFix(AST.Abs(variable, types, body))
 def tyAbs(variable: TypeVariable, kind: Kind, body: Rec[Expr]): Rec[Expr] = HFix(AST.TyAbs(variable, kind, body))
 def let(variable: Variable, types: Rec[Type], value: Rec[Expr], body: Rec[Expr]): Rec[Expr] = HFix(AST.Let(variable, types, value, body))
@@ -209,6 +217,10 @@ def topTypeT(variable: TypeVariable, params: Seq[(TypeVariable, Kind)], alias: T
   HCofree(DeclAnn, AST.TopType(variable, params, alias))
 def topDataT(variable: TypeVariable, params: Seq[(TypeVariable, Kind)], constructors: Seq[DataConstructor[TypeRec]], recursive: Boolean = false): TypeRec[Decl] =
   HCofree(DeclAnn, AST.TopData(variable, params, constructors, recursive))
+def topTraitT(variable: TypeVariable, params: Seq[(TypeVariable, Kind)], supers: Seq[Constraint[TypeRec]], methods: Seq[MethodSig[TypeRec]]): TypeRec[Decl] =
+  HCofree(DeclAnn, AST.TopTrait(variable, params, supers, methods))
+def topImplT(variable: TypeVariable, target: TypeRec[Type], methods: Seq[MethodImpl[TypeRec]]): TypeRec[Decl] =
+  HCofree(DeclAnn, AST.TopImpl(variable, target, methods))
 def absT(variable: Variable, t: TypeRec[Type], types: TypeRec[Type], body: TypeRec[Expr]): TypeRec[Expr] =
   HCofree(ExprAnn(t), AST.Abs(variable, types, body))
 def tyAbsT(variable: TypeVariable, t: TypeRec[Type], kind: Kind, body: TypeRec[Expr]): TypeRec[Expr] =
@@ -445,3 +457,12 @@ def dataTypeApplication[D]
 
 def applyTypeConstructor(head: TypeVariable, args: Seq[TypeRec[Type]]): TypeRec[Type] =
   args.foldLeft(typeVarT(head)) { (acc, arg) => typeAppT(acc, arg) }
+
+def typeConstructorHead(t: TypeRec[Type]): Option[(String, Seq[TypeRec[Type]])] = {
+  val (head, args) = collectTypeApps(t)
+  head.project match {
+    case AST.TypeVar(variable) => Some((variable.name, args))
+    case AST.Primitive(name) => Some((name, args))
+    case _ => None
+  }
+}

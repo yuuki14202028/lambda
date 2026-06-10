@@ -254,7 +254,7 @@ object TAnalyser {
     case HCofreeT(ann, ast) => TypeExpansion(rebuild(ann, ast, env))
   }
 
-  private def expandType(t: TypeRec[Type], env: Env): EitherS[TypeRec[Type]] = {
+  def expandType(t: TypeRec[Type], env: Env): EitherS[TypeRec[Type]] = {
     t.para(expandAlg)(env).value
   }
 
@@ -329,6 +329,86 @@ object TAnalyser {
         c.fields.traverse(field => field.local((_: Env) => fieldEnv)).map(fs => DataConstructor(c.name, fs))
       }
     } yield topDataT(variable, params, typedConstructors, recursive)
+
+    case AST.TopTrait(variable, params, supers, methods) => for {
+      env <- ask
+      _ <- guard(supers.isEmpty, s"Trait ${variable.name}: superclass constraints are not supported yet")
+      _ <- guard(
+        !env.typeVars.contains(variable) && !env.typeAliases.contains(variable) && !env.dataTypes.contains(variable),
+        s"Trait ${variable.name} is already defined"
+      )
+      _ <- guard(params.nonEmpty, s"Trait ${variable.name} must have at least one parameter")
+      _ <- guard(params.map(_._1).distinct.length == params.length, s"Trait ${variable.name} has duplicate parameters")
+      _ <- guard(params.forall { case (p, _) => !env.typeVars.contains(p) }, s"Trait ${variable.name} has a parameter that is already defined")
+      methodNames = methods.map(_.name)
+      _ <- guard(methodNames.distinct.length == methodNames.length, s"Trait ${variable.name} has duplicate methods")
+      _ <- guard(
+        methodNames.forall(name => !env.values.contains(name) && !env.constructors.contains(name)),
+        s"Trait ${variable.name} has a method that is already defined"
+      )
+      ctorName = dictionaryConstructor(variable)
+      _ <- guard(
+        !env.values.contains(ctorName) && !env.constructors.contains(ctorName),
+        s"Trait ${variable.name}: dictionary constructor ${ctorName.name} is already defined"
+      )
+      _ <- guard(methods.forall(_.body.isEmpty), s"Trait ${variable.name}: default method implementations are not supported yet")
+      typedMethods <- methods.traverse { m =>
+        m.sig.local((e: Env) => e.copy(typeVars = e.typeVars ++ params))
+          .map(typedSig => MethodSig[TypeRec](m.name, typedSig, None))
+      }
+    } yield topTraitT(variable, params, Seq.empty, typedMethods)
+
+    case AST.TopImpl(traitName, target, methods) => for {
+      env <- ask
+      traitDef <- lift(env.traits.get(traitName).toRight(s"Trait ${traitName.name} is not defined"))
+      _ <- guard(traitDef.param.length == 1, s"impl ${traitName.name}: multi-parameter traits are not supported yet")
+      (paramVar, paramKind) = traitDef.param.head
+      typedTarget <- target
+      expandedKinded <- expandWellKinded(typedTarget)
+      (expandedTarget, targetKind) = expandedKinded
+      _ <- guard(
+        targetKind == paramKind,
+        s"Kind mismatch in impl ${traitName.name}[${expandedTarget.show}]: trait parameter has kind ${paramKind.show}, target has kind ${targetKind.show}"
+      )
+      headApp <- lift(typeConstructorHead(expandedTarget).toRight(
+        s"impl ${traitName.name}[${expandedTarget.show}]: instance head must be a type constructor"
+      ))
+      (headName, headArgs) = headApp
+      _ <- guard(headArgs.isEmpty, s"impl ${traitName.name}[${expandedTarget.show}]: instance targets with type arguments are not supported yet")
+      _ <- guard(
+        !env.instances.contains(instanceKey(traitName, headName)),
+        s"Overlapping instance: ${traitName.name}[$headName] is already defined"
+      )
+      traitMethodNames = traitDef.methods.map(_._1)
+      implMethodNames = methods.map(_.name)
+      _ <- guard(implMethodNames.distinct.length == implMethodNames.length, s"impl ${traitName.name}[$headName] has duplicate methods")
+      missing = traitMethodNames.filterNot(implMethodNames.contains)
+      _ <- guard(missing.isEmpty, s"Missing method in impl ${traitName.name}[$headName]: ${missing.map(_.name).mkString(", ")}")
+      extra = implMethodNames.filterNot(traitMethodNames.contains)
+      _ <- guard(extra.isEmpty, s"Extra method in impl ${traitName.name}[$headName]: ${extra.map(_.name).mkString(", ")}")
+      sigScope = (e: Env) => e.copy(typeVars = e.typeVars + (paramVar -> paramKind))
+      typedMethods <- methods.traverse { m =>
+        val expected = substType(paramVar, expandedTarget, traitDef.methods.find(_._1 == m.name).get._2)
+        for {
+          typedBody <- m.body
+          _ <- guard(
+            Equivalence.beta(expected, typeOf(typedBody)),
+            s"Method type mismatch in impl ${traitName.name}[$headName]: ${m.name.name} must have type ${expected.show}, actual ${typeOf(typedBody).show}"
+          )
+          typedSig <- m.sig.traverse(_.local(sigScope))
+          _ <- typedSig.fold(guard(cond = true, "")) { s =>
+            for {
+              expandedSig <- lift(expandType(s, sigScope(env)))
+              declared = substType(paramVar, expandedTarget, expandedSig)
+              _ <- guard(
+                Equivalence.beta(expected, declared),
+                s"Method type mismatch in impl ${traitName.name}[$headName]: ${m.name.name} is declared as ${declared.show}, expected ${expected.show}"
+              )
+            } yield ()
+          }
+        } yield MethodImpl[TypeRec](m.name, typedSig, typedBody)
+      }
+    } yield topImplT(traitName, typedTarget, typedMethods)
 
     case AST.Abs(variable, types, body) => for {
       typedTypes <- types
@@ -653,6 +733,39 @@ object TAnalyser {
         values = env.values ++ constructorTypes,
         dataTypes = env.dataTypes + (variable -> dataDef),
         constructors = env.constructors ++ constructorDefs
+      )
+
+    case AST.TopTrait(variable, params, _, typedMethods) =>
+      val sigEnv = env.copy(typeVars = env.typeVars ++ params)
+      typedMethods.traverse(m => expandAndCheckStar(m.sig, sigEnv).map(sig => m.name -> sig)).map { expandedSigs =>
+        val ctorName = dictionaryConstructor(variable)
+        val fields = expandedSigs.map(_._2)
+        val ctorDef = ConstructorDef(ctorName, variable, fields, 0)
+        val constraint = TypeConstraint(variable, params.map { case (p, _) => typeVarT(p) })
+        val surfaceTypes = expandedSigs.map { case (name, sig) =>
+          name -> params.foldRight(sig) { case ((p, k), acc) => forallTypeT(p, k, acc) }
+        }
+        env.copy(
+          values = env.values ++ surfaceTypes + (ctorName -> constructorType(variable, params, fields)),
+          dataTypes = env.dataTypes + (variable -> DataDef(params, Seq(ctorDef), recursive = false)),
+          constructors = env.constructors + (ctorName -> ctorDef),
+          traits = env.traits + (variable -> TraitDef(params, expandedSigs, Seq.empty)),
+          constrains = env.constrains ++ expandedSigs.map { case (name, _) => name -> Seq(constraint) }
+        )
+      }
+
+    case AST.TopImpl(traitName, typedTarget, _) =>
+      for {
+        expandedTarget <- expandType(typedTarget, env)
+        headApp <- typeConstructorHead(expandedTarget).toRight(
+          s"impl ${traitName.name}[${expandedTarget.show}]: instance head must be a type constructor"
+        )
+        key = instanceKey(traitName, headApp._1)
+        _ <- Either.cond(!env.instances.contains(key), (), s"Overlapping instance: ${traitName.name}[${headApp._1}] is already defined")
+        dictName = instanceDictionaryName(traitName, headApp._1)
+      } yield env.copy(
+        instances = env.instances + (key -> InstanceDef(traitName, expandedTarget, Seq.empty, dictName)),
+        values = env.values + (dictName -> applyTypeConstructor(traitName, Seq(expandedTarget)))
       )
   }
 

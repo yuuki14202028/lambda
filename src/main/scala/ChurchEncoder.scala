@@ -291,6 +291,12 @@ object ChurchEncoder {
         } yield topLetT(constructor.name, constructorT, value) }.map(_ -> env)
       }
 
+    case AST.TopTrait(variable, _, _, _) =>
+      Left(EncodeError.InvariantViolation(s"TopTrait ${variable.name} must be desugared by TraitEncoder before Church encoding"))
+
+    case AST.TopImpl(variable, _, _) =>
+      Left(EncodeError.InvariantViolation(s"TopImpl ${variable.name} must be desugared by TraitEncoder before Church encoding"))
+
     case _ =>
       decl.para(encoderAlg).run(env).map(encodedDecl => (Seq(encodedDecl), env))
   }

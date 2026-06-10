@@ -1,0 +1,6 @@
+
+data Functor[F: * → *] = | MkFunctor(∀a. ∀b. (a → b) → (F[a] → F[b]))
+
+let fmap[F: * → *](v: Functor[F]): ∀a. ∀b. (a → b) → (F[a] → F[b]) = match v with
+  | MkFunctor(r) -> r
+
