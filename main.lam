@@ -50,5 +50,7 @@ let compute(): Maybe[i32] =
     bind[Maybe][i32][i32](safeDiv(step1)(3))(λstep2: i32.
       ret[Maybe][i32](step2 + 1)))
 
-let main(): i32 =
-  printf[foreign.C.String]("result = ") + printf[Maybe[i32]](compute()) + printf[foreign.C.String]("\n")
+let main(): i32 = {
+  printf[foreign.C.String](`result = {compute()}\n`);
+  0
+}

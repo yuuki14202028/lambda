@@ -34,6 +34,7 @@ enum AST[R[_], I] {
   case Num(value: String, typeName: String) extends AST[R, Expr]
   case Char(value: scala.Char) extends AST[R, Expr]
   case StringLit(value: String) extends AST[R, Expr]
+  case StrInterp(parts: Seq[R[Expr]]) extends AST[R, Expr]
   case Bool(value: Boolean) extends AST[R, Expr]
   case UnitLit() extends AST[R, Expr]
   case Block(discarded: Seq[R[Expr]], result: Option[R[Expr]]) extends AST[R, Expr]
@@ -178,6 +179,7 @@ def varr(variable: Variable): Rec[Expr] = HFix(AST.Var(variable))
 def num(value: String, typeName: String): Rec[Expr] = HFix(AST.Num(value, typeName))
 def char(value: scala.Char): Rec[Expr] = HFix(AST.Char(value))
 def stringLit(value: String): Rec[Expr] = HFix(AST.StringLit(value))
+def strInterp(parts: Seq[Rec[Expr]]): Rec[Expr] = HFix(AST.StrInterp(parts))
 def bool(value: Boolean): Rec[Expr] = HFix(AST.Bool(value))
 def unitLit: Rec[Expr] = HFix(AST.UnitLit())
 def block(discarded: Seq[Rec[Expr]], result: Option[Rec[Expr]]): Rec[Expr] = HFix(AST.Block(discarded, result))
@@ -326,6 +328,7 @@ def freeVars(expr: Rec[Expr]): Set[Variable] = {
     case AST.Block(discarded, result) => discarded.foldLeft(Set.empty[Variable])(_ ++ _) ++ result.getOrElse(Set.empty)
     case AST.BinOp(_, left, right) => left ++ right
     case AST.Intrinsic(_, args) => args.foldLeft(Set.empty[Variable])(_ ++ _)
+    case AST.StrInterp(parts) => parts.foldLeft(Set.empty[Variable])(_ ++ _)
     case AST.UnaryOp(_, body) => body
     case AST.If(cond, thenBranch, elseBranch) => cond ++ thenBranch ++ elseBranch
     case AST.Num(_, _) | AST.Char(_) | AST.StringLit(_) | AST.Bool(_) | AST.UnitLit() => Set.empty

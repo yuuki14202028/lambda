@@ -24,13 +24,17 @@ object ParserAST {
 
   private val unitParens: Parser[Unit] = '(' -*> ')'
 
-  private def binaryLevel(op: Parser[BinOps], next: => Parser[Rec[Expr]]): Parser[Rec[Expr]] = {
+  private def opLevel(op: Parser[(Rec[Expr], Rec[Expr]) => Rec[Expr]], next: => Parser[Rec[Expr]], atomicStep: Boolean = false): Parser[Rec[Expr]] = {
     val operand = Parser.defer(next)
-    val tail = (sp.with1.soft *> op ~ (sp.with1 *> operand)).rep0
+    val step = op ~ (sp.with1 *> operand)
+    val tail = (sp.with1.soft *> (if (atomicStep) step.backtrack else step)).rep0
     (operand ~ tail).map { case (init, ops) =>
-      ops.foldLeft(init) { case (acc, (o, r)) => binop(o, acc, r) }
+      ops.foldLeft(init) { case (acc, (f, r)) => f(acc, r) }
     }
   }
+
+  private def binaryLevel(op: Parser[BinOps], next: => Parser[Rec[Expr]]): Parser[Rec[Expr]] =
+    opLevel(op.map(o => binop(o, _, _)), next)
 
   private def arrowChain[A](atom: Parser[A], whole: => Parser[A])(make: (A, A) => A): Parser[A] = {
     val arrowTail = sp.with1.soft *> '→' -*> Parser.defer(whole)
@@ -317,6 +321,18 @@ object ParserAST {
 
   private val xorOp: Parser[BinOps] = '^'.as(BinOps.Xor)
 
+  private val exprKeywords: Set[String] = Set(
+    "in", "then", "else", "with", "as", "where",
+    "let", "rec", "if", "match", "fold", "data", "type",
+    "import", "trait", "impl", "def", "true", "false",
+    "foreign", "intrinsic"
+  )
+
+  private val infixIdentOp: Parser[(Rec[Expr], Rec[Expr]) => Rec[Expr]] =
+    identifier.filter(n => !exprKeywords(n)).map { n => (l, r) =>
+      app(app(varr(Variable(n)), l), r)
+    }
+
   lazy val logicalOr: Parser[Rec[Expr]]      = binaryLevel("||".as(BinOps.ShortOr), logicalAnd)
   lazy val logicalAnd: Parser[Rec[Expr]]     = binaryLevel("&&".as(BinOps.ShortAnd), bitwiseOr)
   lazy val bitwiseOr: Parser[Rec[Expr]]      = binaryLevel(bitOrOp, bitwiseXor)
@@ -324,7 +340,8 @@ object ParserAST {
   lazy val bitwiseAnd: Parser[Rec[Expr]]     = binaryLevel(bitAndOp, equitive)
   lazy val equitive: Parser[Rec[Expr]]       = binaryLevel(eqOp, additive)
   lazy val additive: Parser[Rec[Expr]]       = binaryLevel(addOp, multiplicative)
-  lazy val multiplicative: Parser[Rec[Expr]] = binaryLevel(mulOp, unaryP)
+  lazy val multiplicative: Parser[Rec[Expr]] = binaryLevel(mulOp, infixApp)
+  lazy val infixApp: Parser[Rec[Expr]]       = opLevel(infixIdentOp, unaryP, atomicStep = true)
 
   lazy val unaryP: Parser[Rec[Expr]] = {
     val neg = ('-' -*> Parser.defer(unaryP)).map(b => unop(UnaryOps.Neg, b))
@@ -346,7 +363,7 @@ object ParserAST {
   }
 
   lazy val atom: Parser[Rec[Expr]] =
-    Parser.defer(blockP | unitP.backtrack | numP | charP | stringP | boolP | foreignP | intrinsicP | varP | Parser.defer(expr).parens)
+    Parser.defer(blockP | unitP.backtrack | numP | charP | stringP | interpStringP | boolP | foreignP | intrinsicP | varP | Parser.defer(expr).parens)
 
   lazy val blockP: Parser[Rec[Expr]] = {
     val discarded = (Parser.defer(expr) <* spaced(';')).backtrack.rep0
@@ -406,6 +423,31 @@ object ParserAST {
     )
     val plain = Parser.charWhere(ch => ch != '"' && ch != '\\' && ch != '\n' && ch != '\r')
     ('"' *> (escaped | plain).rep0 <* '"').map(chars => stringLit(chars.mkString))
+  }
+
+  val interpStringP: Parser[Rec[Expr]] = {
+    val escaped = Parser.char('\\') *> (
+      Parser.char('`').as('`') |
+      Parser.char('{').as('{') |
+      Parser.char('}').as('}') |
+      Parser.char('\\').as('\\') |
+      Parser.char('n').as('\n') |
+      Parser.char('r').as('\r') |
+      Parser.char('t').as('\t') |
+      Parser.char('0').as('\u0000')
+    )
+    val plain = Parser.charWhere(ch => ch != '`' && ch != '{' && ch != '\\' && ch != '\n' && ch != '\r')
+    val literalPart: Parser[Either[String, Rec[Expr]]] =
+      (escaped | plain).rep.map(chars => Left(chars.toList.mkString))
+    val exprPart: Parser[Either[String, Rec[Expr]]] =
+      ('{' -*> Parser.defer(expr) <*- '}').map(Right.apply)
+    ('`' *> (literalPart | exprPart).rep0 <* '`').map { parts =>
+      if (parts.forall(_.isLeft)) stringLit(parts.collect { case Left(s) => s }.mkString)
+      else strInterp(parts.map {
+        case Left(s) => stringLit(s)
+        case Right(e) => e
+      })
+    }
   }
 
   val boolP: Parser[Rec[Expr]] = "true".as(bool(true)) | "false".as(bool(false))

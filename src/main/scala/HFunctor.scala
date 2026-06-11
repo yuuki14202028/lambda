@@ -96,6 +96,8 @@ given HTraverse[AST] with {
     case AST.Num(v, t) => Applicative[G].pure(AST.Num(v, t))
     case AST.Char(v) => Applicative[G].pure(AST.Char(v))
     case AST.StringLit(v) => Applicative[G].pure(AST.StringLit(v))
+    case AST.StrInterp(parts) =>
+      parts.traverse(part => f(part)).map(AST.StrInterp(_))
     case AST.Bool(v) => Applicative[G].pure(AST.Bool(v))
     case AST.UnitLit() => Applicative[G].pure(AST.UnitLit())
     case AST.Block(discarded, result) =>

@@ -88,6 +88,7 @@ val showAlg: Algebra[AST, ShowResult] = [x] => node => node match {
     case '\u0000' => "\\0"
     case ch => ch.toString
   } + "\""
+  case AST.StrInterp(parts)        => parts.map(p => s"{$p}").mkString("`", "", "`")
   case AST.Bool(v)                 => s"$v"
   case AST.UnitLit()               => "()"
   case AST.Block(discarded, result) =>

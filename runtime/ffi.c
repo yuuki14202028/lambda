@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 char *read_line(void) {
     char *buffer = malloc(1024);
@@ -46,4 +47,17 @@ char *int_to_string(int value) {
 int put_char(int value) {
     putchar(value);
     return value;
+}
+
+char *concat(const char *left, const char *right) {
+    if (left == NULL) left = "";
+    if (right == NULL) right = "";
+    size_t len = strlen(left) + strlen(right) + 1;
+    char *buffer = malloc(len);
+    if (buffer == NULL) {
+        return NULL;
+    }
+    strcpy(buffer, left);
+    strcat(buffer, right);
+    return buffer;
 }

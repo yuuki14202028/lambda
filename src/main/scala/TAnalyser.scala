@@ -146,6 +146,34 @@ object TAnalyser {
   private def expectForeignType(t: TypeRec[Type]): Check[Unit] =
     guard(foreignArity(t) > 0, s"Foreign function must have at least one argument: ${t.show}")
 
+  // ---- 文字列埋め込みの脱糖 ----
+  // `a = {e}` は型検査時に concat("a = ")(show[τ](e)) へ展開する。
+  // concat はスコープ中の変数ではなくランタイムの C 関数 concat を Foreign として直接参照する。
+  private val showMethod = Variable("show")
+
+  private def interpConcatType: TypeRec[Type] = arrowT(stringTypeT, arrowT(stringTypeT, stringTypeT))
+
+  // String 型でない埋め込み式 e: τ を show[τ](e) に包む(show は trait メソッドとして TraitEncoder が辞書解決する)
+  private def stringifyPart(part: TypeRec[Expr]): Check[TypeRec[Expr]] = {
+    val partType = typeOf(part)
+    if (Equivalence.beta(stringTypeT, partType)) okT(part)
+    else for {
+      env <- ask
+      surface <- lift(env.values.get(showMethod).toRight(
+        s"String interpolation: cannot embed ${partType.show}; method `show` is not defined"))
+      destructed <- lift(destructForAllK(surface).toRight(
+        s"String interpolation: `show` must be polymorphic, actual ${surface.show}"))
+      (variable, kind, body) = destructed
+      _ <- guard(kind == Kind.Star, s"String interpolation: `show` type parameter must have kind *, actual ${kind.show}")
+      applied = substType(variable, partType, body)
+      arrowParts <- lift(destructArrow(applied).toRight(
+        s"String interpolation: `show` must be a function, actual ${applied.show}"))
+      (from, to) = arrowParts
+      _ <- guard(Equivalence.beta(from, partType), s"String interpolation: `show` cannot accept ${partType.show}, expected ${from.show}")
+      _ <- guard(Equivalence.beta(stringTypeT, to), s"String interpolation: `show` must return ${stringTypeT.show}, actual ${to.show}")
+    } yield appT(to, tyAppT(applied, varrType(showMethod, surface), partType), part)
+  }
+
   private def dataResultType(owner: TypeVariable, params: Seq[(TypeVariable, Kind)]): TypeRec[Type] =
     applyTypeConstructor(owner, params.map { case (v, _) => typeVarT(v) })
 
@@ -680,6 +708,17 @@ object TAnalyser {
       else fail(s"Numeric literal type $typeName is not defined")
     case AST.Char(value) => okT(charT(value, charTypeT))
     case AST.StringLit(value) => okT(stringLitT(value, stringTypeT))
+    case AST.StrInterp(parts) => for {
+      typedParts <- parts.toList.traverse(identity)
+      stringified <- typedParts.traverse(stringifyPart)
+    } yield stringified match {
+      case Nil => stringLitT("", stringTypeT)
+      case head :: tail =>
+        tail.foldLeft(head) { (acc, part) =>
+          val concatRef = foreignT(Variable("concat"), interpConcatType, interpConcatType)
+          appT(stringTypeT, appT(arrowT(stringTypeT, stringTypeT), concatRef, acc), part)
+        }
+    }
     case AST.Bool(value) => okT(boolT(value, boolTypeT))
     case AST.UnitLit() => okT(unitLitT(unitTypeT))
 

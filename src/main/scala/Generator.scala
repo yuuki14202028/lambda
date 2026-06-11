@@ -492,6 +492,7 @@ object Generator {
       ins("adrp", r(x0), Page(lbl)),
       ins("add", r(x0), r(x0), PageOff(lbl))
     )
+    case AST.StrInterp(_) => sys.error("StrInterp must be desugared by the type checker before code generation")
     case AST.Bool(v) => pure(loadImm32(if (v) 1 else 0))
     case AST.UnitLit() => pure(loadImm32(0))
 
