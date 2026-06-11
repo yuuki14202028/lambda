@@ -728,6 +728,38 @@ object TAnalyser {
       resultType = typedResult.map(typeOf).getOrElse(unitTypeT)
     } yield blockT(resultType, typedDiscarded, typedResult)
 
+    case AST.Context(monad, bindings, result) => for {
+      typedMonad <- monad
+      expandedMonad <- expandWellKinded(typedMonad)
+      (monadType, monadKind) = expandedMonad
+      _ <- guard(
+        monadKind == Kind.Arrow(Kind.Star, Kind.Star),
+        s"context: ${monadType.show} has kind ${monadKind.show}, expected ${Kind.Arrow(Kind.Star, Kind.Star).show}"
+      )
+      checkedBindings <- bindings.foldLeft(
+        (Map.empty[Variable, TypeRec[Type]], List.empty[ContextBinding[TypeRec]]).pure[Check]
+      ) { (accM, b) =>
+        accM.flatMap { case (scope, done) =>
+          val scopeFn = (e: Env) => e.copy(values = e.values ++ scope)
+          for {
+            typedAnn <- b.annotation.local(scopeFn)
+            annType <- expandChecked(typedAnn)
+            valueScope =
+              if (!b.monadic && b.recursive) (e: Env) => e.copy(values = e.values ++ scope + (b.name -> annType))
+              else scopeFn
+            typedValue <- b.value.local(valueScope)
+            _ <-
+              if (b.monadic) expect(typeAppT(monadType, annType), typeOf(typedValue))
+              else expect(annType, typeOf(typedValue))
+          } yield (scope + (b.name -> annType), done :+ ContextBinding[TypeRec](b.name, annType, typedValue, b.monadic, b.recursive))
+        }
+      }
+      (bindersScope, typedBindings) = checkedBindings
+      typedResult <- result.local((e: Env) => e.copy(values = e.values ++ bindersScope))
+      env <- ask
+      chain <- lift(ContextDesugar.desugarContext(env.values, monadType, typedBindings, typedResult))
+    } yield contextExprT(typeOf(chain), monadType, typedBindings, typedResult)
+
     case AST.BinOp(op, left, right) => for {
       typedLeft <- left
       typedRight <- right

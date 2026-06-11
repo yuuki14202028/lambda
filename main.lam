@@ -31,13 +31,13 @@ impl[a] Show[Maybe[a]] where [Show[a]] {
 }
 
 trait Monad[m: * → *] {
-  def ret[a](x: a): m[a]
-  def bind[a][b](v: m[a])(f: a → m[b]): m[b]
+  def pure[a](x: a): m[a]
+  def flatMap[a][b](v: m[a])(f: a → m[b]): m[b]
 }
 
 impl Monad[Maybe] {
-  def ret[a](x:a): m[a] = Just[a](x)
-  def bind[a][b](m: Maybe[a])(f: a → Maybe[b]): Maybe[b] = match m with
+  def pure[a](x:a): m[a] = Just[a](x)
+  def flatMap[a][b](m: Maybe[a])(f: a → Maybe[b]): Maybe[b] = match m with
     | Nothing -> Nothing[b]
     | Just(x) -> f(x)
 }
@@ -45,10 +45,11 @@ impl Monad[Maybe] {
 let safeDiv(x: i32)(y: i32): Maybe[i32] =
   if y == 0 then Nothing[i32] else Just[i32](x / y)
 
-let compute(): Maybe[i32] =
-  bind[Maybe][i32][i32](safeDiv(120)(5))(λstep1: i32.
-    bind[Maybe][i32][i32](safeDiv(step1)(3))(λstep2: i32.
-      ret[Maybe][i32](step2 + 1)))
+let compute(): Maybe[i32] = context[Maybe] {
+  step1: i32 = 120 safeDiv 5;
+  step2: i32 = step1 safeDiv 3;
+  step2 + 1
+}
 
 let main(): i32 = {
   printf[foreign.C.String](`result = {compute()}\n`);

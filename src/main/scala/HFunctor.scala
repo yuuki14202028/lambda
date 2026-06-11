@@ -98,6 +98,11 @@ given HTraverse[AST] with {
     case AST.StringLit(v) => Applicative[G].pure(AST.StringLit(v))
     case AST.StrInterp(parts) =>
       parts.traverse(part => f(part)).map(AST.StrInterp(_))
+    case AST.Context(monad, bindings, result) =>
+      val bindingsG = bindings.traverse { b =>
+        (f(b.annotation), f(b.value)).mapN(ContextBinding[S](b.name, _, _, b.monadic, b.recursive))
+      }
+      (f(monad), bindingsG, f(result)).mapN(AST.Context(_, _, _))
     case AST.Bool(v) => Applicative[G].pure(AST.Bool(v))
     case AST.UnitLit() => Applicative[G].pure(AST.UnitLit())
     case AST.Block(discarded, result) =>

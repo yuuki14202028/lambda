@@ -38,6 +38,7 @@ enum AST[R[_], I] {
   case Bool(value: Boolean) extends AST[R, Expr]
   case UnitLit() extends AST[R, Expr]
   case Block(discarded: Seq[R[Expr]], result: Option[R[Expr]]) extends AST[R, Expr]
+  case Context(monad: R[Type], bindings: Seq[ContextBinding[R]], result: R[Expr]) extends AST[R, Expr]
   case BinOp(op: BinOps, left: R[Expr], right: R[Expr]) extends AST[R, Expr]
   case Intrinsic(op: IntrinsicOps, args: Seq[R[Expr]]) extends AST[R, Expr]
   case UnaryOp(op: UnaryOps, body: R[Expr]) extends AST[R, Expr]
@@ -52,6 +53,7 @@ enum AST[R[_], I] {
 
 case class DataConstructor[R[_]](name: Variable, fields: Seq[R[Type]])
 case class MatchCase[R[_]](constructor: Variable, binders: Seq[Variable], body: R[Expr])
+case class ContextBinding[R[_]](name: Variable, annotation: R[Type], value: R[Expr], monadic: Boolean, recursive: Boolean = false)
 
 case class Constraint[R[_]](name: TypeVariable, arg: Seq[R[Type]])
 case class MethodSig[R[_]](name: Variable, sig: R[Type], body: Option[R[Expr]])
@@ -183,6 +185,8 @@ def strInterp(parts: Seq[Rec[Expr]]): Rec[Expr] = HFix(AST.StrInterp(parts))
 def bool(value: Boolean): Rec[Expr] = HFix(AST.Bool(value))
 def unitLit: Rec[Expr] = HFix(AST.UnitLit())
 def block(discarded: Seq[Rec[Expr]], result: Option[Rec[Expr]]): Rec[Expr] = HFix(AST.Block(discarded, result))
+def contextExpr(monad: Rec[Type], bindings: Seq[ContextBinding[[x] =>> Rec[x]]], result: Rec[Expr]): Rec[Expr] =
+  HFix(AST.Context(monad, bindings, result))
 def binop(op: BinOps, left: Rec[Expr], right: Rec[Expr]): Rec[Expr] = HFix(AST.BinOp(op, left, right))
 def intrinsic(op: IntrinsicOps, args: Seq[Rec[Expr]]): Rec[Expr] = HFix(AST.Intrinsic(op, args))
 def unop(op: UnaryOps, body: Rec[Expr]): Rec[Expr] = HFix(AST.UnaryOp(op, body))
@@ -258,6 +262,8 @@ def boolT(value: Boolean, t: TypeRec[Type]): TypeRec[Expr] = HCofree(ExprAnn(t),
 def unitLitT(t: TypeRec[Type]): TypeRec[Expr] = HCofree(ExprAnn(t), AST.UnitLit())
 def blockT(t: TypeRec[Type], discarded: Seq[TypeRec[Expr]], result: Option[TypeRec[Expr]]): TypeRec[Expr] =
   HCofree(ExprAnn(t), AST.Block(discarded, result))
+def contextExprT(t: TypeRec[Type], monad: TypeRec[Type], bindings: Seq[ContextBinding[TypeRec]], result: TypeRec[Expr]): TypeRec[Expr] =
+  HCofree(ExprAnn(t), AST.Context(monad, bindings, result))
 def binopT(op: BinOps, t: TypeRec[Type], left: TypeRec[Expr], right: TypeRec[Expr]): TypeRec[Expr] =
   HCofree(ExprAnn(t), AST.BinOp(op, left, right))
 def intrinsicT(op: IntrinsicOps, t: TypeRec[Type], args: Seq[TypeRec[Expr]]): TypeRec[Expr] =
@@ -329,6 +335,11 @@ def freeVars(expr: Rec[Expr]): Set[Variable] = {
     case AST.BinOp(_, left, right) => left ++ right
     case AST.Intrinsic(_, args) => args.foldLeft(Set.empty[Variable])(_ ++ _)
     case AST.StrInterp(parts) => parts.foldLeft(Set.empty[Variable])(_ ++ _)
+    case AST.Context(_, bindings, result) =>
+      bindings.foldRight(result) { (b, acc) =>
+        val valueFree = if (b.recursive) b.value - b.name else b.value
+        valueFree ++ (acc - b.name)
+      }
     case AST.UnaryOp(_, body) => body
     case AST.If(cond, thenBranch, elseBranch) => cond ++ thenBranch ++ elseBranch
     case AST.Num(_, _) | AST.Char(_) | AST.StringLit(_) | AST.Bool(_) | AST.UnitLit() => Set.empty

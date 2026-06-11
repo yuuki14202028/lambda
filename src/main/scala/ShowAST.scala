@@ -89,6 +89,12 @@ val showAlg: Algebra[AST, ShowResult] = [x] => node => node match {
     case ch => ch.toString
   } + "\""
   case AST.StrInterp(parts)        => parts.map(p => s"{$p}").mkString("`", "", "`")
+  case AST.Context(monad, bindings, result) =>
+    val bindingText = bindings.map { b =>
+      if (b.monadic) s"${b.name.name}: ${b.annotation} = ${b.value};"
+      else s"let ${if (b.recursive) "rec " else ""}${b.name.name}: ${b.annotation} = ${b.value};"
+    }
+    s"context[$monad] { ${(bindingText :+ result.toString).mkString(" ")} }"
   case AST.Bool(v)                 => s"$v"
   case AST.UnitLit()               => "()"
   case AST.Block(discarded, result) =>

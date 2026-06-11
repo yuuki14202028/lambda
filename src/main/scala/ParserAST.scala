@@ -61,7 +61,7 @@ object ParserAST {
   }
 
   lazy val expr: Parser[Rec[Expr]] =
-    Parser.defer(dataLetP | foldP.backtrack | matchP | typeLetP | tyAbsP | absP | letExprP | ifP | logicalOr)
+    Parser.defer(dataLetP | foldP.backtrack | matchP | typeLetP | tyAbsP | absP | contextP.backtrack | letExprP | ifP | logicalOr)
 
 
   lazy val tyAbsP: Parser[Rec[Expr]] = binderP('Λ', expr)(tyAbs)
@@ -292,6 +292,19 @@ object ParserAST {
     }
   }
 
+  lazy val contextP: Parser[Rec[Expr]] = {
+    val monad = "context" -*> Parser.defer(typeP).brackets
+    val monadicBinding = (identifier.map(Variable.apply) ~ typeAnnP ~ valueP <* spaced(';')).backtrack.map {
+      case ((name, types), value) => ContextBinding[[x] =>> Rec[x]](name, types, value, monadic = true)
+    }
+    val pureLet = (binding <* spaced(';')).backtrack.map { case (recursive, name, types, value) =>
+      ContextBinding[[x] =>> Rec[x]](name, types, value, monadic = false, recursive)
+    }
+    val bindings = (pureLet | monadicBinding).rep0
+    val body = '{' -*> (bindings.with1 ~ Parser.defer(expr)) <*- '}'
+    (monad ~ (sp.with1 *> body)).map { case (m, (bs, result)) => contextExpr(m, bs, result) }
+  }
+
   lazy val foldP: Parser[Rec[Expr]] = {
     val scrutinee = "fold" -+> expr
     val resultType = sp.with1 *> ("as" -+> typeP)
@@ -322,7 +335,7 @@ object ParserAST {
   private val xorOp: Parser[BinOps] = '^'.as(BinOps.Xor)
 
   private val exprKeywords: Set[String] = Set(
-    "in", "then", "else", "with", "as", "where",
+    "in", "then", "else", "with", "as", "where", "context",
     "let", "rec", "if", "match", "fold", "data", "type",
     "import", "trait", "impl", "def", "true", "false",
     "foreign", "intrinsic"

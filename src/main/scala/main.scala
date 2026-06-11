@@ -13,7 +13,8 @@ def main(args: String*): Unit = {
     resolved <- ImportResolver.resolve(ast, srcPath)
     _ = println(resolved.show)
     typed <- TAnalyser.validate(resolved).left.map(err => s"Type error: $err")
-    desugared <- TraitEncoder.encode(typed).left.map(err => s"Trait encode error: $err")
+    contextFree <- ContextDesugar.desugar(typed).left.map(err => s"Context desugar error: $err")
+    desugared <- TraitEncoder.encode(contextFree).left.map(err => s"Trait encode error: $err")
     encoded <- ChurchEncoder.encode(desugared).left.map(err => s"Encode error: $err")
     _ = println(eraseAnn(encoded).show)
   } yield encoded
