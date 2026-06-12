@@ -463,15 +463,15 @@ def containsDataApplicationOf(t: TypeRec[Type], owner: TypeVariable): Boolean = 
 
 def dataTypeApplication[D]
                        (t: TypeRec[Type], dataTypes: Map[TypeVariable, D])
-                       (paramsOf: D => Seq[TypeVariable]): Either[String, (TypeVariable, D, Seq[TypeRec[Type]])] = {
+                       (paramsOf: D => Seq[TypeVariable]): Either[CompileError, (TypeVariable, D, Seq[TypeRec[Type]])] = {
   val (head, args) = collectTypeApps(t)
   head.project match {
     case AST.TypeVar(variable) => dataTypes.get(variable) match {
       case Some(dataDef) if paramsOf(dataDef).length == args.length => Right((variable, dataDef, args))
-      case Some(dataDef) => Left(s"Data type ${variable.name} expects ${paramsOf(dataDef).length} arguments, got ${args.length}")
-      case None => Left(s"Not a data type: ${t.show}")
+      case Some(dataDef) => Left(CompileError.DataArityMismatch(variable.name, paramsOf(dataDef).length, args.length))
+      case None => Left(CompileError.NotADataType(t))
     }
-    case _ => Left(s"Not a data type: ${t.show}")
+    case _ => Left(CompileError.NotADataType(t))
   }
 }
 
@@ -484,13 +484,14 @@ def countLeadingForalls(t: TypeRec[Type], acc: Int = 0): Int = destructForAllK(t
   case None => acc
 }
 
-def stripLeadingForalls(t: TypeRec[Type], count: Int): Either[String, (Seq[(TypeVariable, Kind)], TypeRec[Type])] = {
+// 失敗時は実際に剥がせた ∀ の個数を Left で返す（エラー文の組み立ては呼び出し側の責務）
+def stripLeadingForalls(t: TypeRec[Type], count: Int): Either[Int, (Seq[(TypeVariable, Kind)], TypeRec[Type])] = {
   @scala.annotation.tailrec
-  def loop(current: TypeRec[Type], remaining: Int, acc: List[(TypeVariable, Kind)]): Either[String, (Seq[(TypeVariable, Kind)], TypeRec[Type])] =
+  def loop(current: TypeRec[Type], remaining: Int, acc: List[(TypeVariable, Kind)]): Either[Int, (Seq[(TypeVariable, Kind)], TypeRec[Type])] =
     if (remaining == 0) Right((acc.reverse, current))
     else destructForAllK(current) match {
       case Some((v, k, body)) => loop(body, remaining - 1, (v, k) :: acc)
-      case None => Left(s"expected $count leading ∀ binders, got ${count - remaining}: ${t.show}")
+      case None => Left(count - remaining)
     }
   loop(t, count, Nil)
 }

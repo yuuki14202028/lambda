@@ -41,10 +41,4 @@ object Equivalence {
     t.cata(alg)
   }
 
-  def beta(left: TypeRec[Type], right: TypeRec[Type]): Boolean = {
-    alpha(normalize(left), normalize(right))
-  }
-
-
-
 }

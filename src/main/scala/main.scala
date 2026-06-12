@@ -9,18 +9,18 @@ def main(args: String*): Unit = {
   val src = Files.readString(srcPath)
 
   val result = for {
-    ast <- ParserAST.programParser.parseAll(src).left.map(err => s"Parse error: $err")
+    ast <- ParserAST.programParser.parseAll(src).left.map(CompileError.ParseFailure.apply)
     resolved <- ImportResolver.resolve(ast, srcPath)
     _ = println(resolved.show)
-    typed <- TAnalyser.validate(resolved).left.map(err => s"Type error: $err")
-    contextFree <- ContextDesugar.desugar(typed).left.map(err => s"Context desugar error: $err")
-    desugared <- TraitEncoder.encode(contextFree).left.map(err => s"Trait encode error: $err")
-    encoded <- ChurchEncoder.encode(desugared).left.map(err => s"Encode error: $err")
+    typed <- TAnalyser.validate(resolved)
+    contextFree <- ContextDesugar.desugar(typed)
+    desugared <- TraitEncoder.encode(contextFree)
+    encoded = ChurchEncoder.encode(desugared)
     _ = println(eraseAnn(encoded).show)
   } yield encoded
 
   result match {
-    case Left(err) => Console.err.println(err)
+    case Left(err) => Console.err.println(err.render)
     case Right(encoded) => {
       val asm = Generator.generate(encoded)
       val outDir = asmPath.getParent

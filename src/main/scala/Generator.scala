@@ -730,10 +730,8 @@ object Generator {
   }
 
   private def genProgram(decls: Seq[TypeRec[Decl]]): Gen[AssemblyProgram] = ReaderT { initialEnv =>
-    decls.foldLeft(State.pure[GenState, (Code, Env)]((Code.empty, initialEnv))) { (acc, decl) =>
-      acc.flatMap { case (code, env) =>
-        genDecl(decl, env).map { case (declCode, nextEnv) => (code ++ declCode, nextEnv) }
-      }
+    decls.toList.foldLeftM((Code.empty, initialEnv)) { case ((code, env), decl) =>
+      genDecl(decl, env).map { case (declCode, nextEnv) => (code ++ declCode, nextEnv) }
     }.flatMap { case (declCode, env) =>
       val main = appT(intTypeT, varrType(Variable("main"), arrowT(unitTypeT, intTypeT)), unitLitT(unitTypeT))
       main.para(genAlg).run(env).map { mainCode =>
