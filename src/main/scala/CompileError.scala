@@ -79,6 +79,8 @@ enum OperandRequirement {
  * 表示は render が一元的に行う（将来の多言語対応は render の差し替えで行う）。
  */
 enum CompileError {
+  case At(offset: Int, error: CompileError)
+
   // ---- 構文・モジュール ----
   case ParseFailure(error: cats.parse.Parser.Error)
   case ImportReadFailure(path: Path, cause: Exception)
@@ -174,10 +176,18 @@ enum CompileError {
   case MainMissing
   case MainTypeInvalid(actual: TypeRec[Type])
 
+  def at(offset: Int): CompileError = this match {
+    case At(_, _) => this
+    case _ => At(offset, this)
+  }
+
   def render: String = this match {
-    case ParseFailure(error) => s"Parse error: $error"
+    case At(_, error) => error.render
+
+    case ParseFailure(error) => s"Parse error: expected ${expectationsShown(error.expected)}"
     case ImportReadFailure(path, cause) => s"Import error: $path: ${cause.getMessage}"
-    case ImportParseFailure(path, error) => s"Import error: parse error in $path: $error"
+    case ImportParseFailure(path, error) =>
+      s"Import error: parse error in $path: expected ${expectationsShown(error.expected)}"
     case UnresolvedImport(path) => s"Unresolved import: $path"
 
     case UndefinedVariable(name) => s"Variable ${name.name} is not defined"
@@ -291,6 +301,34 @@ enum CompileError {
     case MainTypeInvalid(actual) => s"Top-level main must have type unit → i32, actual ${actual.show}"
   }
 
+  def render(sourceName: String, locations: cats.parse.LocationMap): String = {
+    def withCaret(offset: Int, message: String): String =
+      locations.toCaret(offset) match {
+        case Some(caret) =>
+          val line = locations.getLine(caret.line).getOrElse("")
+          s"$sourceName:${caret.line + 1}:${caret.col + 1}: $message\n  $line\n  ${" " * caret.col}^"
+        case None => message
+      }
+    this match {
+      case At(offset, error) => withCaret(offset, error.render)
+      case ParseFailure(error) => withCaret(error.failedAtOffset, render)
+      case _ => render
+    }
+  }
+
   private def constraintShown(name: TypeVariable, args: Seq[TypeRec[Type]]): String =
     s"${name.name}${args.map(a => s"[${a.show}]").mkString}"
+
+  private def expectationsShown(expected: cats.data.NonEmptyList[cats.parse.Parser.Expectation]): String = {
+    import cats.parse.Parser.Expectation
+    expected.toList.map {
+      case Expectation.OneOfStr(_, strs) => strs.map(s => s"`$s`").mkString(", ")
+      case Expectation.InRange(_, lo, hi) => if (lo == hi) s"'$lo'" else s"'$lo'..'$hi'"
+      case Expectation.EndOfString(_, _) => "end of input"
+      case Expectation.StartOfString(_) => "start of input"
+      case Expectation.FailWith(_, message) => message
+      case Expectation.WithContext(context, _) => context
+      case other => other.toString
+    }.distinct.mkString(", ")
+  }
 }

@@ -16,8 +16,8 @@ object ImportResolver {
     path.normalize.toAbsolutePath
   }
 
-  private def resolveDecl(decl: Rec[Decl], baseDir: Path, seen: Set[Path]): EitherS[(Vector[Rec[Decl]], Set[Path])] =
-    decl.unfix match {
+  private def resolveDecl(decl: IndexedRec[Decl], baseDir: Path, seen: Set[Path]): EitherS[(Vector[IndexedRec[Decl]], Set[Path])] =
+    decl.project match {
       case AST.TopImport(importPath) => {
         val path = resolvePath(baseDir, importPath)
         if (seen.contains(path)) Right(Vector.empty -> seen)
@@ -26,28 +26,28 @@ object ImportResolver {
       case _ => Right(Vector(decl) -> seen)
     }
 
-  private def resolveFile(path: Path, seen: Set[Path]): EitherS[(Vector[Rec[Decl]], Set[Path])] = for {
+  private def resolveFile(path: Path, seen: Set[Path]): EitherS[(Vector[IndexedRec[Decl]], Set[Path])] = for {
     src <- try Right(Files.readString(path)) catch {
       case e: Exception => Left(CompileError.ImportReadFailure(path, e))
     }
     ast <- ParserAST.programParser.parseAll(src).left.map(err => CompileError.ImportParseFailure(path, err))
-    result <- ast.unfix match {
+    result <- ast.project match {
       case AST.Program(decls) => resolveDecls(decls.toVector, path.getParent, seen)
     }
   } yield result
 
-  private def resolveDecls(decls: Vector[Rec[Decl]], baseDir: Path, seen: Set[Path]): EitherS[(Vector[Rec[Decl]], Set[Path])] =
-    decls.foldLeftM(Vector.empty[Rec[Decl]] -> seen) {
+  private def resolveDecls(decls: Vector[IndexedRec[Decl]], baseDir: Path, seen: Set[Path]): EitherS[(Vector[IndexedRec[Decl]], Set[Path])] =
+    decls.foldLeftM(Vector.empty[IndexedRec[Decl]] -> seen) {
       case ((resolved, currentSeen), decl) =>
         resolveDecl(decl, baseDir, currentSeen).map { case (newDecls, nextSeen) =>
           (resolved ++ newDecls) -> nextSeen
         }
     }
 
-  def resolve(prog: Rec[AST.Program.type], sourcePath: Path): EitherS[Rec[AST.Program.type]] =
-    prog.unfix match {
+  def resolve(prog: IndexedRec[AST.Program.type], sourcePath: Path): EitherS[IndexedRec[AST.Program.type]] =
+    prog.project match {
       case AST.Program(decls) =>
         resolveDecls(decls.toVector, sourcePath.toAbsolutePath.getParent, Set.empty)
-          .map { case (resolved, _) => program(resolved) }
+          .map { case (resolved, _) => programI(resolved) }
     }
 }

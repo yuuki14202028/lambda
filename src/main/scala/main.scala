@@ -11,7 +11,7 @@ def main(args: String*): Unit = {
   val result = for {
     ast <- ParserAST.programParser.parseAll(src).left.map(CompileError.ParseFailure.apply)
     resolved <- ImportResolver.resolve(ast, srcPath)
-    _ = println(resolved.show)
+    _ = println(eraseIndex(resolved).show)
     typed <- TAnalyser.validate(resolved)
     contextFree <- ContextDesugar.desugar(typed)
     desugared <- TraitEncoder.encode(contextFree)
@@ -20,7 +20,7 @@ def main(args: String*): Unit = {
   } yield encoded
 
   result match {
-    case Left(err) => Console.err.println(err.render)
+    case Left(err) => Console.err.println(err.render(srcPath.toString, cats.parse.LocationMap(src)))
     case Right(encoded) => {
       val asm = Generator.generate(encoded)
       val outDir = asmPath.getParent

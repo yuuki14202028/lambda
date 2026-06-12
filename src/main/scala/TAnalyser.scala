@@ -1,7 +1,7 @@
 package com.yuuki14202028
 
 import cats.syntax.all._
-import cats.data.StateT
+import cats.data.{ReaderT, StateT}
 import Check.{ask, fail, guard, lift}
 
 object TAnalyser {
@@ -723,12 +723,15 @@ object TAnalyser {
     case AST.TypeApp(function, argument) => (function, argument).mapN(typeAppT)
   }
 
-  private def checkDecl(decl: Rec[Decl]): StateT[EitherS, Env, TypeRec[Decl]] =
+  private val indexedAlg: Algebra[IndexedAST, TC] = [x] => he =>
+    ReaderT((env: Env) => tcAlg(he.lower).run(env).left.map(_.at(he.ask)))
+
+  private def checkDecl(decl: IndexedRec[Decl]): StateT[EitherS, Env, TypeRec[Decl]] =
     StateT { env =>
-      for {
-        typedDecl <- decl.cata(tcAlg).run(env)
+      (for {
+        typedDecl <- decl.cata(indexedAlg).run(env)
         nextEnv <- extendEnv(typedDecl, env)
-      } yield (nextEnv, typedDecl)
+      } yield (nextEnv, typedDecl)).left.map(_.at(decl.extract))
     }
 
   private def extendEnv(decl: TypeRec[Decl], env: Env): EitherS[Env] = decl.project match {
@@ -837,7 +840,7 @@ object TAnalyser {
     case None => Left(CompileError.MainMissing)
   }
 
-  def validate(prog: Rec[AST.Program.type]): Either[CompileError, TypeRec[AST.Program.type]] = prog.unfix match {
+  def validate(prog: IndexedRec[AST.Program.type]): Either[CompileError, TypeRec[AST.Program.type]] = prog.project match {
     case AST.Program(decls) => decls.traverse(checkDecl).run(Env.empty).flatMap { case (env, typedDecls) =>
       checkMain(env).as(programT(typedDecls, env))
     }

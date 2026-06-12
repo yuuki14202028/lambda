@@ -148,6 +148,13 @@ object BuiltinTypes {
 }
 
 type Rec[I] = HFix[AST, I]
+type IndexedRec[I] = HCofree[AST, ConstI[Int], I]
+type IndexedAST[R[_], x] = HCofreeT[ConstI[Int], AST, R, x]
+
+def programI(decls: Seq[IndexedRec[Decl]]): IndexedRec[AST.Program.type] = HCofree(0, AST.Program(decls))
+
+val eraseIndex: IndexedRec ~> Rec =
+  [I] => (t: IndexedRec[I]) => HFix(t.project.hmap(eraseIndex))
 
 def program(decls: Seq[Rec[Decl]]): Rec[AST.Program.type] = HFix(AST.Program(decls))
 def topLet(variable: Variable, types: Rec[Type], value: Rec[Expr]): Rec[Decl] = HFix(AST.TopLet(variable, types, value))
