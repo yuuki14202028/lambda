@@ -7,12 +7,6 @@ object ChurchEncoder {
 
   private type Encode[A] = Reader[DataEnv, A]
   private type Encoded[I] = Encode[TypeRec[I]]
-  private type Child[I] = (TypeRec[I], Encoded[I])
-
-  extension [I](self: Child[I]) {
-    private def original: TypeRec[I] = self._1
-    private def encoded: Encoded[I] = self._2
-  }
 
   private def invariant(msg: String): Nothing = sys.error(s"Compiler invariant violation: $msg")
   private def orInvariant[A](e: Either[CompileError, A]): A = e.fold(err => invariant(err.render), identity)
@@ -47,14 +41,14 @@ object ChurchEncoder {
     }
   }
 
-  private def originalNode[I](ann: TypeAnn[I], node: AST[Child, I]): TypeRec[I] =
+  private def originalNode[I](ann: TypeAnn[I], node: AST[Para[TypeRec, Encoded], I]): TypeRec[I] =
     HCofree(ann, paraOriginals(node))
 
-  private def rebuildNode[I](ann: TypeAnn[I], node: AST[Child, I]): Encoded[I] = summon[HTraverse[AST]]
-    .traverse[Encode, Child, TypeRec, I](node)([x] => child => child.encoded)
+  private def rebuildNode[I](ann: TypeAnn[I], node: AST[Para[TypeRec, Encoded], I]): Encoded[I] = summon[HTraverse[AST]]
+    .traverse[Encode, Para[TypeRec, Encoded], TypeRec, I](node)([x] => child => child.result)
     .map(encoded => HCofree(ann, encoded))
 
-  private def rebuildExprNode(t: TypeRec[Type], node: AST[Child, Expr]): Encoded[Expr] =
+  private def rebuildExprNode(t: TypeRec[Type], node: AST[Para[TypeRec, Encoded], Expr]): Encoded[Expr] =
     encodeType(t).flatMap(encodedTypeAnn => rebuildNode(ExprAnn(encodedTypeAnn), node))
 
   private def etaExpandDataType(variable: TypeVariable, dataDef: DataDef, providedArgs: Seq[TypeRec[Type]]): Encoded[Type] = {
@@ -155,12 +149,12 @@ object ChurchEncoder {
       args: Seq[TypeRec[Type]],
       dataDef: DataDef,
       resultType: TypeRec[Type],
-      matchCase: MatchCase[Child]
+      matchCase: MatchCase[Para[TypeRec, Encoded]]
   ): Encoded[Expr] = {
     dataDef.constructors.find(_.name == matchCase.constructor) match {
       case None => invariant(s"Constructor ${matchCase.constructor.name} is not defined")
       case Some(constructor) => for {
-        encodedBody <- matchCase.body.encoded
+        encodedBody <- matchCase.body.result
         fieldTypes <- encodeConstructorFields(owner, args, dataDef, constructor)
         _ <- guard(matchCase.binders.length == fieldTypes.length, s"Constructor ${matchCase.constructor.name} expects ${fieldTypes.length} binders, got ${matchCase.binders.length}")
         innerHandler = matchCase.binders.zip(fieldTypes).foldRight(encodedBody) { case ((binder, fieldType), body) =>
@@ -179,12 +173,12 @@ object ChurchEncoder {
       dataDef: DataDef,
       foldFunction: TypeRec[Expr],
       resultType: TypeRec[Type],
-      foldCase: MatchCase[Child]
+      foldCase: MatchCase[Para[TypeRec, Encoded]]
   ): Encoded[Expr] = {
     dataDef.constructors.find(_.name == foldCase.constructor) match {
       case None => invariant(s"Constructor ${foldCase.constructor.name} is not defined")
       case Some(constructor) => for {
-        encodedBody <- foldCase.body.encoded
+        encodedBody <- foldCase.body.result
         fieldTypes <- encodeConstructorFields(owner, args, dataDef, constructor)
         substitutedFields = constructor.fields.map(field => substMany(dataDef.paramVars, args, field))
         _ <- guard(foldCase.binders.length == fieldTypes.length, s"Constructor ${foldCase.constructor.name} expects ${fieldTypes.length} binders, got ${foldCase.binders.length}")
@@ -210,7 +204,7 @@ object ChurchEncoder {
   }
 
   private val encoderAlg: RAlgebra[TypedAST, TypeRec, Encoded] = [x] =>
-    (he: TypedAST[Child, x]) => (he.ann, he.ast) match {
+    (he: TypedAST[Para[TypeRec, Encoded], x]) => (he.ann, he.ast) match {
     case (ann: ProgramAnn, node) => rebuildNode(ann, node)
     case (DeclAnn, node) => rebuildNode(DeclAnn, node)
     case (TypeAnn, node) => encodeType(originalNode(TypeAnn, node))
@@ -219,7 +213,7 @@ object ChurchEncoder {
         ConstructorDef(constructor.name, variable, constructor.fields.map(_.original), tag)
       }
       dataDef = DataDef(params, taggedConstructors, recursive)
-      encodedBody <- body.encoded.local((env: DataEnv) => env.copy(dataTypes = env.dataTypes + (variable -> dataDef)))
+      encodedBody <- body.result.local((env: DataEnv) => env.copy(dataTypes = env.dataTypes + (variable -> dataDef)))
       encoded <- dataDef.constructors.foldRight(okT(encodedBody)) { (constructor, acc) =>
         for {
           bodyExpr <- acc
@@ -231,7 +225,7 @@ object ChurchEncoder {
     case (ExprAnn(t), AST.Match(scrutinee, cases)) => for {
       scrutType = typeOf(scrutinee.original)
       resultType <- encodeType(t)
-      encodedScrutinee <- scrutinee.encoded
+      encodedScrutinee <- scrutinee.result
       dataApp <- ask.map(env => orInvariant(dataTypeApplication(scrutType, env.dataTypes)(_.paramVars)))
       (owner, dataDef, args) = dataApp
       handlerTypes <- dataDef.constructors.traverse(c => handlerType(owner, args, dataDef, c, resultType))
@@ -250,7 +244,7 @@ object ChurchEncoder {
       foldArgument = Variable("__fold_arg")
       resultType <- encodeType(t)
       encodedScrutineeType <- encodeType(scrutType)
-      encodedScrutinee <- scrutinee.encoded
+      encodedScrutinee <- scrutinee.result
       dataApp <- ask.map(env => orInvariant(dataTypeApplication(scrutType, env.dataTypes)(_.paramVars)))
       (owner, dataDef, args) = dataApp
       foldType = arrowT(encodedScrutineeType, resultType)

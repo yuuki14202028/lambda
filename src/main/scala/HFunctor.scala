@@ -129,8 +129,12 @@ given HTraverse[AST] with {
 }
 
 type Algebra[H[_[_], _], A[_]] = [x] => H[A, x] => A[x]
+
+final case class ParaChild[A[_], B[_], I](original: A[I], result: B[I])
+type Para[A[_], B[_]] = [I] =>> ParaChild[A, B, I]
+
 type RAlgebra[H[_[_], _], A[_], B[_]] =
-  [x] => H[[y] =>> (A[y], B[y]), x] => B[x]
+  [x] => H[Para[A, B], x] => B[x]
 type ApoCoalgebra[H[_[_], _], B[_]] =
   [x] => B[x] => Either[HFix[H, x], H[[y] =>> Either[HFix[H, y], B[y]], x]]
 
@@ -155,7 +159,7 @@ extension [H[_[_], _], I](self: HFix[H, I]) {
   }
 
   def para[B[_]](alg: RAlgebra[H, [y] =>> HFix[H, y], B])(using hf: HFunctor[H]): B[I] = {
-    val mapped = self.unfix.hmap[[x] =>> (HFix[H, x], B[x])]([X] => child => (child, child.para(alg)))
+    val mapped = self.unfix.hmap[Para[[y] =>> HFix[H, y], B]]([X] => child => ParaChild(child, child.para(alg)))
     alg(mapped)
   }
 }

@@ -19,7 +19,7 @@ object KAnalyser {
     params.foldRight(Kind.Star: Kind) { case ((_, k), acc) => Kind.Arrow(k, acc) }
 
   private val alg: RAlgebra[TypedAST, TypeRec, ConstI[Check[Kind]]] = [x] =>
-    (he: TypedAST[[y] =>> (TypeRec[y], Check[Kind]), x]) => he.ast match {
+    (he: TypedAST[Para[TypeRec, ConstI[Check[Kind]]], x]) => he.ast match {
     case AST.Primitive(name) => lift(primitiveKind(name))
 
     case AST.TypeVar(v) => for {
@@ -33,29 +33,29 @@ object KAnalyser {
     } yield kind
 
     case AST.Arrow(from, to) => for {
-      kf <- from._2
-      kt <- to._2
-      _ <- guard(kf == Kind.Star, CompileError.ArrowKindNotStar(ArrowSide.Lhs, kf, from._1))
-      _ <- guard(kt == Kind.Star, CompileError.ArrowKindNotStar(ArrowSide.Rhs, kt, to._1))
+      kf <- from.result
+      kt <- to.result
+      _ <- guard(kf == Kind.Star, CompileError.ArrowKindNotStar(ArrowSide.Lhs, kf, from.original))
+      _ <- guard(kt == Kind.Star, CompileError.ArrowKindNotStar(ArrowSide.Rhs, kt, to.original))
     } yield Kind.Star
 
     case AST.ForAll(v, k, body) => for {
-      kb <- body._2.local((e: Env) => e.copy(typeVars = e.typeVars + (v -> k)))
-      _ <- guard(kb == Kind.Star, CompileError.ForAllBodyKindNotStar(kb, body._1))
+      kb <- body.result.local((e: Env) => e.copy(typeVars = e.typeVars + (v -> k)))
+      _ <- guard(kb == Kind.Star, CompileError.ForAllBodyKindNotStar(kb, body.original))
     } yield Kind.Star
 
     case AST.TypeAbs(v, k, body) =>
-      body._2.local((e: Env) => e.copy(typeVars = e.typeVars + (v -> k))).map(kb => Kind.Arrow(k, kb))
+      body.result.local((e: Env) => e.copy(typeVars = e.typeVars + (v -> k))).map(kb => Kind.Arrow(k, kb))
 
     case AST.TypeApp(function, argument) => for {
-      kf <- function._2
-      ka <- argument._2
+      kf <- function.result
+      ka <- argument.result
       result <- kf match {
         case Kind.Arrow(k1, k2) if k1 == ka => ok(k2)
         case Kind.Arrow(k1, _) =>
-          fail[Kind](CompileError.KindMismatchInTypeApp(k1, ka, Some(argument._1)))
+          fail[Kind](CompileError.KindMismatchInTypeApp(k1, ka, Some(argument.original)))
         case other =>
-          fail[Kind](CompileError.CannotApplyKind(other, function._1))
+          fail[Kind](CompileError.CannotApplyKind(other, function.original))
       }
     } yield result
 

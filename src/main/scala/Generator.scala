@@ -115,12 +115,6 @@ object Generator {
   type GenS[A] = State[GenState, A]
   type Gen[A] = ReaderT[GenS, Env, A]
   private type GenCode[I] = Gen[Code]
-  private type Child[I] = (TypeRec[I], GenCode[I])
-
-  extension [I](self: Child[I]) {
-    private def original: TypeRec[I] = self._1
-    private def code: Gen[Code] = self._2
-  }
 
   private def fresh(prefix: String): GenS[Label] = {
     State { st =>
@@ -498,38 +492,38 @@ object Generator {
     case AST.UnitLit() => pure(loadImm32(0))
 
     case AST.Block(discarded, result) => for {
-      discardedCode <- sequenceExprCode(discarded.map(_.code))
+      discardedCode <- sequenceExprCode(discarded.map(_.result))
       resultCode <- result match {
-        case Some(expr) => expr.code
+        case Some(expr) => expr.result
         case None => pure(loadImm32(0))
       }
     } yield Code.concat(discardedCode) ++ resultCode
 
     case AST.UnaryOp(UnaryOps.Neg, body) =>
-      body.code.map(_ ++ (primitiveName(typeOf(body.original)) match {
+      body.result.map(_ ++ (primitiveName(typeOf(body.original)) match {
         case Some("f32") => code(ins("fmov", r(s0), r(w0)), ins("fneg", r(s0), r(s0)), ins("fmov", r(w0), r(s0)))
         case Some("f64") => code(ins("fmov", r(d0), r(x0)), ins("fneg", r(d0), r(d0)), ins("fmov", r(x0), r(d0)))
         case Some(name) if is64BitScalar(name) => code(ins("neg", r(x0), r(x0)))
         case _ => code(ins("neg", r(w0), r(w0)))
       }))
     case AST.UnaryOp(UnaryOps.Not, body) =>
-      body.code.map(_ ++ code(
+      body.result.map(_ ++ code(
         ins("cmp", r(w0), imm(0)),
         ins("cset", r(w0), Condition("eq"))
       ))
 
     case AST.BinOp(op, l, rExpr) => for {
-      lc <- l.code
-      rc <- rExpr.code
+      lc <- l.result
+      rc <- rExpr.result
     } yield lc ++ code(ins("str", r(x0), pre(sp, -16))) ++ rc ++ code(ins("ldr", r(x1), post(sp, 16))) ++ binInstr(op, typeOf(l.original))
 
     case AST.Intrinsic(IntrinsicOps.BinOp(op, _), Seq(l, rExpr)) => for {
-      lc <- l.code
-      rc <- rExpr.code
+      lc <- l.result
+      rc <- rExpr.result
     } yield lc ++ code(ins("str", r(x0), pre(sp, -16))) ++ rc ++ code(ins("ldr", r(x1), post(sp, 16))) ++ binInstr(op, typeOf(l.original))
 
     case AST.Intrinsic(IntrinsicOps.UnaryOp(UnaryOps.Neg, _), Seq(body)) =>
-      body.code.map(_ ++ (primitiveName(typeOf(body.original)) match {
+      body.result.map(_ ++ (primitiveName(typeOf(body.original)) match {
         case Some("f32") => code(ins("fmov", r(s0), r(w0)), ins("fneg", r(s0), r(s0)), ins("fmov", r(w0), r(s0)))
         case Some("f64") => code(ins("fmov", r(d0), r(x0)), ins("fneg", r(d0), r(d0)), ins("fmov", r(x0), r(d0)))
         case Some(name) if is64BitScalar(name) => code(ins("neg", r(x0), r(x0)))
@@ -537,7 +531,7 @@ object Generator {
       }))
 
     case AST.Intrinsic(IntrinsicOps.UnaryOp(UnaryOps.Not, _), Seq(body)) =>
-      body.code.map(_ ++ code(
+      body.result.map(_ ++ code(
         ins("cmp", r(w0), imm(0)),
         ins("cset", r(w0), Condition("eq"))
       ))
@@ -560,26 +554,26 @@ object Generator {
 
     case AST.Abs(Variable(param), _, body) => for {
       lbl <- liftS(fresh("lambda"))
-      bc  <- body.code.local((env: Env) => env.withHeap(param))
+      bc  <- body.result.local((env: Env) => env.withHeap(param))
       _   <- liftS(addFunc(liftedFn(lbl, bc)))
     } yield closureAlloc(lbl)
 
-    case AST.TyAbs(_, _, body) => body.code
+    case AST.TyAbs(_, _, body) => body.result
 
     case AST.Let(Variable(param), _, value, body) => for {
-      vc <- value.code
-      bc <- body.code.local((env: Env) => env.withHeap(param))
+      vc <- value.result
+      bc <- body.result.local((env: Env) => env.withHeap(param))
     } yield vc ++ bindValueToHeap ++ bc ++ restoreHeap
 
     case AST.LetRec(Variable(param), _, value, body) => for {
-      vc <- value.code.local((env: Env) => env.withHeap(param))
-      bc <- body.code.local((env: Env) => env.withHeap(param))
+      vc <- value.result.local((env: Env) => env.withHeap(param))
+      bc <- body.result.local((env: Env) => env.withHeap(param))
     } yield allocateRecCell ++ vc ++ code(
       ins("ldr", r(x9), mem(x29, -16)),
       ins("str", r(x0), mem(x9))
     ) ++ bc ++ restoreHeap
 
-    case AST.TypeLet(_, _, _, body) => body.code
+    case AST.TypeLet(_, _, _, body) => body.result
     case AST.DataLet(_, _, _, _, _) => pure(sys.error("DataLet must be Church encoded before code generation"))
     case AST.Match(_, _) => pure(sys.error("Match must be Church encoded before code generation"))
     case AST.Fold(_, _, _) => pure(sys.error("Fold must be Church encoded before code generation"))
@@ -594,21 +588,21 @@ object Generator {
       ask.flatMap { env =>
         directName(f.original).flatMap(env.directFunctions.get) match {
           case Some(label) =>
-            a.code.map(ac => ac ++ code(ins("mov", r(x1), r(x0)), ins("bl", LabelOperand(label))))
+            a.result.map(ac => ac ++ code(ins("mov", r(x1), r(x0)), ins("bl", LabelOperand(label))))
           case None => for {
-            fc <- f.code
-            ac <- a.code
+            fc <- f.result
+            ac <- a.result
           } yield fc ++ code(ins("str", r(x0), pre(sp, -16))) ++ ac ++ appSeq
         }
       }
 
-    case AST.TyApp(f, _) => f.code
+    case AST.TyApp(f, _) => f.result
 
     case AST.If(c, t, e) => for {
       l <- liftS(label())
-      cond <- c.code
-      trB <- t.code
-      elB <- e.code
+      cond <- c.result
+      trB <- t.result
+      elB <- e.result
     } yield cond ++ code(
       ins("cbnz", r(w0), LabelOperand(Label(s".$l" + "true"))),
       ins("b", LabelOperand(Label(s".$l" + "false"))),

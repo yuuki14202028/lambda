@@ -1,5 +1,6 @@
 package com.yuuki14202028
 
+case class HFix[H[_[_], _], I](unfix: H[[x] =>> HFix[H, x], I])
 case class HCofreeT[A[_], H[_[_], _], R[_], I](ask: A[I], lower: H[R, I])
 
 given hCofreeTHFunctor[A[_], H[_[_], _]](using hf: HFunctor[H])
@@ -22,7 +23,7 @@ extension [H[_[_], _], A[_], I](self: HCofree[H, A, I]) {
 }
 
 def paraOriginals[H[_[_], _], A[_], B[_], I]
-                 (node: H[[y] =>> (HCofree[H, A, y], B[y]), I])
+                 (node: H[Para[[z] =>> HCofree[H, A, z], B], I])
                  (using hf: HFunctor[H]): H[[y] =>> HCofree[H, A, y], I] = {
-  node.hmap([Y] => p => p._1)
+  node.hmap([Y] => p => p.original)
 }

@@ -7,7 +7,7 @@ private def showKindedParam(param: (TypeVariable, Kind)): String = param match {
   case (v, k) => s"[${v.name}: ${k.show}]"
 }
 
-private def showConstraints(constraints: Seq[Constraint[[x] =>> ShowResult[x]]]): String = constraints match {
+private def showConstraints(constraints: Seq[Constraint[ShowResult]]): String = constraints match {
   case Seq() => ""
   case _ => constraints.map(c => s"[${c.name.name}${c.arg.map(a => s"[$a]").mkString}]").mkString(" where ", " ", "")
 }

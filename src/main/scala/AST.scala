@@ -162,7 +162,7 @@ def topLetRec(variable: Variable, types: Rec[Type], value: Rec[Expr]): Rec[Decl]
 def topImport(path: String): Rec[Decl] = HFix(AST.TopImport(path))
 def topType(variable: TypeVariable, params: Seq[(TypeVariable, Kind)], alias: Rec[Type]): Rec[Decl] =
   HFix(AST.TopType(variable, params, alias))
-def topData(variable: TypeVariable, params: Seq[(TypeVariable, Kind)], constructors: Seq[DataConstructor[[x] =>> Rec[x]]], recursive: Boolean = false): Rec[Decl] =
+def topData(variable: TypeVariable, params: Seq[(TypeVariable, Kind)], constructors: Seq[DataConstructor[Rec]], recursive: Boolean = false): Rec[Decl] =
   HFix(AST.TopData(variable, params, constructors, recursive))
 def topTrait(v: TypeVariable, p: Seq[(TypeVariable, Kind)], s: Seq[Constraint[Rec]], m: Seq[MethodSig[Rec]]): Rec[Decl] = HFix(AST.TopTrait(v, p, s, m))
 def topImpl(variable: TypeVariable, params: Seq[(TypeVariable, Kind)], targets: Seq[Rec[Type]], context: Seq[Constraint[Rec]], methods: Seq[MethodImpl[Rec]]): Rec[Decl] =
@@ -175,11 +175,11 @@ def let(variable: Variable, types: Rec[Type], value: Rec[Expr], body: Rec[Expr])
 def letRec(variable: Variable, types: Rec[Type], value: Rec[Expr], body: Rec[Expr]): Rec[Expr] = HFix(AST.LetRec(variable, types, value, body))
 def typeLet(variable: TypeVariable, params: Seq[(TypeVariable, Kind)], alias: Rec[Type], body: Rec[Expr]): Rec[Expr] =
   HFix(AST.TypeLet(variable, params, alias, body))
-def dataLet(variable: TypeVariable, params: Seq[(TypeVariable, Kind)], constructors: Seq[DataConstructor[[x] =>> Rec[x]]], body: Rec[Expr], recursive: Boolean = false): Rec[Expr] =
+def dataLet(variable: TypeVariable, params: Seq[(TypeVariable, Kind)], constructors: Seq[DataConstructor[Rec]], body: Rec[Expr], recursive: Boolean = false): Rec[Expr] =
   HFix(AST.DataLet(variable, params, constructors, body, recursive))
-def matchExpr(scrutinee: Rec[Expr], cases: Seq[MatchCase[[x] =>> Rec[x]]]): Rec[Expr] =
+def matchExpr(scrutinee: Rec[Expr], cases: Seq[MatchCase[Rec]]): Rec[Expr] =
   HFix(AST.Match(scrutinee, cases))
-def foldExpr(scrutinee: Rec[Expr], resultType: Rec[Type], cases: Seq[MatchCase[[x] =>> Rec[x]]]): Rec[Expr] =
+def foldExpr(scrutinee: Rec[Expr], resultType: Rec[Type], cases: Seq[MatchCase[Rec]]): Rec[Expr] =
   HFix(AST.Fold(scrutinee, resultType, cases))
 def app(function: Rec[Expr], argument: Rec[Expr]): Rec[Expr] = HFix(AST.App(function, argument))
 def tyApp(function: Rec[Expr], argument: Rec[Type]): Rec[Expr] = HFix(AST.TyApp(function, argument))
@@ -192,7 +192,7 @@ def strInterp(parts: Seq[Rec[Expr]]): Rec[Expr] = HFix(AST.StrInterp(parts))
 def bool(value: Boolean): Rec[Expr] = HFix(AST.Bool(value))
 def unitLit: Rec[Expr] = HFix(AST.UnitLit())
 def block(discarded: Seq[Rec[Expr]], result: Option[Rec[Expr]]): Rec[Expr] = HFix(AST.Block(discarded, result))
-def contextExpr(monad: Rec[Type], bindings: Seq[ContextBinding[[x] =>> Rec[x]]], result: Rec[Expr]): Rec[Expr] =
+def contextExpr(monad: Rec[Type], bindings: Seq[ContextBinding[Rec]], result: Rec[Expr]): Rec[Expr] =
   HFix(AST.Context(monad, bindings, result))
 def binop(op: BinOps, left: Rec[Expr], right: Rec[Expr]): Rec[Expr] = HFix(AST.BinOp(op, left, right))
 def intrinsic(op: IntrinsicOps, args: Seq[Rec[Expr]]): Rec[Expr] = HFix(AST.Intrinsic(op, args))
@@ -305,7 +305,7 @@ def destructForAllK(t: TypeRec[Type]): Option[(TypeVariable, Kind, TypeRec[Type]
 }
 
 def freeTypeVars(t: Rec[Type]): Set[TypeVariable] = {
-  val alg: Algebra[AST, [I] =>> Set[TypeVariable]] = [x] => node => node match {
+  val alg: Algebra[AST, ConstI[Set[TypeVariable]]] = [x] => node => node match {
     case AST.TypeVar(v) => Set(v)
     case AST.ForAll(v, _, body) => body - v
     case AST.Arrow(from, to) => from ++ to
@@ -319,7 +319,7 @@ def freeTypeVars(t: Rec[Type]): Set[TypeVariable] = {
 def freeTypeVars(t: TypeRec[Type]): Set[TypeVariable] = freeTypeVars(eraseAnn(t))
 
 def freeVars(expr: Rec[Expr]): Set[Variable] = {
-  val alg: Algebra[AST, [I] =>> Set[Variable]] = [x] => node => node match {
+  val alg: Algebra[AST, ConstI[Set[Variable]]] = [x] => node => node match {
     case AST.Var(variable) => Set(variable)
     case AST.Abs(variable, _, body) => body - variable
     case AST.TyAbs(_, _, body) => body
@@ -435,16 +435,15 @@ def collectTypeApps(t: TypeRec[Type]): (TypeRec[Type], Seq[TypeRec[Type]]) = {
   type Collected[I] = (TypeRec[I], Seq[TypeRec[Type]])
   val alg: RAlgebra[TypedAST, TypeRec, Collected] = [x] => he => he match {
     case HCofreeT(_, AST.TypeApp(function, argument)) =>
-      val (_, (head, args)) = function
-      val (origArg, _) = argument
-      (head, args :+ origArg)
+      val (head, args) = function.result
+      (head, args :+ argument.original)
     case HCofreeT(ann, node) => (HCofree(ann, paraOriginals(node)), Seq.empty)
   }
   t.para(alg)
 }
 
 def isDataApplicationOf(t: Rec[Type], owner: TypeVariable): Boolean = {
-  val alg: Algebra[AST, [I] =>> Boolean] = [x] => node => node match {
+  val alg: Algebra[AST, ConstI[Boolean]] = [x] => node => node match {
     case AST.TypeVar(variable) => variable == owner
     case AST.TypeApp(headIsOwner, _) => headIsOwner
     case _ => false
@@ -455,7 +454,7 @@ def isDataApplicationOf(t: Rec[Type], owner: TypeVariable): Boolean = {
 def isDataApplicationOf(t: TypeRec[Type], owner: TypeVariable): Boolean = isDataApplicationOf(eraseAnn(t), owner)
 
 def containsDataApplicationOf(t: Rec[Type], owner: TypeVariable): Boolean = {
-  val alg: Algebra[AST, [I] =>> Boolean] = [x] => node => node match {
+  val alg: Algebra[AST, ConstI[Boolean]] = [x] => node => node match {
     case AST.TypeVar(variable) => variable == owner
     case AST.Arrow(from, to) => from || to
     case AST.ForAll(_, _, body) => body
