@@ -2,6 +2,7 @@ package com.yuuki14202028
 
 import cats.parse.{Numbers, Parser, Parser0}
 import cats.parse.Rfc5234.{alpha, digit}
+import scala.language.implicitConversions
 
 object ParserAST {
 
@@ -437,16 +438,17 @@ object ParserAST {
     (floatLit.backtrack | intLit).indexed
   }
 
-  val charP: Parser[IndexedRec[Expr]] = ('\'' *> alpha.map(AST.Char[IndexedRec, Expr](_)) <* '\'').indexed
+  val charP: Parser[IndexedRec[Expr]] = ('\'' *> alpha.map(AST.Char[IndexedRec, Expr]) <* '\'').indexed
+
+  private val commonStringEscape = Parser.char('\\').as('\\') |
+    Parser.char('n').as('\n') |
+    Parser.char('r').as('\r') |
+    Parser.char('t').as('\t') |
+    Parser.char('0').as('\u0000')
 
   val stringP: Parser[IndexedRec[Expr]] = {
     val escaped = Parser.char('\\') *> (
-      Parser.char('"').as('"') |
-      Parser.char('\\').as('\\') |
-      Parser.char('n').as('\n') |
-      Parser.char('r').as('\r') |
-      Parser.char('t').as('\t') |
-      Parser.char('0').as('\u0000')
+      Parser.char('"').as('"') | commonStringEscape
     )
     val plain = Parser.charWhere(ch => ch != '"' && ch != '\\' && ch != '\n' && ch != '\r')
     ('"' *> (escaped | plain).rep0 <* '"').map(chars => AST.StringLit[IndexedRec, Expr](chars.mkString)).indexed
@@ -456,12 +458,7 @@ object ParserAST {
     val escaped = Parser.char('\\') *> (
       Parser.char('`').as('`') |
       Parser.char('{').as('{') |
-      Parser.char('}').as('}') |
-      Parser.char('\\').as('\\') |
-      Parser.char('n').as('\n') |
-      Parser.char('r').as('\r') |
-      Parser.char('t').as('\t') |
-      Parser.char('0').as('\u0000')
+      Parser.char('}').as('}') | commonStringEscape
     )
     val plain = Parser.charWhere(ch => ch != '`' && ch != '{' && ch != '\\' && ch != '\n' && ch != '\r')
     val literalPart: Parser[Either[(Int, String), IndexedRec[Expr]]] =
@@ -483,7 +480,7 @@ object ParserAST {
   val unitP: Parser[IndexedRec[Expr]] = unitParens.as(AST.UnitLit[IndexedRec, Expr]()).indexed
 
   val programParser: Parser0[IndexedRec[AST.Program.type]] = {
-    val sep = (sp1.with1 *> Parser.charIn("\n;").rep.void <* sp)
+    val sep = sp1.with1 *> Parser.charIn("\n;").rep.void <* sp
     sp *> topDeclP.repSep(sep).map(decls => programI(decls.toList)) <* sp
   }
 }
