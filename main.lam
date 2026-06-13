@@ -6,28 +6,27 @@ let intToStr: i32 → foreign.C.String = foreign[i32 → foreign.C.String] int_t
 
 let identity[a](x: a): a = x
 
-data Maybe[a] =
-  | Nothing
-  | Just(a)
+data Maybe[a] = { Nothing, Just(a) }
 
 trait Show[a] {
   def show(x: a): foreign.C.String
 }
 
-let printf[a](x: a) where [Show[a]]: i32 = printStr(show[a](x))
+let printf[a](x: a) where Show[a]: i32 = printStr(show[a](x))
 
 impl Show[i32] {
-  def show = λx: i32. intToStr(x)
+  def show = intToStr
 }
 
 impl Show[foreign.C.String] {
   def show = identity[foreign.C.String]
 }
 
-impl[a] Show[Maybe[a]] where [Show[a]] {
-  def show = λm: Maybe[a]. match m with
-    | Nothing -> "Nothing"
-    | Just(x) -> show[a](x)
+impl[a] Show[Maybe[a]] where Show[a] {
+  def show = λm: Maybe[a]. match m {
+    Nothing => "Nothing"
+    Just(x) => show[a](x)
+  }
 }
 
 trait Monad[m: * → *] {
@@ -36,10 +35,11 @@ trait Monad[m: * → *] {
 }
 
 impl Monad[Maybe] {
-  def pure[a](x:a): m[a] = Just[a](x)
-  def flatMap[a][b](m: Maybe[a])(f: a → Maybe[b]): Maybe[b] = match m with
-    | Nothing -> Nothing[b]
-    | Just(x) -> f(x)
+  def pure[a](x: a): m[a] = Just[a](x)
+  def flatMap[a][b](m: Maybe[a])(f: a → Maybe[b]): Maybe[b] = match m {
+    Nothing => Nothing[b]
+    Just(x) => f(x)
+  }
 }
 
 let safeDiv(x: i32)(y: i32): Maybe[i32] =

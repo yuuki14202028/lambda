@@ -125,13 +125,10 @@ object ParserAST {
   }
 
   private lazy val constraintP: Parser[Constraint[IndexedRec]] =
-    (identifier.map(TypeVariable.apply) ~ typeP.brackets.rep0).map(Constraint.apply).brackets
+    (identifier.map(TypeVariable.apply) ~ typeP.brackets.rep0).map(Constraint.apply)
 
   private lazy val whereClauseP: Parser0[Seq[Constraint[IndexedRec]]] =
-    (spaced("where") *> (constraintP ~ (sp.with1.soft *> constraintP).backtrack.rep0)).backtrack.?.map {
-      case Some((h, t)) => h :: t
-      case None => Nil
-    }
+    (spaced("where") *> constraintP.repSep(spaced(',').backtrack)).backtrack.?.map(_.fold(List.empty)(_.toList))
 
   private lazy val topLetP: Parser[IndexedRec[Decl]] = {
     val typeParams = sp *> typeParamP.rep0
@@ -190,14 +187,12 @@ object ParserAST {
   }.indexed
 
   private lazy val dataConstructorP: Parser[DataConstructor[IndexedRec]] = {
-    val name = '|' -*> identifier.map(Variable.apply)
-    val field = typeP.parens
-    (name ~ field.rep0).map(DataConstructor.apply)
+    (identifier.map(Variable.apply) ~ typeP.parens.rep0).map(DataConstructor.apply)
   }
 
   private lazy val dataBinding: Parser[(Boolean, TypeVariable, Seq[(TypeVariable, Kind)], Seq[DataConstructor[IndexedRec]])] = {
     val recursive = "data" -+> ("rec".as(true) <* gap).?.map(_.getOrElse(false))
-    val constructors = spaced('=') *> dataConstructorP.repSep(gap)
+    val constructors = spaced('=') *> '{' -*> dataConstructorP.repSep(spaced(',').backtrack) <*- '}'
     (recursive ~ identifier ~ typeParamP.rep0 ~ constructors).map { case (((recursive, name), params), constructors) =>
       (recursive, TypeVariable(name), params, constructors.toList)
     }
@@ -289,17 +284,17 @@ object ParserAST {
   }
 
   private lazy val matchCaseP: Parser[MatchCase[IndexedRec]] = {
-    val name = '|' -*> identifier.map(Variable.apply)
+    val name = identifier.map(Variable.apply)
     val binder = identifier.map(Variable.apply).parens
-    val body = spaced("->") *> Parser.defer(expr)
-    ((name ~ binder.rep0) ~ body).map { case ((name, binders), body) =>
+    val body = spaced("=>") *> Parser.defer(expr)
+    (name ~ binder.rep0 ~ body).map { case ((name, binders), body) =>
       MatchCase(name, binders, body)
     }
   }
 
   lazy val matchP: Parser[IndexedRec[Expr]] = {
     val scrutinee = "match" -+> expr
-    val cases = sp.with1 *> ("with" -+> matchCaseP.repSep(gap))
+    val cases = sp.with1 *> ('{' -*> matchCaseP.repSep(gap.backtrack) <*- '}')
     (scrutinee ~ cases).map { case (scrutinee, cases) =>
       AST.Match(scrutinee, cases.toList)
     }.indexed
@@ -340,7 +335,7 @@ object ParserAST {
     ('&' <* Parser.not(Parser.char('&'))).backtrack.as(BinOps.And)
 
   private val caseStartLookahead: Parser[Unit] =
-    '|' -*> identifier -*> ('('.void | "->".void)
+    (identifier *> identifier.parens.void.rep0 *> spaced("=>")).void
 
   private val bitOrOp: Parser[BinOps] =
     (Parser.not(caseStartLookahead.backtrack).with1 *> '|' <* Parser.not(Parser.char('|'))).backtrack.as(BinOps.Or)
@@ -355,7 +350,7 @@ object ParserAST {
   )
 
   private val infixIdentOp: Parser[(IndexedRec[Expr], IndexedRec[Expr]) => IndexedRec[Expr]] =
-    (Parser.index.with1 ~ identifier.filter(n => !exprKeywords(n))).map { case (offset, n) => (l, r) =>
+    (Parser.not(caseStartLookahead.backtrack).with1 *> (Parser.index.with1 ~ identifier.filter(n => !exprKeywords(n)))).map { case (offset, n) => (l, r) =>
       at(l.extract, AST.App(at(l.extract, AST.App(at(offset, AST.Var(Variable(n))), l)), r))
     }
 
