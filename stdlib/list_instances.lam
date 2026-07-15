@@ -1,0 +1,16 @@
+import "std/list"
+import "std/functor"
+import "std/foldable"
+import "std/semigroup"
+import "std/monoid"
+
+derive Functor[List]
+derive Foldable[List]
+
+impl[t] Semigroup[List[t]] {
+  def append(xs: List[t])(ys: List[t]): List[t] = appendList[t](xs)(ys)
+}
+
+impl[t] Monoid[List[t]] {
+  def empty: List[t] = Nil[t]
+}

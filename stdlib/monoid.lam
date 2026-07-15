@@ -1,0 +1,5 @@
+import "std/semigroup"
+
+trait Monoid[a] with Semigroup[a] {
+  def empty: a
+}

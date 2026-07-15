@@ -9,7 +9,7 @@ private def showKindedParam(param: (TypeVariable, Kind)): String = param match {
 
 private def showConstraints(constraints: Seq[Constraint[ShowResult]]): String = constraints match {
   case Seq() => ""
-  case _ => constraints.map(c => s"[${c.name.name}${c.arg.map(a => s"[$a]").mkString}]").mkString(" where ", " ", "")
+  case _ => constraints.map(c => s"${c.name.name}${c.arg.map(a => s"[$a]").mkString}").mkString(" with ", ", ", "")
 }
 
 val showAlg: Algebra[AST, ShowResult] = [x] => node => node match {
@@ -41,9 +41,10 @@ val showAlg: Algebra[AST, ShowResult] = [x] => node => node match {
       s"  def ${m.name.name}$sigText = ${m.body}"
     }.mkString("\n")
     s"impl$suffix ${v.name}$targetText$contextText {\n$methodText\n}"
-  case AST.TopLetWhere(v, params, constraints, types, value, recursive) =>
+  case AST.TopLetWith(v, params, constraints, types, value, recursive) =>
     val suffix = params.map(showKindedParam).mkString
-    s"let ${if (recursive) "rec " else ""}${v.name}$suffix${showConstraints(constraints)}: $types = $value"
+    s"let ${if (recursive) "rec " else ""}${v.name}$suffix: $types${showConstraints(constraints)} = $value"
+  case AST.TopDerive(traitName, target) => s"derive ${traitName.name}[${target.name}]"
   case AST.Abs(v, types, body)     => s"λ${v.name}: $types. $body"
   case AST.TyAbs(v, Kind.Star, body) => s"Λ${v.name}. $body"
   case AST.TyAbs(v, k, body)         => s"Λ(${v.name}: ${k.show}). $body"

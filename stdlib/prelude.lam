@@ -1,0 +1,27 @@
+import "std/operators"
+
+import "std/functor"
+import "std/applicative"
+import "std/monad"
+import "std/foldable"
+import "std/eq"
+import "std/ord"
+import "std/semigroup"
+import "std/monoid"
+
+import "std/option"
+import "std/either"
+import "std/pair"
+import "std/list"
+import "std/id"
+
+import "std/function"
+
+import "std/option_instances"
+import "std/either_instances"
+import "std/pair_instances"
+import "std/list_instances"
+import "std/eq_instances"
+import "std/ord_instances"
+import "std/semigroup_instances"
+import "std/monoid_instances"

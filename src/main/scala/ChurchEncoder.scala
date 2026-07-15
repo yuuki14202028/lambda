@@ -279,8 +279,11 @@ object ChurchEncoder {
     case AST.TopImpl(variable, _, _, _, _) =>
       invariant(s"TopImpl ${variable.name} must be desugared by TraitEncoder before Church encoding")
 
-    case AST.TopLetWhere(variable, _, _, _, _, _) =>
-      invariant(s"TopLetWhere ${variable.name} must be desugared by TraitEncoder before Church encoding")
+    case AST.TopLetWith(variable, _, _, _, _, _) =>
+      invariant(s"TopLetWith ${variable.name} must be desugared by TraitEncoder before Church encoding")
+
+    case AST.TopDerive(traitName, _) =>
+      invariant(s"TopDerive ${traitName.name} must be desugared by Deriver before Church encoding")
 
     case _ =>
       (Seq(decl.para(encoderAlg).run(env)), env)

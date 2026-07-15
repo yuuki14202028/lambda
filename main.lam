@@ -12,7 +12,7 @@ trait Show[a] {
   def show(x: a): foreign.C.String
 }
 
-let printf[a](x: a) where Show[a]: i32 = printStr(show[a](x))
+let printf[a](x: a): i32 with Show[a] = printStr(show[a](x))
 
 impl Show[i32] {
   def show = intToStr
@@ -22,10 +22,10 @@ impl Show[foreign.C.String] {
   def show = identity[foreign.C.String]
 }
 
-impl[a] Show[Maybe[a]] where Show[a] {
+impl[a] Show[Maybe[a]] with Show[a] {
   def show = λm: Maybe[a]. match m {
     Nothing => "Nothing"
-    Just(x) => show[a](x)
+    Just(x) => `Just({show[a](x)})`
   }
 }
 

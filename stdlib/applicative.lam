@@ -1,0 +1,6 @@
+import "std/functor"
+
+trait Applicative[F: * → *] with Functor[F] {
+  def pure[a](x: a): F[a]
+  def apply[a][b](f: F[a → b]): F[a] → F[b]
+}

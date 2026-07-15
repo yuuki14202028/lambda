@@ -1,0 +1,5 @@
+import "std/applicative"
+
+trait Monad[F: * → *] with Applicative[F] {
+  def flatMap[a][b](v: F[a])(f: a → F[b]): F[b]
+}

@@ -1,0 +1,74 @@
+import "std/prelude"
+
+let testOption(): bool =
+  let x: Option[i32] = Some[i32](42) in
+  let y: Option[i32] = map[Option][i32][i32](λn: i32. __add_i32(n)(1))(x) in
+  match y {
+    Some(v) => __eq_i32(v)(43)
+    None => false
+  }
+
+let testEither(): bool =
+  let x: Either[foreign.C.String][i32] = Right[foreign.C.String][i32](10) in
+  let y: Either[foreign.C.String][i32] =
+    map[Either[foreign.C.String]][i32][i32](λn: i32. __add_i32(n)(5))(x) in
+  match y {
+    Right(v) => __eq_i32(v)(15)
+    Left(_) => false
+  }
+
+let testList(): bool =
+  let nums: List[i32] = Cons[i32](1)(Cons[i32](2)(Cons[i32](3)(Nil[i32]))) in
+  let total: i32 = foldLeft[List][i32][i32](λacc: i32. λx: i32. __add_i32(acc)(x))(0)(nums) in
+  __eq_i32(total)(6)
+
+let testListFunctor(): bool =
+  let nums: List[i32] = Cons[i32](1)(Cons[i32](2)(Nil[i32])) in
+  let doubled: List[i32] = map[List][i32][i32](λx: i32. __mul_i32(x)(2))(nums) in
+  let total: i32 = foldRight[List][i32][i32](λx: i32. λacc: i32. __add_i32(x)(acc))(0)(doubled) in
+  __eq_i32(total)(6)
+
+let testPair(): bool =
+  let p: Pair[foreign.C.String][i32] = Pair[foreign.C.String][i32]("k")(1) in
+  let q: Pair[foreign.C.String][i32] =
+    map[Pair[foreign.C.String]][i32][i32](λx: i32. __add_i32(x)(9))(p) in
+  match q {
+    Pair(_)(v) => __eq_i32(v)(10)
+  }
+
+let testCompose(): bool =
+  let f: i32 → i32 = λx: i32. __add_i32(x)(1) in
+  let g: i32 → i32 = λx: i32. __mul_i32(x)(2) in
+  let h: i32 → i32 = compose[i32][i32][i32](f)(g) in
+  __eq_i32(h(5))(11)
+
+let testMonoid(): bool =
+  __eq_i32(append[i32](10)(20))(30)
+
+let testMonadContext(): bool =
+  let r: Option[i32] = context[Option] {
+    a: i32 = Some[i32](20);
+    b: i32 = Some[i32](22);
+    __add_i32(a)(b)
+  } in
+  match r {
+    Some(v) => __eq_i32(v)(42)
+    None => false
+  }
+
+let main(): i32 =
+  if testOption() then
+    if testEither() then
+      if testList() then
+        if testListFunctor() then
+          if testPair() then
+            if testCompose() then
+              if testMonoid() then
+                if testMonadContext() then 0 else 8
+              else 7
+            else 6
+          else 5
+        else 4
+      else 3
+    else 2
+  else 1

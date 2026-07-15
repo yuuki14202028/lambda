@@ -1,0 +1,5 @@
+data IO[a] = { MkIO(unit) }
+
+let print: foreign.C.String → IO[unit] = foreign[foreign.C.String → IO[unit]] print
+let readLine: unit → IO[foreign.C.String] = foreign[unit → IO[foreign.C.String]] readLine
+let exit: i32 → IO[unit] = foreign[i32 → IO[unit]] exit

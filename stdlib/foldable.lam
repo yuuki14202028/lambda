@@ -1,0 +1,4 @@
+trait Foldable[F: * → *] {
+  def foldRight[a][b](f: a → b → b)(z: b): F[a] → b
+  def foldLeft[a][b](f: b → a → b)(z: b): F[a] → b
+}

@@ -1,0 +1,55 @@
+import "std/operators"
+import "std/semigroup"
+import "std/monoid"
+
+impl Semigroup[i8] {
+  def append(x: i8)(y: i8): i8 = __add_i8(x)(y)
+}
+
+impl Semigroup[i16] {
+  def append(x: i16)(y: i16): i16 = __add_i16(x)(y)
+}
+
+impl Semigroup[i32] {
+  def append(x: i32)(y: i32): i32 = __add_i32(x)(y)
+}
+
+impl Semigroup[i64] {
+  def append(x: i64)(y: i64): i64 = __add_i64(x)(y)
+}
+
+impl Semigroup[isize] {
+  def append(x: isize)(y: isize): isize = __add_isize(x)(y)
+}
+
+impl Semigroup[u8] {
+  def append(x: u8)(y: u8): u8 = __add_u8(x)(y)
+}
+
+impl Semigroup[u16] {
+  def append(x: u16)(y: u16): u16 = __add_u16(x)(y)
+}
+
+impl Semigroup[u32] {
+  def append(x: u32)(y: u32): u32 = __add_u32(x)(y)
+}
+
+impl Semigroup[u64] {
+  def append(x: u64)(y: u64): u64 = __add_u64(x)(y)
+}
+
+impl Semigroup[usize] {
+  def append(x: usize)(y: usize): usize = __add_usize(x)(y)
+}
+
+impl Semigroup[f32] {
+  def append(x: f32)(y: f32): f32 = __add_f32(x)(y)
+}
+
+impl Semigroup[f64] {
+  def append(x: f64)(y: f64): f64 = __add_f64(x)(y)
+}
+
+impl Semigroup[bool] {
+  def append(x: bool)(y: bool): bool = __and_bool(x)(y)
+}

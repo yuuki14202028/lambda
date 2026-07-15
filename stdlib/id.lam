@@ -1,0 +1,5 @@
+import "std/functor"
+
+data Id[a] = { Id(a) }
+
+derive Functor[Id]

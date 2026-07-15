@@ -1,0 +1,3 @@
+trait Semigroup[a] {
+  def append(x: a)(y: a): a
+}

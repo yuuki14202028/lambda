@@ -1,0 +1,17 @@
+import "std/pair"
+
+let id[a](x: a): a = x
+
+let const[a][b](_x: a)(y: b): b = y
+
+let compose[a][b][c](f: b → c)(g: a → b): a → c = λx: a. f(g(x))
+
+let flip[a][b][c](f: a → b → c): b → a → c = λx: b. λy: a. f(y)(x)
+
+let curry[a][b][c](f: Pair[a][b] → c): a → b → c =
+  λx: a. λy: b. f(Pair[a][b](x)(y))
+
+let uncurry[a][b][c](f: a → b → c): Pair[a][b] → c =
+  λp: Pair[a][b]. match p {
+    Pair(x)(y) => f(x)(y)
+  }

@@ -1,0 +1,51 @@
+import "std/monoid"
+import "std/semigroup"
+import "std/semigroup_instances"
+
+impl Monoid[i8] {
+  def empty: i8 = 0i8
+}
+
+impl Monoid[i16] {
+  def empty: i16 = 0i16
+}
+
+impl Monoid[i32] {
+  def empty: i32 = 0i32
+}
+
+impl Monoid[i64] {
+  def empty: i64 = 0i64
+}
+
+impl Monoid[isize] {
+  def empty: isize = 0isize
+}
+
+impl Monoid[u8] {
+  def empty: u8 = 0u8
+}
+
+impl Monoid[u16] {
+  def empty: u16 = 0u16
+}
+
+impl Monoid[u32] {
+  def empty: u32 = 0u32
+}
+
+impl Monoid[u64] {
+  def empty: u64 = 0u64
+}
+
+impl Monoid[usize] {
+  def empty: usize = 0usize
+}
+
+impl Monoid[f32] {
+  def empty: f32 = 0.0f32
+}
+
+impl Monoid[f64] {
+  def empty: f64 = 0.0
+}

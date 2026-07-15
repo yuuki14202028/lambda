@@ -150,9 +150,18 @@ enum CompileError {
   case ExtraMethods(impl: DeclRef, methods: Seq[Variable])
   case MethodBodyTypeMismatch(impl: DeclRef, method: Variable, expected: TypeRec[Type], actual: TypeRec[Type])
   case MethodSigTypeMismatch(impl: DeclRef, method: Variable, declared: TypeRec[Type], expected: TypeRec[Type])
-  case EmptyWhereClause(name: Variable)
-  case WhereLeadingForalls(name: Variable, expected: Int, got: Int)
-  case WherePolymorphic(name: Variable)
+  case EmptyWithClause(name: Variable)
+  case WithLeadingForalls(name: Variable, expected: Int, got: Int)
+  case WithPolymorphic(name: Variable)
+
+  // ---- derive ----
+  case DeriveUnsupportedTrait(traitName: TypeVariable)
+  case DeriveTargetNotData(target: TypeVariable)
+  case DeriveTraitSigMismatch(traitName: TypeVariable, method: Variable, expected: TypeRec[Type], actual: TypeRec[Type])
+  case DeriveKindMismatch(traitName: TypeVariable, target: TypeVariable)
+  case DeriveNegativeOccurrence(traitName: TypeVariable, target: TypeVariable, constructor: Variable, field: TypeRec[Type])
+  case DeriveUnsupportedField(traitName: TypeVariable, target: TypeVariable, constructor: Variable, field: TypeRec[Type])
+  case DeriveFieldInstanceMissing(traitName: TypeVariable, target: TypeVariable, constructor: Variable, head: String)
 
   // ---- 辞書解決（TraitEncoder） ----
   case NoInstance(name: TypeVariable, args: Seq[TypeRec[Type]])
@@ -270,11 +279,25 @@ enum CompileError {
       s"Method type mismatch in ${impl.shown}: ${method.name} must have type ${expected.show}, actual ${actual.show}"
     case MethodSigTypeMismatch(impl, method, declared, expected) =>
       s"Method type mismatch in ${impl.shown}: ${method.name} is declared as ${declared.show}, expected ${expected.show}"
-    case EmptyWhereClause(name) => s"let ${name.name}: where clause must not be empty"
-    case WhereLeadingForalls(name, expected, got) =>
-      s"let ${name.name}: a where-constrained function must bind its type parameters as leading ∀s (expected $expected leading ∀ binders, got $got)"
-    case WherePolymorphic(name) =>
-      s"let ${name.name}: a where-constrained function cannot have a polymorphic type beyond its declared type parameters"
+    case EmptyWithClause(name) => s"let ${name.name}: with clause must not be empty"
+    case WithLeadingForalls(name, expected, got) =>
+      s"let ${name.name}: a with-constrained function must bind its type parameters as leading ∀s (expected $expected leading ∀ binders, got $got)"
+    case WithPolymorphic(name) =>
+      s"let ${name.name}: a with-constrained function cannot have a polymorphic type beyond its declared type parameters"
+
+    case DeriveUnsupportedTrait(traitName) =>
+      s"derive: trait ${traitName.name} is not derivable (supported: Functor, Foldable with canonical signatures)"
+    case DeriveTargetNotData(target) => s"derive: ${target.name} is not a data type"
+    case DeriveTraitSigMismatch(traitName, method, expected, actual) =>
+      s"derive ${traitName.name}: method ${method.name} must have signature ${expected.show}, actual ${actual.show}"
+    case DeriveKindMismatch(traitName, target) =>
+      s"derive ${traitName.name}[${target.name}]: data type must have a final type parameter of kind *"
+    case DeriveNegativeOccurrence(traitName, target, constructor, field) =>
+      s"derive ${traitName.name}[${target.name}]: type parameter occurs in a negative position in ${constructor.name} field ${field.show}"
+    case DeriveUnsupportedField(traitName, target, constructor, field) =>
+      s"derive ${traitName.name}[${target.name}]: cannot derive over ${constructor.name} field ${field.show}"
+    case DeriveFieldInstanceMissing(traitName, target, constructor, head) =>
+      s"derive ${traitName.name}[${target.name}]: ${constructor.name} field requires instance ${traitName.name}[$head], which is not defined at this point"
 
     case NoInstance(name, args) => s"No instance for ${constraintShown(name, args)}"
     case ResolutionDepthExceeded(name, args) =>

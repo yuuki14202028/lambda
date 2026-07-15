@@ -1,0 +1,88 @@
+import "std/operators"
+import "std/ord"
+import "std/eq"
+import "std/eq_instances"
+
+impl Ord[i8] {
+  def lt(x: i8)(y: i8): bool = __lt_i8(x)(y)
+  def leq(x: i8)(y: i8): bool = __leq_i8(x)(y)
+  def gt(x: i8)(y: i8): bool = __gt_i8(x)(y)
+  def geq(x: i8)(y: i8): bool = __geq_i8(x)(y)
+}
+
+impl Ord[i16] {
+  def lt(x: i16)(y: i16): bool = __lt_i16(x)(y)
+  def leq(x: i16)(y: i16): bool = __leq_i16(x)(y)
+  def gt(x: i16)(y: i16): bool = __gt_i16(x)(y)
+  def geq(x: i16)(y: i16): bool = __geq_i16(x)(y)
+}
+
+impl Ord[i32] {
+  def lt(x: i32)(y: i32): bool = __lt_i32(x)(y)
+  def leq(x: i32)(y: i32): bool = __leq_i32(x)(y)
+  def gt(x: i32)(y: i32): bool = __gt_i32(x)(y)
+  def geq(x: i32)(y: i32): bool = __geq_i32(x)(y)
+}
+
+impl Ord[i64] {
+  def lt(x: i64)(y: i64): bool = __lt_i64(x)(y)
+  def leq(x: i64)(y: i64): bool = __leq_i64(x)(y)
+  def gt(x: i64)(y: i64): bool = __gt_i64(x)(y)
+  def geq(x: i64)(y: i64): bool = __geq_i64(x)(y)
+}
+
+impl Ord[isize] {
+  def lt(x: isize)(y: isize): bool = __lt_isize(x)(y)
+  def leq(x: isize)(y: isize): bool = __leq_isize(x)(y)
+  def gt(x: isize)(y: isize): bool = __gt_isize(x)(y)
+  def geq(x: isize)(y: isize): bool = __geq_isize(x)(y)
+}
+
+impl Ord[u8] {
+  def lt(x: u8)(y: u8): bool = __lt_u8(x)(y)
+  def leq(x: u8)(y: u8): bool = __leq_u8(x)(y)
+  def gt(x: u8)(y: u8): bool = __gt_u8(x)(y)
+  def geq(x: u8)(y: u8): bool = __geq_u8(x)(y)
+}
+
+impl Ord[u16] {
+  def lt(x: u16)(y: u16): bool = __lt_u16(x)(y)
+  def leq(x: u16)(y: u16): bool = __leq_u16(x)(y)
+  def gt(x: u16)(y: u16): bool = __gt_u16(x)(y)
+  def geq(x: u16)(y: u16): bool = __geq_u16(x)(y)
+}
+
+impl Ord[u32] {
+  def lt(x: u32)(y: u32): bool = __lt_u32(x)(y)
+  def leq(x: u32)(y: u32): bool = __leq_u32(x)(y)
+  def gt(x: u32)(y: u32): bool = __gt_u32(x)(y)
+  def geq(x: u32)(y: u32): bool = __geq_u32(x)(y)
+}
+
+impl Ord[u64] {
+  def lt(x: u64)(y: u64): bool = __lt_u64(x)(y)
+  def leq(x: u64)(y: u64): bool = __leq_u64(x)(y)
+  def gt(x: u64)(y: u64): bool = __gt_u64(x)(y)
+  def geq(x: u64)(y: u64): bool = __geq_u64(x)(y)
+}
+
+impl Ord[usize] {
+  def lt(x: usize)(y: usize): bool = __lt_usize(x)(y)
+  def leq(x: usize)(y: usize): bool = __leq_usize(x)(y)
+  def gt(x: usize)(y: usize): bool = __gt_usize(x)(y)
+  def geq(x: usize)(y: usize): bool = __geq_usize(x)(y)
+}
+
+impl Ord[f32] {
+  def lt(x: f32)(y: f32): bool = __lt_f32(x)(y)
+  def leq(x: f32)(y: f32): bool = __leq_f32(x)(y)
+  def gt(x: f32)(y: f32): bool = __gt_f32(x)(y)
+  def geq(x: f32)(y: f32): bool = __geq_f32(x)(y)
+}
+
+impl Ord[f64] {
+  def lt(x: f64)(y: f64): bool = __lt_f64(x)(y)
+  def leq(x: f64)(y: f64): bool = __leq_f64(x)(y)
+  def gt(x: f64)(y: f64): bool = __gt_f64(x)(y)
+  def geq(x: f64)(y: f64): bool = __geq_f64(x)(y)
+}

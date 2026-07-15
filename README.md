@@ -1,280 +1,77 @@
 # Lambda
 
-Scala 3 で実装された、小さな型付きラムダ計算系言語のコンパイラです。
-`main.lam` を読み込み、型検査を行ったうえで ARM64/macOS 向けのアセンブリを `build/out.s` に生成します。
+Scala 3 で実装した、小さな型付きラムダ計算系言語（System Fω 相当 + trait）のコンパイラです。
+`.lam` ソースを型検査し、ARM64/macOS 向けアセンブリを生成して clang でリンクします。
 
-## できること
+## 特徴
 
-- 単純型付きラムダ抽象 `λx: T. ...`
-- 型抽象 `ΛA. ...`
-- 型適用 `f[T]`
-- 型別名 `type X[T] = ... in ...`
-- データ型定義 `data X[T] = | XA | XB(T) in ...`
-- 再帰データ型定義 `data rec Y[T] = | YA | YB(Y) in ...`
-- データ型のパターンマッチ `match x with | XA → ... | XB(t) -> ...`
-- 再帰データ型の畳み込み `fold y as R with | YA -> ... | YB(acc) -> ...`
-- 関数適用 `f(x)`
-- Unit 引数の関数定義・適用 `f()`
-- ブロック式 `{ expr; ...; result }`
-- 変数束縛 `let x: T = ... in ...`
-- 関数束縛 `let f[A](x: T)(y: U): R = ... in ...`
-- 再帰束縛 `let rec f: T = ... in ...`
-- 再帰関数束縛 `let rec f(x: T): R = ... in ...`
-- トップレベルの `type` / `data` / `let` / `let rec` 宣言
-- 外部 C 関数の参照 `foreign[T → U] name`
-- 整数リテラル `0`, `2`, `11u32`
-- 浮動小数点数リテラル `0.0`, `1.2E3`, `1.2E-3f32`
-- 文字リテラル `'a'`, `'z'`
-- 文字列リテラル `"hello"`
-- 真偽値リテラル `true`, `false`
-- ユニットリテラル `()`
-- 整数・文字に対する単項 `-`
-- 二項演算 `+`, `-`, `*`, `/`
-- 比較演算 `==`, `!=`, `<`, `<=`, `>`, `>=`
-- 論理演算 `!`, `&`, `|`, `^`, `&&`, `||`
-- `if ... then ... else ...`
-- カインド `*`, `* → *`
-- クロージャと環境フレームを使った変数キャプチャ
+- **System Fω**: 値のラムダ `λx: T. e`、型抽象 `ΛA. e`、型適用 `f[T]`、型レベルラムダとカインド（`*`, `* → *`）。型注釈と型適用はすべて明示で、HM 型推論は行いません
+- **代数的データ型**: `data` / 再帰型は `data rec`。`match` は全コンストラクタの網羅が必須、`fold` で再帰型を畳み込みます。バックエンドでは Church encoding に変換されます
+- **trait**: `trait` / `impl` による型クラス。高階カインドの trait（`Monad[m: * → *]` など）、`with C[a]` 節（宣言末尾）による制約・スーパークラスに対応。型適用が明示なので辞書解決は決定的で、辞書渡しコードへ脱糖されます
+- **derive**: `derive Functor[Option]` / `derive Foldable[List]` で、データ型の構造から `map` / `foldRight` / `foldLeft` のインスタンスを自動導出します。導出対象は構造から一意に決まる trait（正準シグネチャと α 同値なもの）に限り、負の位置の出現や畳み込めないフィールドはコンパイルエラーになります
+- **context 記法**: do 記法相当。`context[M] { x: T = e; ...; result }` を `Monad` trait の `pure` / `flatMap` 呼び出しへ脱糖します
+- **糖衣構文**: 関数定義 `let f[A](x: T)(y: U): R = e`、ブロック式 `{ e; ...; result }`、文字列埋め込み `` `result = {compute()}\n` ``、2 引数関数の中置適用 `120 safeDiv 5`
+- **モジュール**: `import "std/operators"` は同梱の `stdlib/` を、それ以外のパスはソースファイルからの相対で解決します
+- **C FFI**: `foreign[T → U] name` で C 関数を参照。実装は `runtime/ffi.c`
+- 関数値はコードポインタ + 環境ポインタのクロージャとしてコンパイルされます
 
-## 型
-
-現在サポートしている型は次のとおりです。
+組み込み型は次のとおりです。
 
 ```text
-i8, i16, i32, i64, isize
-u8, u16, u32, u64,, usize
-f32, f64,
-char,
-foreign.C.String
-foreign.C.Ptr
-foreign.C.VoidPtr
-Bool
-Unit / ()
-T → U
-∀A. T
-F[T]
-λx. x
+i8 i16 i32 i64 isize  u8 u16 u32 u64 usize  f32 f64
+char bool unit
+foreign.C.String  foreign.C.VoidPtr  foreign.C.Ptr[T]
 ```
 
-`λ`、`let`、`let rec` では型注釈が必須です。  
-多相関数は `ΛA. ...` で型抽象し、`f[i32]` のように明示的に型適用します。  
-型別名は `type Option[A] = ... in ...` のように定義でき、 `Option[i32]` のように単項の型適用を連ねます。  
-複数引数の型別名は `type Result[A][E] = ...`、利用側は `Result[i32][char]` です。
-あくまでも型別名であり、`Result[i32]`のように利用することは出来ません。  
-データ型も `data Option[A] = ... in ...` のように `in` 付きのスコープで定義します。型別名と違い、データ型は透明には展開されない名目的な型です。
-コンストラクタは通常の値として導入され、型引数は明示的に適用します。たとえば `None[i32]` や `Some[i32](42)` のように書きます。  
-ブロック式は `{ expr; ...; result }` のように書き、セミコロン付きの式を順に評価して捨て、最後の式をブロック全体の結果にします。
-最後の式を省略した空ブロックや副作用だけのブロックの結果は `Unit` です。 
-型変数を束縛する構文ではカインドを取ることができます。カインドは省略することができ、その場合は‘全て`*`と推論されます。
+`+` や `==` などの演算子は型ごとに `__add_i32` のような関数へ解決されます。
+これらは `stdlib/operators.lam` に `intrinsic` として定義されているため、演算子を使うには `import "std/operators"` が必要です。
 
+## 使い方
 
-```ocaml
-λx: i32. x + 1
-
-let x: i32 = 3 in
-x + 10
-
-let rec f: i32 → i32 = λn: i32. if n <= 0 then 0 else f(n - 1) in
-f(10)
-
-let id: ∀A. A → A = ΛA. λx: A. x in
-id[i32](42)
-
-type Option[A] = ∀R. R → (A → R) → R in
-let none[A]: Option[A] =
-  let run[R](fst: R)(snd: A → R): R = fst in
-  run
-in
-none[i32]
-```
-
-## データ型と match
-
-`data` では複数のコンストラクタと、それぞれのフィールド型を定義できます。
-
-```ocaml
-data Option[A] =
-  | None
-  | Some(A)
-in
-
-let value: Option[i32] =
-  Some[i32](42)
-in
-
-match value with
-  | None -> 0
-  | Some(n) -> n
-```
-
-コンストラクタの型は、定義した型パラメータを持つ通常の関数として扱われます。
-
-```text
-None : ∀A. Option[A]
-Some : ∀A. A → Option[A]
-```
-
-複数フィールドのコンストラクタはカリー化された関数になります。
-
-```ocaml
-data Pair[A][B] =
-  | Pair(A)(B)
-in
-Pair[i32][String](1)("x")
-```
-
-`match` は対象のデータ型の全コンストラクタを網羅する必要があります。
-各分岐の束縛数はコンストラクタのフィールド数と一致している必要があり、すべての分岐の結果型も一致している必要があります。
-現在はネストパターン、ワイルドカード、guard、部分的な `match` はありません。
-
-```ocaml
-let unwrapOrZero(option: Option[i32]): i32 =
-  match option with
-    | None -> 0
-    | Some(n) -> n
-in
-unwrapOrZero(Some[i32](42))
-```
-
-データ型は型検査上は opaque な名目的型ですが、現在のバックエンドでは Generator に渡す前に Church encoding へ変換しています。
-そのためユーザーコードから `Option[i32]` を直接 `∀R. R → (i32 → R) → R` として呼び出すことはできません。
-自身をフィールドに含むデータ型は `data rec` でのみ定義できます。
-`data rec` は型検査上は通常の opaque な名目的データ型として扱い、Church encoding 後の eliminator では再帰フィールドを同じデータ型の値として渡します。
-`fold` は再帰フィールドをそのまま束縛せず、対象データ型の再帰フィールドを `as` で指定した結果型へ畳み込んだ値として束縛します。
-
-関数束縛、再帰関数束縛は糖衣構文になっています。  
-
-## トップレベル宣言
-
-ファイル先頭には `in` でネストせずに、`type` / `data` / `let` / `let rec` を並べられます。
-トップレベルの `main(): i32` がプログラム本体として呼び出されます。
-
-```ocaml
-let print: i32 → i32 = foreign[i32 → i32] print_int
-
-data Option[A] =
-  | None
-  | Some(A)
-
-let unwrapOrZero(option: Option[i32]): i32 =
-  match option with
-    | None -> 0
-    | Some(n) -> n
-
-let main(): i32 =
-  unwrapOrZero(Some[i32](42))
-```
-
-## 糖衣構文
-
-```ocaml
-let choose[A](x: A)(y: A): A = x in
-choose[i32](1)(2)
-```
-
-これは既存の `let` / `let rec` と `λ` / `Λ` に変換されます。
-
-```ocaml
-let choose: ∀A. A → A → A =
-  ΛΑ. λx: A. λy: A. x
-in
-choose[i32](1)(2)
-```
-
-外部 C 関数を使う場合は `foreign[T → U] name` のように型を明示します。  
-また、 この型注釈は C 側の実装が従うものとして信頼します。
-
-```ocaml
-let puts: String → i32 = foreign[String → i32] puts in
-puts("hello")
-```
-
-比較演算の結果は `Bool` です。`if` の条件には `Bool` が必要です。
-
-## 実行方法
-
-`run.sh` は次の手順をまとめて実行します。
-
-1. `main.lam` をパースする
-2. 型検査を行う
-3. `data` / `match` を Church encoding へ変換する
-4. `build/out.s` を生成する
-5. `clang` で実行ファイルを作成する
-6. 実行して終了コードを表示する
+必要なもの: ARM64 macOS、sbt、clang。
 
 ```bash
-./run.sh
+./run.sh          # main.lam をコンパイル → clang でリンク → 実行（終了コードを表示）
+./calculator.sh   # デモ: 対話式電卓（calculator.lam）
+
+sbt "run <src.lam> <out.s>"                              # 任意のソースをアセンブリへ
+clang -arch arm64 build/out.s runtime/ffi.c -o build/out # 手動リンク
+
+sbt test                        # 全テスト（munit）
+./benchmarks/run_fibonacci.sh   # 他言語とのベンチマーク比較
 ```
 
-必要なもの:
+## アーキテクチャ
 
-- sbt
-- clang
-- ARM64 macOS 向けにビルドできる環境
-
-## 入力例
-
-`main.lam` には、たとえば次のような式を書けます。
-
-```ocaml
-let print: i32 → i32 = foreign[i32 → i32] print_int in
-let puts: String → i32 = foreign[String → i32] puts in
-
-data Option[A] =
-  | None
-  | Some(A)
-in
-
-let printOption(option: Option[i32]): i32 =
-  match option with
-    | None -> puts("None!")
-    | Some(n) -> print(n)
-in
-
-printOption(Some[i32](42))
+```
+ParserAST (cats-parse)
+  → ImportResolver   import の解決・展開
+  → TAnalyser        型検査（trait / context / derive は構文を保ったまま型付け）
+  → Deriver          derive 宣言を手書きと同形の impl へ合成
+  → ContextDesugar   context ブロックを pure / flatMap へ脱糖
+  → TraitEncoder     trait / impl を辞書渡しへ脱糖
+  → ChurchEncoder    data / match / fold を Church encoding 化
+  → Generator        ARM64 アセンブリ生成
 ```
 
-この例では、`Option[i32]` の値を `match` で分岐し、`Some` の中身を `print_int` 経由で表示します。
+全フェーズが単一の GADT 風 AST（`AST.scala`）を高階再帰スキーム（`HFix` / `HCofree`）で共有し、
+エラーは `Either[String, A]` で伝播します。各フェーズの設計はリポジトリ直下のドキュメントを参照してください。
 
-## クロージャと環境
+| ドキュメント | 内容 |
+| --- | --- |
+| [`TypeCheck.md`](TypeCheck.md) | TAnalyser（型注釈必須、HM 推論なし） |
+| [`SystemFOmega.md`](SystemFOmega.md) | カインドと型レベル計算 |
+| [`DataType.md`](DataType.md) / [`ChurchEncode.md`](ChurchEncode.md) | data / match の Church encoding 化 |
+| [`Trait.md`](Trait.md) | trait / impl の辞書渡し脱糖 |
 
-この実装では、関数値をコードポインタと環境ポインタを持つクロージャとして扱います。
-束縛された値は環境フレームに積まれ、ラムダ本体から外側の変数を参照できます。
+## リポジトリ構成
 
-概念的には次のような構造です。
-
-```c
-struct Env {
-    Value value;
-    Env *parent;
-};
-
-struct Closure {
-    Value (*code)(Closure *self, Value arg);
-    Env *env;
-};
 ```
-
-たとえば次の式では、`f` のクロージャが外側の `x` を捕捉します。
-
-```ocaml
-let x: i32 = 3 in
-let f(y: i32): i32 = x + y in
-f(10)
-```
-
-環境フレームは概ね次のようにつながります。
-
-```mermaid
-flowchart TD
-    L["lambda frame"]
-    CE["current_env"]
-    E2["E2: y<br/>value = 10"]
-    E1["E1: x<br/>value = 3"]
-    N["NULL"]
-
-    L --> CE
-    CE --> E2
-    E2 -->|parent| E1
-    E1 -->|parent| N
+src/main/scala/   コンパイラ本体
+src/test/scala/   テスト（munit）
+stdlib/           標準ライブラリ（import "std/..." で解決）
+runtime/ffi.c     foreign で参照する C 関数の実装
+benchmarks/       フィボナッチによる他言語比較
+main.lam          サンプルプログラム（trait / context / 文字列埋め込み）
+calculator.lam    サンプルプログラム（再帰データ型と fold による電卓）
 ```

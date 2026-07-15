@@ -127,20 +127,20 @@ object ParserAST {
   private lazy val constraintP: Parser[Constraint[IndexedRec]] =
     (identifier.map(TypeVariable.apply) ~ typeP.brackets.rep0).map(Constraint.apply)
 
-  private lazy val whereClauseP: Parser0[Seq[Constraint[IndexedRec]]] =
-    (spaced("where") *> constraintP.repSep(spaced(',').backtrack)).backtrack.?.map(_.fold(List.empty)(_.toList))
+  private lazy val withClauseP: Parser0[Seq[Constraint[IndexedRec]]] =
+    (spaced("with") *> constraintP.repSep(spaced(',').backtrack)).backtrack.?.map(_.fold(List.empty)(_.toList))
 
   private lazy val topLetP: Parser[IndexedRec[Decl]] = {
     val typeParams = sp *> typeParamP.rep0
     val params = sp *> functionParamsP
-    (letHead ~ typeParams ~ params ~ whereClauseP ~ typeAnnP ~ valueP).map {
-      case ((((((recursive, name), typeParams), params), constraints), returnType), value) =>
+    (letHead ~ typeParams ~ params ~ typeAnnP ~ withClauseP ~ valueP).map {
+      case ((((((recursive, name), typeParams), params), returnType), constraints), value) =>
         val fullType = polymorphicType(typeParams, functionType(params, returnType))
         val fullValue = polymorphicValue(typeParams, functionValue(params, value))
         if (constraints.isEmpty) {
           if (recursive) AST.TopLetRec(Variable(name), fullType, fullValue)
           else AST.TopLet(Variable(name), fullType, fullValue)
-        } else AST.TopLetWhere(Variable(name), typeParams, constraints, fullType, fullValue, recursive)
+        } else AST.TopLetWith(Variable(name), typeParams, constraints, fullType, fullValue, recursive)
     }.indexed
   }
 
@@ -210,7 +210,7 @@ object ParserAST {
     val head = "trait" -+> identifier.map(TypeVariable.apply)
     val typeParams = sp *> typeParamP.rep0
     val params = sp *> functionParamsP
-    val supers = whereClauseP
+    val supers = withClauseP
     val method = ((("def" -+> identifier.map(Variable.apply)) ~ typeParams ~ params ~ typeAnnP).map {
       case (((name, typeParams), params), returnType) =>
         val sig = polymorphicType(typeParams, functionType(params, returnType))
@@ -236,13 +236,18 @@ object ParserAST {
         MethodImpl(name, sig, body)
     } <* sp).rep
     val body = sp.with1 *> ('{' -*> method <*- '}')
-    (head ~ targets ~ whereClauseP ~ body).map {
+    (head ~ targets ~ withClauseP ~ body).map {
       case ((((implParams, name), targets), context), methods) => AST.TopImpl(name, implParams, targets, context, methods.toList)
     }.indexed
   }
 
+  private lazy val topDeriveP: Parser[IndexedRec[Decl]] =
+    ("derive" -+> identifier.map(TypeVariable.apply) ~ identifier.map(TypeVariable.apply).brackets).map {
+      case (traitName, target) => AST.TopDerive[IndexedRec, Decl](traitName, target)
+    }.indexed
+
   private lazy val topDeclP: Parser[IndexedRec[Decl]] =
-    Parser.defer(topImportP.backtrack | topDataP.backtrack | topTypeP.backtrack | traitP.backtrack | implP.backtrack | topLetP)
+    Parser.defer(topImportP.backtrack | topDataP.backtrack | topTypeP.backtrack | traitP.backtrack | implP.backtrack | topDeriveP.backtrack | topLetP)
 
   lazy val typeP: Parser[IndexedRec[Type]] = Parser.defer(forAllP | typeLambdaP | arrowTypeP)
 
@@ -343,9 +348,9 @@ object ParserAST {
   private val xorOp: Parser[BinOps] = '^'.as(BinOps.Xor)
 
   private val exprKeywords: Set[String] = Set(
-    "in", "then", "else", "with", "as", "where", "context",
+    "in", "then", "else", "with", "as", "context",
     "let", "rec", "if", "match", "fold", "data", "type",
-    "import", "trait", "impl", "def", "true", "false",
+    "import", "trait", "impl", "def", "derive", "true", "false",
     "foreign", "intrinsic"
   )
 

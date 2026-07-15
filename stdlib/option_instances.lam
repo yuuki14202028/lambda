@@ -1,0 +1,42 @@
+import "std/option"
+import "std/functor"
+import "std/applicative"
+import "std/monad"
+import "std/foldable"
+import "std/semigroup"
+import "std/monoid"
+
+derive Functor[Option]
+derive Foldable[Option]
+
+impl Applicative[Option] {
+  def pure[a](x: a): Option[a] = Some[a](x)
+
+  def apply[a][b](f: Option[a → b]): Option[a] → Option[b] =
+    λopt: Option[a]. match f {
+      Some(g) => match opt {
+        Some(x) => Some[b](g(x))
+        None => None[b]
+      }
+      None => None[b]
+    }
+}
+
+impl Monad[Option] {
+  def flatMap[a][b](v: Option[a])(f: a → Option[b]): Option[b] =
+    match v {
+      Some(x) => f(x)
+      None => None[b]
+    }
+}
+
+impl[t] Semigroup[Option[t]] {
+  def append(x: Option[t])(y: Option[t]): Option[t] = match x {
+    Some(_) => x
+    None => y
+  }
+}
+
+impl[t] Monoid[Option[t]] {
+  def empty: Option[t] = None[t]
+}

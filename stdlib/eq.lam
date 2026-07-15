@@ -1,0 +1,3 @@
+trait Eq[a] {
+  def eq(x: a)(y: a): bool
+}

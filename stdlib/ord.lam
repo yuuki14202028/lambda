@@ -1,0 +1,8 @@
+import "std/eq"
+
+trait Ord[a] with Eq[a] {
+  def lt(x: a)(y: a): bool
+  def leq(x: a)(y: a): bool
+  def gt(x: a)(y: a): bool
+  def geq(x: a)(y: a): bool
+}

@@ -1,0 +1,6 @@
+import "std/pair"
+import "std/functor"
+import "std/foldable"
+
+derive Functor[Pair]
+derive Foldable[Pair]

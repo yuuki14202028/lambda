@@ -28,8 +28,8 @@ object TraitEncoder {
   private def encodeDecl(decl: TypeRec[Decl], env: Env): EitherS[Seq[TypeRec[Decl]]] = decl.project match {
     case AST.TopTrait(name, params, _, _) => Right(encodeTrait(name, params, env))
     case AST.TopImpl(name, implParams, targets, _, methods) => encodeImpl(name, implParams, targets, methods, env).map(Seq(_))
-    case AST.TopLetWhere(variable, params, _, _, value, recursive) =>
-      encodeLetWhere(variable, params, value, recursive, env).map(Seq(_))
+    case AST.TopLetWith(variable, params, _, _, value, recursive) =>
+      encodeLetWith(variable, params, value, recursive, env).map(Seq(_))
     case AST.TopLet(variable, types, value) =>
       rewriteExpr(value, env, Set.empty).map(rewritten => Seq(topLetT(variable, types, rewritten)))
     case AST.TopLetRec(variable, types, value) =>
@@ -129,10 +129,10 @@ object TraitEncoder {
   }
 
   /** let f[ā](x̄) where [C₁]…[Cₖ]: ret = e
-   * let f : ∀ā. C₁ → … → Cₖ → x̄ → ret = Λā. λ$where_1: C₁. … e
+   * let f : ∀ā. C₁ → … → Cₖ → x̄ → ret = Λā. λ$with_1: C₁. … e
    * 本体は dictsInScope に制約→辞書変数を入れて書き換える
    */
-  private def encodeLetWhere(
+  private def encodeLetWith(
       variable: Variable,
       params: Seq[(TypeVariable, Kind)],
       value: TypeRec[Expr],
@@ -141,7 +141,7 @@ object TraitEncoder {
   ): EitherS[TypeRec[Decl]] = {
     val constraints = env.constrains.getOrElse(variable, invariant(s"constraints of ${variable.name} are missing from ProgramAnn"))
     val (binders, inner) = stripTyAbs(value, params.length, variable)
-    val dictVars = constraints.indices.map(i => Variable(s"$$where_$i"))
+    val dictVars = constraints.indices.map(i => Variable(s"$$with_$i"))
     val scopeEnv = env.copy(dictsInScope = env.dictsInScope ++ constraints.zip(dictVars))
     rewriteExpr(inner, scopeEnv, Set.empty).map { rewrittenInner =>
       val withDicts = constraints.zip(dictVars).foldRight(rewrittenInner) { case ((tc, v), acc) =>

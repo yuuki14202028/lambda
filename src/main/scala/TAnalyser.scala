@@ -393,26 +393,31 @@ object TAnalyser {
       }
     } yield topImplT(traitName, implParams, typedTargets, typedContext, typedMethods)
 
-    case AST.TopLetWhere(variable, params, constraints, types, value, recursive) => for {
+    case AST.TopLetWith(variable, params, constraints, types, value, recursive) => for {
       env <- ask
-      _ <- guard(constraints.nonEmpty, CompileError.EmptyWhereClause(variable))
+      _ <- guard(constraints.nonEmpty, CompileError.EmptyWithClause(variable))
       _ <- guard(params.map(_._1).distinct.length == params.length, CompileError.DuplicateParams(DeclRef.LetDecl(variable)))
       _ <- guard(params.forall { case (p, _) => !env.typeVars.contains(p) }, CompileError.ParamAlreadyDefined(DeclRef.LetDecl(variable)))
       typedConstraints <- checkConstraints(DeclRef.LetDecl(variable), constraints, e => e.copy(typeVars = e.typeVars ++ params))
       typedTypes <- types
       declaredType <- expandChecked(typedTypes)
       stripped <- lift(stripLeadingForalls(declaredType, params.length).left.map(got =>
-        CompileError.WhereLeadingForalls(variable, params.length, got)
+        CompileError.WithLeadingForalls(variable, params.length, got)
       ))
       _ <- guard(
         destructForAllK(stripped._2).isEmpty,
-        CompileError.WherePolymorphic(variable)
+        CompileError.WithPolymorphic(variable)
       )
       typedValue <-
         if (recursive) value.local((e: Env) => e.copy(values = e.values + (variable -> declaredType)))
         else value
       _ <- expect(declaredType, typeOf(typedValue))
-    } yield topLetWhereT(variable, params, typedConstraints, typedTypes, typedValue, recursive)
+    } yield topLetWithT(variable, params, typedConstraints, typedTypes, typedValue, recursive)
+
+    case AST.TopDerive(traitName, target) => for {
+      env <- ask
+      _ <- lift(Deriver.check(traitName, target, env))
+    } yield topDeriveT(traitName, target)
 
     case AST.Abs(variable, types, body) => for {
       typedTypes <- types
@@ -820,7 +825,7 @@ object TAnalyser {
         values = env.values + (dictName -> instanceType(inst))
       )
 
-    case AST.TopLetWhere(variable, params, typedConstraints, typedTypes, _, _) =>
+    case AST.TopLetWith(variable, params, typedConstraints, typedTypes, _, _) =>
       val scope = env.copy(typeVars = env.typeVars ++ params)
       for {
         declaredType <- expandAndCheckStar(typedTypes, env)
@@ -829,6 +834,14 @@ object TAnalyser {
         values = env.values + (variable -> declaredType),
         constrains = env.constrains + (variable -> expandedConstraints)
       )
+
+    case AST.TopDerive(traitName, target) =>
+      Deriver.check(traitName, target, env).map { inst =>
+        env.copy(
+          instances = env.instances + (instanceKey(traitName, Seq(target.name)) -> inst),
+          values = env.values + (inst.dictName -> instanceType(inst))
+        )
+      }
   }
 
   private def expandConstraints(constraints: Seq[Constraint[TypeRec]], env: Env): EitherS[Seq[TypeConstraint]] =

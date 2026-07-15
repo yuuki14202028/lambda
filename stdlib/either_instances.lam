@@ -1,0 +1,18 @@
+import "std/either"
+import "std/functor"
+import "std/applicative"
+
+derive Functor[Either]
+
+impl[b] Applicative[Either[b]] {
+  def pure[a](x: a): Either[b][a] = Right[b][a](x)
+
+  def apply[a][c](f: Either[b][a → c]): Either[b][a] → Either[b][c] =
+    λe: Either[b][a]. match f {
+      Left(err) => Left[b][c](err)
+      Right(g) => match e {
+        Left(err2) => Left[b][c](err2)
+        Right(x) => Right[b][c](g(x))
+      }
+    }
+}
