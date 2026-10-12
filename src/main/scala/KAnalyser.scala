@@ -1,5 +1,6 @@
 package com.yuuki14202028
 
+import cats.syntax.all.*
 import Check.{ask, fail, guard, lift}
 
 object KAnalyser {
@@ -44,6 +45,13 @@ object KAnalyser {
       _ <- guard(kb == Kind.Star, CompileError.ForAllBodyKindNotStar(kb, body.original))
     } yield Kind.Star
 
+    case AST.InstArrow(constraint, to) => for {
+      kinds <- constraint.arg.traverse[Check, Kind](_.result)
+      _ <- checkConstraintKinds(constraint.name, constraint.arg.map(_.original).zip(kinds), None)
+      kt <- to.result
+      _ <- guard(kt == Kind.Star, CompileError.ArrowKindNotStar(ArrowSide.Rhs, kt, to.original))
+    } yield Kind.Star
+
     case AST.TypeAbs(v, k, body) =>
       body.result.local((e: Env) => e.copy(typeVars = e.typeVars + (v -> k))).map(kb => Kind.Arrow(k, kb))
 
@@ -64,4 +72,17 @@ object KAnalyser {
 
   def kindOf(t: TypeRec[Type]): Check[Kind] =
     t.para(alg)
+
+  // 制約 C[τ̄] の検査: trait の存在・引数の数・各引数のカインド一致。site はエラー表示用の宣言
+  def checkConstraint(constraint: Constraint[TypeRec], site: Option[DeclRef]): Check[Unit] =
+    constraint.arg.traverse(kindOf).flatMap(kinds => checkConstraintKinds(constraint.name, constraint.arg.zip(kinds), site))
+
+  private def checkConstraintKinds(name: TypeVariable, args: Seq[(TypeRec[Type], Kind)], site: Option[DeclRef]): Check[Unit] = for {
+    env <- ask
+    traitDef <- lift(env.traits.get(name).toRight(CompileError.UndefinedTrait(name, site)))
+    _ <- guard(args.length == traitDef.param.length, CompileError.ConstraintArityMismatch(site, name, traitDef.param.length, args.length))
+    _ <- args.zip(traitDef.param).traverse_ { case ((arg, argKind), (_, kind)) =>
+      guard(argKind == kind, CompileError.ConstraintKindMismatch(site, name, arg, argKind, kind))
+    }
+  } yield ()
 }

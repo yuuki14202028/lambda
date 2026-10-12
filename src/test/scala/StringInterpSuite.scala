@@ -12,7 +12,7 @@ class StringInterpSuite extends munit.FunSuite {
     ParserAST.programParser.parseAll(src).left.map(e => s"Parse error: $e").flatMap(p => TAnalyser.validate(p).left.map(_.render))
 
   private def desugar(src: String): Either[String, TypeRec[AST.Program.type]] =
-    validate(src).flatMap(p => TraitEncoder.encode(p).left.map(_.render))
+    validate(src).map(TraitEncoder.encode)
 
   private def church(src: String): Either[String, TypeRec[AST.Program.type]] =
     desugar(src).map(ChurchEncoder.encode)
@@ -143,7 +143,7 @@ class StringInterpSuite extends munit.FunSuite {
     assertLeftContains(validate(src), "show")
   }
 
-  test("辞書解決エラー: Show trait はあるがインスタンスがない") {
+  test("型エラー: Show trait はあるがインスタンスがない") {
     val src =
       """trait Show[a] {
         |  def show(x: a): foreign.C.String
@@ -151,8 +151,7 @@ class StringInterpSuite extends munit.FunSuite {
         |let s(): foreign.C.String = `v = {42}`
         |let main(): i32 = 0
         |""".stripMargin
-    assertRight(validate(src))
-    assertLeftContains(desugar(src), "No instance")
+    assertLeftContains(validate(src), "No instance")
   }
 
   test("with 節の局所辞書で埋め込みの Show[a] が解決される") {

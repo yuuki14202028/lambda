@@ -57,7 +57,7 @@ class TraitParseSuite extends munit.FunSuite {
 
   test("impl: 注釈なしメソッド") {
     parseDecl("impl Show[i32] {\n  def show = λx: i32. x\n}\n") match {
-      case AST.TopImpl(v, params, targets, context, methods) =>
+      case AST.TopImpl(v, params, targets, context, methods, _) =>
         assertEquals(v, TypeVariable("Show"))
         assert(params.isEmpty)
         assertEquals(targets.map(_.show), Seq("i32"))
@@ -70,7 +70,7 @@ class TraitParseSuite extends munit.FunSuite {
 
   test("impl: 型/値パラメータと戻り値注釈付きメソッド") {
     parseDecl("impl Functor[Maybe] {\n  def fmap[a][b](ab: a → b): Maybe[a] → Maybe[b] = λm: Maybe[a]. m\n}\n") match {
-      case AST.TopImpl(v, _, targets, _, methods) =>
+      case AST.TopImpl(v, _, targets, _, methods, _) =>
         assertEquals(v, TypeVariable("Functor"))
         assertEquals(targets.map(_.show), Seq("Maybe"))
         val m = methods.head
@@ -87,7 +87,7 @@ class TraitParseSuite extends munit.FunSuite {
 
   test("impl: 複数メソッド") {
     parseDecl("impl Monad[Maybe] {\n  def ret = λx: i32. x\n  def bind = λx: i32. x\n}\n") match {
-      case AST.TopImpl(_, _, _, _, methods) =>
+      case AST.TopImpl(_, _, _, _, methods, _) =>
         assertEquals(methods.map(_.name.name), Seq("ret", "bind"))
       case other => fail(s"not TopImpl: $other")
     }
@@ -95,7 +95,7 @@ class TraitParseSuite extends munit.FunSuite {
 
   test("impl: 型パラメータと with 文脈") {
     parseDecl("impl[a] Show[Maybe[a]] with Show[a] {\n  def show = λx: Maybe[a]. x\n}\n") match {
-      case AST.TopImpl(v, params, targets, context, methods) =>
+      case AST.TopImpl(v, params, targets, context, methods, _) =>
         assertEquals(v, TypeVariable("Show"))
         assertEquals(params, Seq((TypeVariable("a"), Kind.Star)))
         assertEquals(targets.map(_.show), Seq("Maybe[a]"))
@@ -106,14 +106,13 @@ class TraitParseSuite extends munit.FunSuite {
     }
   }
 
-  test("let: with 制約付き関数") {
+  test("let: with 制約は型パラメータ直下の暗黙引数になる") {
     parseDecl("let f[a](x: a): i32 with Show[a] = 0\n") match {
-      case AST.TopLetWith(v, params, constraints, _, _, recursive) =>
+      case AST.TopLet(v, types, value) =>
         assertEquals(v, Variable("f"))
-        assertEquals(params, Seq((TypeVariable("a"), Kind.Star)))
-        assertEquals(constraints.map(_.name), Seq(TypeVariable("Show")))
-        assertEquals(recursive, false)
-      case other => fail(s"not TopLetWith: $other")
+        assertEquals(types.show, "∀a. [Show[a]] → a → i32")
+        assertEquals(value.show, "Λa. λ[Show[a]]. λx: a. 0")
+      case other => fail(s"not TopLet: $other")
     }
   }
 

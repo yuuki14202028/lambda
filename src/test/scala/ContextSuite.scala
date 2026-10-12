@@ -12,10 +12,10 @@ class ContextSuite extends munit.FunSuite {
     ParserAST.programParser.parseAll(src).left.map(e => s"Parse error: $e").flatMap(p => TAnalyser.validate(p).left.map(_.render))
 
   private def desugarContext(src: String): Either[String, TypeRec[AST.Program.type]] =
-    validate(src).flatMap(p => ContextDesugar.desugar(p).left.map(_.render))
+    validate(src).map(ContextDesugar.desugar)
 
   private def desugar(src: String): Either[String, TypeRec[AST.Program.type]] =
-    desugarContext(src).flatMap(p => TraitEncoder.encode(p).left.map(_.render))
+    desugarContext(src).map(TraitEncoder.encode)
 
   private def church(src: String): Either[String, TypeRec[AST.Program.type]] =
     desugar(src).map(ChurchEncoder.encode)
@@ -39,7 +39,7 @@ class ContextSuite extends munit.FunSuite {
 
   test("パース: context ブロックは Context ノードになる") {
     parseExpr("context[Maybe] { x: i32 = m; x + 1 }").unfix match {
-      case AST.Context(monad, bindings, result) =>
+      case AST.Context(monad, bindings, result, _) =>
         assertEquals(monad.show, "Maybe")
         assertEquals(bindings.map(b => (b.name.name, b.monadic)), Seq(("x", true)))
         assertEquals(result.show, "(x + 1)")
@@ -50,7 +50,7 @@ class ContextSuite extends munit.FunSuite {
   test("パース: 純粋 let / let rec をモナド束縛と混在できる") {
     val src = "context[Maybe] { let y: i32 = 1; x: i32 = m; let rec f(n: i32): i32 = f(n); x + y }"
     parseExpr(src).unfix match {
-      case AST.Context(_, bindings, _) =>
+      case AST.Context(_, bindings, _, _) =>
         assertEquals(bindings.map(b => (b.name.name, b.monadic, b.recursive)),
           Seq(("y", false, false), ("x", true, false), ("f", false, true)))
       case other => fail(s"not Context: $other")
@@ -59,7 +59,7 @@ class ContextSuite extends munit.FunSuite {
 
   test("パース: 束縛なしの context ブロック") {
     parseExpr("context[Maybe] { 42 }").unfix match {
-      case AST.Context(_, bindings, result) =>
+      case AST.Context(_, bindings, result, _) =>
         assertEquals(bindings.length, 0)
         assertEquals(result.show, "42")
       case other => fail(s"not Context: $other")

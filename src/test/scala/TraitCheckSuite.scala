@@ -6,7 +6,7 @@ class TraitCheckSuite extends munit.FunSuite {
     ParserAST.programParser.parseAll(src).left.map(e => s"Parse error: $e").flatMap(p => TAnalyser.validate(p).left.map(_.render))
 
   private def desugar(src: String): Either[String, TypeRec[AST.Program.type]] =
-    validate(src).flatMap(p => TraitEncoder.encode(p).left.map(_.render))
+    validate(src).map(TraitEncoder.encode)
 
   private def church(src: String): Either[String, TypeRec[AST.Program.type]] =
     desugar(src).map(ChurchEncoder.encode)
@@ -125,17 +125,17 @@ class TraitCheckSuite extends munit.FunSuite {
     assertLeftContains(validate(src), "Kind mismatch")
   }
 
-  test("NoInstance: インスタンスのない型でのメソッド利用は脱糖で拒否") {
+  test("NoInstance: インスタンスのない型でのメソッド利用は型検査で拒否") {
     val src = showTrait +
       """impl Show[i32] {
         |  def show = λx: i32. x
         |}
         |let main(): i32 = show[bool](true)
         |""".stripMargin
-    assertLeftContains(desugar(src), "No instance")
+    assertLeftContains(validate(src), "No instance")
   }
 
-  test("AmbiguousConstraint: 型適用なしの裸参照は脱糖で拒否") {
+  test("型適用なしの裸参照は、制約が残った型になり型検査で拒否") {
     val src = showTrait +
       """impl Show[i32] {
         |  def show = λx: i32. x
@@ -143,7 +143,7 @@ class TraitCheckSuite extends munit.FunSuite {
         |let f: ∀a. a → i32 = show
         |let main(): i32 = 0
         |""".stripMargin
-    assertLeftContains(desugar(src), "Ambiguous constraint")
+    assertLeftContains(validate(src), "Type mismatch: expected ∀a. a → i32, actual ∀a. [Show[a]] → a → i32")
   }
 
   test("シャドーイング: メソッド名を束縛し直した場合は辞書を挿入しない") {

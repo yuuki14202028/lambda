@@ -12,7 +12,7 @@ class DeriveSuite extends munit.FunSuite {
     ParserAST.programParser.parseAll(src).left.map(e => s"Parse error: $e").flatMap(p => TAnalyser.validate(p).left.map(_.render))
 
   private def desugar(src: String): Either[String, TypeRec[AST.Program.type]] =
-    validate(src).map(Deriver.desugar).flatMap(p => TraitEncoder.encode(p).left.map(_.render))
+    validate(src).map(Deriver.desugar).map(TraitEncoder.encode)
 
   private def church(src: String): Either[String, TypeRec[AST.Program.type]] =
     desugar(src).map(ChurchEncoder.encode)

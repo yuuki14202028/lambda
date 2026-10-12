@@ -24,6 +24,22 @@ extension [H[_[_], _], R[_], I](self: H[R, I])(using ht: HTraverse[H]) {
   def htraverse[G[_]: Applicative, S[_]](f: [x] => R[x] => G[S[x]]): G[H[S, I]] = ht.traverse(self)(f)
 }
 
+private def traverseConstraint[G[_]: Applicative, R[_], S[_]](c: Constraint[R])(f: [x] => R[x] => G[S[x]]): G[Constraint[S]] =
+  c.arg.traverse(a => f(a)).map(args => Constraint[S](c.name, args))
+
+private def traverseEvidence[G[_]: Applicative, R[_], S[_]](e: Evidence[R])(f: [x] => R[x] => G[S[x]]): G[Evidence[S]] = e match {
+  case Evidence.Given(constraint) =>
+    traverseConstraint(constraint)(f).map(Evidence.Given(_))
+  case Evidence.Instance(traitName, heads, typeArgs, context) =>
+    (typeArgs.traverse(a => f(a)), context.traverse(traverseEvidence(_)(f))).mapN(Evidence.Instance(traitName, heads, _, _))
+  case Evidence.Super(traitName, index, of) =>
+    traverseEvidence(of)(f).map(Evidence.Super(traitName, index, _))
+}
+
+extension [R[_]](self: Evidence[R]) {
+  def hmap[S[_]](f: R ~> S): Evidence[S] = traverseEvidence[Id, R, S](self)([x] => (r: R[x]) => f(r): Id[S[x]])
+}
+
 given HTraverse[AST] with {
   def traverse[G[_]: Applicative, R[_], S[_], I](fa: AST[R, I])(f: [x] => R[x] => G[S[x]]): G[AST[S, I]] = fa match {
     case AST.Program(decls) =>
@@ -41,32 +57,26 @@ given HTraverse[AST] with {
         c.fields.traverse(field => f(field)).map(fs => DataConstructor[S](c.name, fs))
       }.map(AST.TopData(v, params, _, recursive))
     case AST.TopTrait(v, params, supers, methods) =>
-      val supersG = supers.traverse { c =>
-        c.arg.traverse(a => f(a)).map(args => Constraint[S](c.name, args))
-      }
+      val supersG = supers.traverse(traverseConstraint(_)(f))
       val methodsG = methods.traverse { m =>
         (f(m.sig), m.body.traverse(b => f(b))).mapN((sig, body) => MethodSig[S](m.name, sig, body))
       }
       (supersG, methodsG).mapN(AST.TopTrait(v, params, _, _))
-    case AST.TopImpl(v, params, targets, context, methods) =>
-      val contextG = context.traverse { c =>
-        c.arg.traverse(a => f(a)).map(args => Constraint[S](c.name, args))
-      }
+    case AST.TopImpl(v, params, targets, context, methods, superEvidence) =>
+      val contextG = context.traverse(traverseConstraint(_)(f))
       val methodsG = methods.traverse { m =>
         (m.sig.traverse(s => f(s)), f(m.body)).mapN((sig, body) => MethodImpl[S](m.name, sig, body))
       }
-      (targets.traverse(t => f(t)), contextG, methodsG).mapN(AST.TopImpl(v, params, _, _, _))
-    case AST.TopLetWith(v, params, constraints, types, value, recursive) =>
-      val constraintsG = constraints.traverse { c =>
-        c.arg.traverse(a => f(a)).map(args => Constraint[S](c.name, args))
-      }
-      (constraintsG, f(types), f(value)).mapN(AST.TopLetWith(v, params, _, _, _, recursive))
+      val superEvidenceG = superEvidence.traverse(traverseEvidence(_)(f))
+      (targets.traverse(t => f(t)), contextG, methodsG, superEvidenceG).mapN(AST.TopImpl(v, params, _, _, _, _))
     case AST.TopDerive(traitName, target) =>
       Applicative[G].pure(AST.TopDerive(traitName, target))
     case AST.Abs(v, types, body) =>
       (f(types), f(body)).mapN(AST.Abs(v, _, _))
     case AST.TyAbs(v, k, body) =>
       f(body).map(AST.TyAbs(v, k, _))
+    case AST.InstAbs(constraint, body) =>
+      (traverseConstraint(constraint)(f), f(body)).mapN(AST.InstAbs(_, _))
     case AST.Let(v, types, vall, body) =>
       (f(types), f(vall), f(body)).mapN(AST.Let(v, _, _, _))
     case AST.LetRec(v, types, vall, body) =>
@@ -92,6 +102,8 @@ given HTraverse[AST] with {
       (f(func), f(arg)).mapN(AST.App(_, _))
     case AST.TyApp(func, arg) =>
       (f(func), f(arg)).mapN(AST.TyApp(_, _))
+    case AST.InstApp(func, evidence) =>
+      (f(func), traverseEvidence(evidence)(f)).mapN(AST.InstApp(_, _))
     case AST.Foreign(v, types) =>
       f(types).map(AST.Foreign(v, _))
     case AST.Var(v) => Applicative[G].pure(AST.Var(v))
@@ -100,11 +112,12 @@ given HTraverse[AST] with {
     case AST.StringLit(v) => Applicative[G].pure(AST.StringLit(v))
     case AST.StrInterp(parts) =>
       parts.traverse(part => f(part)).map(AST.StrInterp(_))
-    case AST.Context(monad, bindings, result) =>
+    case AST.Context(monad, bindings, result, ops) =>
       val bindingsG = bindings.traverse { b =>
         (f(b.annotation), f(b.value)).mapN(ContextBinding[S](b.name, _, _, b.monadic, b.recursive))
       }
-      (f(monad), bindingsG, f(result)).mapN(AST.Context(_, _, _))
+      val opsG = ops.traverse(o => (f(o.pure), f(o.flatMap)).mapN(ContextOps[S](_, _)))
+      (f(monad), bindingsG, f(result), opsG).mapN(AST.Context(_, _, _, _))
     case AST.Bool(v) => Applicative[G].pure(AST.Bool(v))
     case AST.UnitLit() => Applicative[G].pure(AST.UnitLit())
     case AST.Block(discarded, result) =>
@@ -123,6 +136,8 @@ given HTraverse[AST] with {
       (f(from), f(to)).mapN(AST.Arrow(_, _))
     case AST.ForAll(v, k, body) =>
       f(body).map(AST.ForAll(v, k, _))
+    case AST.InstArrow(constraint, to) =>
+      (traverseConstraint(constraint)(f), f(to)).mapN(AST.InstArrow(_, _))
     case AST.TypeApp(func, arg) =>
       (f(func), f(arg)).mapN(AST.TypeApp(_, _))
     case AST.TypeAbs(v, k, body) =>

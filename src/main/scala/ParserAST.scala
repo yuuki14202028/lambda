@@ -130,19 +130,17 @@ object ParserAST {
   private lazy val withClauseP: Parser0[Seq[Constraint[IndexedRec]]] =
     (spaced("with") *> constraintP.repSep(spaced(',').backtrack)).backtrack.?.map(_.fold(List.empty)(_.toList))
 
-  private lazy val topLetP: Parser[IndexedRec[Decl]] = {
-    val typeParams = sp *> typeParamP.rep0
-    val params = sp *> functionParamsP
-    (letHead ~ typeParams ~ params ~ typeAnnP ~ withClauseP ~ valueP).map {
-      case ((((((recursive, name), typeParams), params), returnType), constraints), value) =>
-        val fullType = polymorphicType(typeParams, functionType(params, returnType))
-        val fullValue = polymorphicValue(typeParams, functionValue(params, value))
-        if (constraints.isEmpty) {
-          if (recursive) AST.TopLetRec(Variable(name), fullType, fullValue)
-          else AST.TopLet(Variable(name), fullType, fullValue)
-        } else AST.TopLetWith(Variable(name), typeParams, constraints, fullType, fullValue, recursive)
-    }.indexed
-  }
+  // with C₁, …, Cₖ は、型では [C₁] → … → [Cₖ] → τ、値では λ[C₁]. … λ[Cₖ]. e（型パラメータの直下に置く）
+  private def constrainedType(constraints: Seq[Constraint[IndexedRec]], bodyType: IndexedRec[Type]): IndexedRec[Type] =
+    constraints.foldRight(bodyType)((c, to) => at(to.extract, AST.InstArrow(c, to)))
+
+  private def constrainedValue(constraints: Seq[Constraint[IndexedRec]], value: IndexedRec[Expr]): IndexedRec[Expr] =
+    constraints.foldRight(value)((c, body) => at(body.extract, AST.InstAbs(c, body)))
+
+  private lazy val topLetP: Parser[IndexedRec[Decl]] = binding.map {
+    case (true, v, t, value) => AST.TopLetRec(v, t, value)
+    case (false, v, t, value) => AST.TopLet(v, t, value)
+  }.indexed
 
   private val letHead: Parser[(Boolean, String)] = {
     val head = "let" *> sp1 *> ("rec" <* sp1).as(true).?.map(_.getOrElse(false))
@@ -157,12 +155,12 @@ object ParserAST {
   private lazy val binding: Parser[(Boolean, Variable, IndexedRec[Type], IndexedRec[Expr])] = {
     val typeParams = sp *> typeParamP.rep0
     val params = sp *> functionParamsP
-    (letHead ~ typeParams ~ params ~ typeAnnP ~ valueP).map {
-      case (((((recursive, name), typeParams), params), returnType), value) => (
+    (letHead ~ typeParams ~ params ~ typeAnnP ~ withClauseP ~ valueP).map {
+      case ((((((recursive, name), typeParams), params), returnType), constraints), value) => (
         recursive,
         Variable(name),
-        polymorphicType(typeParams, functionType(params, returnType)),
-        polymorphicValue(typeParams, functionValue(params, value))
+        polymorphicType(typeParams, constrainedType(constraints, functionType(params, returnType))),
+        polymorphicValue(typeParams, constrainedValue(constraints, functionValue(params, value)))
       )
     }
   }
@@ -237,7 +235,7 @@ object ParserAST {
     } <* sp).rep
     val body = sp.with1 *> ('{' -*> method <*- '}')
     (head ~ targets ~ withClauseP ~ body).map {
-      case ((((implParams, name), targets), context), methods) => AST.TopImpl(name, implParams, targets, context, methods.toList)
+      case ((((implParams, name), targets), context), methods) => AST.TopImpl(name, implParams, targets, context, methods.toList, Seq.empty)
     }.indexed
   }
 
@@ -315,7 +313,7 @@ object ParserAST {
     }
     val bindings = (pureLet | monadicBinding).rep0
     val body = '{' -*> (bindings.with1 ~ Parser.defer(expr)) <*- '}'
-    (monad ~ (sp.with1 *> body)).map { case (m, (bs, result)) => AST.Context(m, bs, result) }.indexed
+    (monad ~ (sp.with1 *> body)).map { case (m, (bs, result)) => AST.Context(m, bs, result, None) }.indexed
   }
 
   lazy val foldP: Parser[IndexedRec[Expr]] = {

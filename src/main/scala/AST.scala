@@ -17,11 +17,11 @@ enum AST[R[_], I] {
   case TopType(variable: TypeVariable, params: Seq[(TypeVariable, Kind)], alias: R[Type]) extends AST[R, Decl]
   case TopData(variable: TypeVariable, params: Seq[(TypeVariable, Kind)], constructors: Seq[DataConstructor[R]], recursive: Boolean) extends AST[R, Decl]
   case TopTrait(variable: TypeVariable, params: Seq[(TypeVariable, Kind)], supers: Seq[Constraint[R]], methods: Seq[MethodSig[R]]) extends AST[R, Decl]
-  case TopImpl(variable: TypeVariable, params: Seq[(TypeVariable, Kind)], targets: Seq[R[Type]], context: Seq[Constraint[R]], methods: Seq[MethodImpl[R]]) extends AST[R, Decl]
-  case TopLetWith(variable: Variable, params: Seq[(TypeVariable, Kind)], constraints: Seq[Constraint[R]], types: R[Type], value: R[Expr], recursive: Boolean) extends AST[R, Decl]
+  case TopImpl(variable: TypeVariable, params: Seq[(TypeVariable, Kind)], targets: Seq[R[Type]], context: Seq[Constraint[R]], methods: Seq[MethodImpl[R]], superEvidence: Seq[Evidence[R]]) extends AST[R, Decl]
   case TopDerive(traitName: TypeVariable, target: TypeVariable) extends AST[R, Decl]
   case Abs(variable: Variable, types: R[Type], body: R[Expr]) extends AST[R, Expr]
   case TyAbs(variable: TypeVariable, kind: Kind, body: R[Expr]) extends AST[R, Expr]
+  case InstAbs(constraint: Constraint[R], body: R[Expr]) extends AST[R, Expr]
   case Let(variable: Variable, types: R[Type], value: R[Expr], body: R[Expr]) extends AST[R, Expr]
   case LetRec(variable: Variable, types: R[Type], value: R[Expr], body: R[Expr]) extends AST[R, Expr]
   case TypeLet(variable: TypeVariable, params: Seq[(TypeVariable, Kind)], alias: R[Type], body: R[Expr]) extends AST[R, Expr]
@@ -30,6 +30,7 @@ enum AST[R[_], I] {
   case Fold(scrutinee: R[Expr], resultType: R[Type], cases: Seq[MatchCase[R]]) extends AST[R, Expr]
   case App(function: R[Expr], argument: R[Expr]) extends AST[R, Expr]
   case TyApp(function: R[Expr], argument: R[Type]) extends AST[R, Expr]
+  case InstApp(function: R[Expr], evidence: Evidence[R]) extends AST[R, Expr]
   case Foreign(value: Variable, types: R[Type]) extends AST[R, Expr]
   case Var(value: Variable) extends AST[R, Expr]
   case Num(value: String, typeName: String) extends AST[R, Expr]
@@ -39,7 +40,7 @@ enum AST[R[_], I] {
   case Bool(value: Boolean) extends AST[R, Expr]
   case UnitLit() extends AST[R, Expr]
   case Block(discarded: Seq[R[Expr]], result: Option[R[Expr]]) extends AST[R, Expr]
-  case Context(monad: R[Type], bindings: Seq[ContextBinding[R]], result: R[Expr]) extends AST[R, Expr]
+  case Context(monad: R[Type], bindings: Seq[ContextBinding[R]], result: R[Expr], ops: Option[ContextOps[R]]) extends AST[R, Expr]
   case BinOp(op: BinOps, left: R[Expr], right: R[Expr]) extends AST[R, Expr]
   case Intrinsic(op: IntrinsicOps, args: Seq[R[Expr]]) extends AST[R, Expr]
   case UnaryOp(op: UnaryOps, body: R[Expr]) extends AST[R, Expr]
@@ -48,6 +49,7 @@ enum AST[R[_], I] {
   case TypeVar(value: TypeVariable) extends AST[R, Type]
   case Arrow(from: R[Type], to: R[Type]) extends AST[R, Type]
   case ForAll(variable: TypeVariable, kind: Kind, body: R[Type]) extends AST[R, Type]
+  case InstArrow(constraint: Constraint[R], to: R[Type]) extends AST[R, Type]
   case TypeApp(function: R[Type], argument: R[Type]) extends AST[R, Type]
   case TypeAbs(variable: TypeVariable, kind: Kind, body: R[Type]) extends AST[R, Type]
 }
@@ -55,8 +57,24 @@ enum AST[R[_], I] {
 case class DataConstructor[R[_]](name: Variable, fields: Seq[R[Type]])
 case class MatchCase[R[_]](constructor: Variable, binders: Seq[Variable], body: R[Expr])
 case class ContextBinding[R[_]](name: Variable, annotation: R[Type], value: R[Expr], monadic: Boolean, recursive: Boolean = false)
+// context[M] が使う pure[M] / flatMap[M]。型検査が名前と制約を解決して埋める（パース直後は None）
+case class ContextOps[R[_]](pure: R[Expr], flatMap: R[Expr])
 
 case class Constraint[R[_]](name: TypeVariable, arg: Seq[R[Type]])
+
+/** 制約は Lean 4 と同じく「辞書 C[τ̄] を受け取る、インスタンス解決で埋まる引数」として表す:
+ *   型 InstArrow  `[C[τ̄]] → τ`   / 抽象 InstAbs `λ[C[τ̄]]. e` / 適用 InstApp（型検査が挿入）
+ * trait C は辞書のデータ型でもあるので、TraitEncoder はこれらを通常の → / λ / 適用に置き換えるだけでよい。
+ * 引数の位置には trait の適用しか置けないので、型ではなく Constraint として持つ。
+ *
+ * Evidence は制約 C[τ̄] が成り立つ根拠。型検査が Resolver で導出して InstApp / TopImpl に記録し、
+ * TraitEncoder が辞書式へ翻訳する。
+ */
+enum Evidence[R[_]] {
+  case Given(constraint: Constraint[R])                                                                        // スコープ中の制約（with 節・impl の文脈）
+  case Instance(traitName: TypeVariable, heads: Seq[String], typeArgs: Seq[R[Type]], context: Seq[Evidence[R]]) // インスタンス（typeArgs は impl の型パラメータへの束縛）
+  case Super(traitName: TypeVariable, index: Int, of: Evidence[R])                                             // traitName[τ̄] の根拠 of から index 番目のスーパークラスを射影
+}
 case class MethodSig[R[_]](name: Variable, sig: R[Type], body: Option[R[Expr]])
 case class MethodImpl[R[_]](name: Variable, sig: Option[R[Type]], body: R[Expr])
 
@@ -167,12 +185,11 @@ def topData(variable: TypeVariable, params: Seq[(TypeVariable, Kind)], construct
   HFix(AST.TopData(variable, params, constructors, recursive))
 def topTrait(v: TypeVariable, p: Seq[(TypeVariable, Kind)], s: Seq[Constraint[Rec]], m: Seq[MethodSig[Rec]]): Rec[Decl] = HFix(AST.TopTrait(v, p, s, m))
 def topImpl(variable: TypeVariable, params: Seq[(TypeVariable, Kind)], targets: Seq[Rec[Type]], context: Seq[Constraint[Rec]], methods: Seq[MethodImpl[Rec]]): Rec[Decl] =
-  HFix(AST.TopImpl(variable, params, targets, context, methods))
-def topLetWith(variable: Variable, params: Seq[(TypeVariable, Kind)], constraints: Seq[Constraint[Rec]], types: Rec[Type], value: Rec[Expr], recursive: Boolean): Rec[Decl] =
-  HFix(AST.TopLetWith(variable, params, constraints, types, value, recursive))
+  HFix(AST.TopImpl(variable, params, targets, context, methods, Seq.empty))
 def topDerive(traitName: TypeVariable, target: TypeVariable): Rec[Decl] = HFix(AST.TopDerive(traitName, target))
 def abs(variable: Variable, types: Rec[Type], body: Rec[Expr]): Rec[Expr] = HFix(AST.Abs(variable, types, body))
 def tyAbs(variable: TypeVariable, kind: Kind, body: Rec[Expr]): Rec[Expr] = HFix(AST.TyAbs(variable, kind, body))
+def instAbs(constraint: Constraint[Rec], body: Rec[Expr]): Rec[Expr] = HFix(AST.InstAbs(constraint, body))
 def let(variable: Variable, types: Rec[Type], value: Rec[Expr], body: Rec[Expr]): Rec[Expr] = HFix(AST.Let(variable, types, value, body))
 def letRec(variable: Variable, types: Rec[Type], value: Rec[Expr], body: Rec[Expr]): Rec[Expr] = HFix(AST.LetRec(variable, types, value, body))
 def typeLet(variable: TypeVariable, params: Seq[(TypeVariable, Kind)], alias: Rec[Type], body: Rec[Expr]): Rec[Expr] =
@@ -195,7 +212,7 @@ def bool(value: Boolean): Rec[Expr] = HFix(AST.Bool(value))
 def unitLit: Rec[Expr] = HFix(AST.UnitLit())
 def block(discarded: Seq[Rec[Expr]], result: Option[Rec[Expr]]): Rec[Expr] = HFix(AST.Block(discarded, result))
 def contextExpr(monad: Rec[Type], bindings: Seq[ContextBinding[Rec]], result: Rec[Expr]): Rec[Expr] =
-  HFix(AST.Context(monad, bindings, result))
+  HFix(AST.Context(monad, bindings, result, None))
 def binop(op: BinOps, left: Rec[Expr], right: Rec[Expr]): Rec[Expr] = HFix(AST.BinOp(op, left, right))
 def intrinsic(op: IntrinsicOps, args: Seq[Rec[Expr]]): Rec[Expr] = HFix(AST.Intrinsic(op, args))
 def unop(op: UnaryOps, body: Rec[Expr]): Rec[Expr] = HFix(AST.UnaryOp(op, body))
@@ -204,6 +221,7 @@ def primitive(name: String): Rec[Type] = HFix(AST.Primitive(name))
 def typeVar(variable: TypeVariable): Rec[Type] = HFix(AST.TypeVar(variable))
 def arrow(from: Rec[Type], to: Rec[Type]): Rec[Type] = HFix(AST.Arrow(from, to))
 def forallType(variable: TypeVariable, kind: Kind, body: Rec[Type]): Rec[Type] = HFix(AST.ForAll(variable, kind, body))
+def instArrow(constraint: Constraint[Rec], to: Rec[Type]): Rec[Type] = HFix(AST.InstArrow(constraint, to))
 def typeApp(function: Rec[Type], argument: Rec[Type]): Rec[Type] = HFix(AST.TypeApp(function, argument))
 def typeAbs(variable: TypeVariable, kind: Kind, body: Rec[Type]): Rec[Type] = HFix(AST.TypeAbs(variable, kind, body))
 
@@ -238,16 +256,16 @@ def topDataT(variable: TypeVariable, params: Seq[(TypeVariable, Kind)], construc
   HCofree(DeclAnn, AST.TopData(variable, params, constructors, recursive))
 def topTraitT(variable: TypeVariable, params: Seq[(TypeVariable, Kind)], supers: Seq[Constraint[TypeRec]], methods: Seq[MethodSig[TypeRec]]): TypeRec[Decl] =
   HCofree(DeclAnn, AST.TopTrait(variable, params, supers, methods))
-def topImplT(variable: TypeVariable, params: Seq[(TypeVariable, Kind)], targets: Seq[TypeRec[Type]], context: Seq[Constraint[TypeRec]], methods: Seq[MethodImpl[TypeRec]]): TypeRec[Decl] =
-  HCofree(DeclAnn, AST.TopImpl(variable, params, targets, context, methods))
-def topLetWithT(variable: Variable, params: Seq[(TypeVariable, Kind)], constraints: Seq[Constraint[TypeRec]], types: TypeRec[Type], value: TypeRec[Expr], recursive: Boolean): TypeRec[Decl] =
-  HCofree(DeclAnn, AST.TopLetWith(variable, params, constraints, types, value, recursive))
+def topImplT(variable: TypeVariable, params: Seq[(TypeVariable, Kind)], targets: Seq[TypeRec[Type]], context: Seq[Constraint[TypeRec]], methods: Seq[MethodImpl[TypeRec]], superEvidence: Seq[Evidence[TypeRec]]): TypeRec[Decl] =
+  HCofree(DeclAnn, AST.TopImpl(variable, params, targets, context, methods, superEvidence))
 def topDeriveT(traitName: TypeVariable, target: TypeVariable): TypeRec[Decl] =
   HCofree(DeclAnn, AST.TopDerive(traitName, target))
 def absT(variable: Variable, t: TypeRec[Type], types: TypeRec[Type], body: TypeRec[Expr]): TypeRec[Expr] =
   HCofree(ExprAnn(t), AST.Abs(variable, types, body))
 def tyAbsT(variable: TypeVariable, t: TypeRec[Type], kind: Kind, body: TypeRec[Expr]): TypeRec[Expr] =
   HCofree(ExprAnn(t), AST.TyAbs(variable, kind, body))
+def instAbsT(t: TypeRec[Type], constraint: Constraint[TypeRec], body: TypeRec[Expr]): TypeRec[Expr] =
+  HCofree(ExprAnn(t), AST.InstAbs(constraint, body))
 def letT(variable: Variable, t: TypeRec[Type], types: TypeRec[Type], value: TypeRec[Expr], body: TypeRec[Expr]): TypeRec[Expr] =
   HCofree(ExprAnn(t), AST.Let(variable, types, value, body))
 def letRecT(variable: Variable, t: TypeRec[Type], types: TypeRec[Type], value: TypeRec[Expr], body: TypeRec[Expr]): TypeRec[Expr] =
@@ -264,6 +282,8 @@ def appT(t: TypeRec[Type], function: TypeRec[Expr], argument: TypeRec[Expr]): Ty
   HCofree(ExprAnn(t), AST.App(function, argument))
 def tyAppT(t: TypeRec[Type], function: TypeRec[Expr], argument: TypeRec[Type]): TypeRec[Expr] =
   HCofree(ExprAnn(t), AST.TyApp(function, argument))
+def instAppT(t: TypeRec[Type], function: TypeRec[Expr], evidence: Evidence[TypeRec]): TypeRec[Expr] =
+  HCofree(ExprAnn(t), AST.InstApp(function, evidence))
 def foreignT(variable: Variable, t: TypeRec[Type], types: TypeRec[Type]): TypeRec[Expr] = HCofree(ExprAnn(t), AST.Foreign(variable, types))
 def varrType(variable: Variable, t: TypeRec[Type]): TypeRec[Expr] = HCofree(ExprAnn(t), AST.Var(variable))
 def numT(value: String, typeName: String, t: TypeRec[Type]): TypeRec[Expr] = HCofree(ExprAnn(t), AST.Num(value, typeName))
@@ -273,8 +293,8 @@ def boolT(value: Boolean, t: TypeRec[Type]): TypeRec[Expr] = HCofree(ExprAnn(t),
 def unitLitT(t: TypeRec[Type]): TypeRec[Expr] = HCofree(ExprAnn(t), AST.UnitLit())
 def blockT(t: TypeRec[Type], discarded: Seq[TypeRec[Expr]], result: Option[TypeRec[Expr]]): TypeRec[Expr] =
   HCofree(ExprAnn(t), AST.Block(discarded, result))
-def contextExprT(t: TypeRec[Type], monad: TypeRec[Type], bindings: Seq[ContextBinding[TypeRec]], result: TypeRec[Expr]): TypeRec[Expr] =
-  HCofree(ExprAnn(t), AST.Context(monad, bindings, result))
+def contextExprT(t: TypeRec[Type], monad: TypeRec[Type], bindings: Seq[ContextBinding[TypeRec]], result: TypeRec[Expr], ops: ContextOps[TypeRec]): TypeRec[Expr] =
+  HCofree(ExprAnn(t), AST.Context(monad, bindings, result, Some(ops)))
 def binopT(op: BinOps, t: TypeRec[Type], left: TypeRec[Expr], right: TypeRec[Expr]): TypeRec[Expr] =
   HCofree(ExprAnn(t), AST.BinOp(op, left, right))
 def intrinsicT(op: IntrinsicOps, t: TypeRec[Type], args: Seq[TypeRec[Expr]]): TypeRec[Expr] =
@@ -287,6 +307,7 @@ def primitiveT(name: String): TypeRec[Type] = HCofree(TypeAnn, AST.Primitive(nam
 def typeVarT(variable: TypeVariable): TypeRec[Type] = HCofree(TypeAnn, AST.TypeVar(variable))
 def arrowT(from: TypeRec[Type], to: TypeRec[Type]): TypeRec[Type] = HCofree(TypeAnn, AST.Arrow(from, to))
 def forallTypeT(variable: TypeVariable, kind: Kind, body: TypeRec[Type]): TypeRec[Type] = HCofree(TypeAnn, AST.ForAll(variable, kind, body))
+def instArrowT(constraint: Constraint[TypeRec], to: TypeRec[Type]): TypeRec[Type] = HCofree(TypeAnn, AST.InstArrow(constraint, to))
 def typeAppT(function: TypeRec[Type], argument: TypeRec[Type]): TypeRec[Type] = HCofree(TypeAnn, AST.TypeApp(function, argument))
 def typeAbsT(variable: TypeVariable, kind: Kind, body: TypeRec[Type]): TypeRec[Type] = HCofree(TypeAnn, AST.TypeAbs(variable, kind, body))
 
@@ -308,10 +329,33 @@ def destructForAllK(t: TypeRec[Type]): Option[(TypeVariable, Kind, TypeRec[Type]
   case AST.ForAll(variable, kind, body) => (variable, kind, body)
 }
 
+def destructInstArrow(t: TypeRec[Type]): Option[(Constraint[TypeRec], TypeRec[Type])] = PartialFunction.condOpt(t.project) {
+  case AST.InstArrow(constraint, to) => (constraint, to)
+}
+
+// ---- 子の型から注釈を導出する構築関数（脱糖フェーズ用。型が合わないのは前段のバグ） ----
+
+def mkAbs(variable: Variable, paramType: TypeRec[Type], body: TypeRec[Expr]): TypeRec[Expr] =
+  absT(variable, arrowT(paramType, typeOf(body)), paramType, body)
+
+def mkTyAbs(variable: TypeVariable, kind: Kind, body: TypeRec[Expr]): TypeRec[Expr] =
+  tyAbsT(variable, forallTypeT(variable, kind, typeOf(body)), kind, body)
+
+def mkApp(function: TypeRec[Expr], argument: TypeRec[Expr]): TypeRec[Expr] = destructArrow(typeOf(function)) match {
+  case Some((_, to)) => appT(to, function, argument)
+  case None => sys.error(s"Compiler invariant violation: expected a function type, got ${typeOf(function).show}")
+}
+
+def mkTyApp(function: TypeRec[Expr], argument: TypeRec[Type]): TypeRec[Expr] = destructForAllK(typeOf(function)) match {
+  case Some((variable, _, body)) => tyAppT(Equivalence.normalize(substType(variable, argument, body)), function, argument)
+  case None => sys.error(s"Compiler invariant violation: expected a polymorphic type, got ${typeOf(function).show}")
+}
+
 def freeTypeVars(t: Rec[Type]): Set[TypeVariable] = {
   val alg: Algebra[AST, ConstI[Set[TypeVariable]]] = [x] => node => node match {
     case AST.TypeVar(v) => Set(v)
     case AST.ForAll(v, _, body) => body - v
+    case AST.InstArrow(constraint, to) => constraint.arg.foldLeft(to)(_ ++ _)
     case AST.Arrow(from, to) => from ++ to
     case AST.TypeApp(f, a) => f ++ a
     case AST.TypeAbs(v, _, body) => body - v
@@ -327,6 +371,8 @@ def freeVars(expr: Rec[Expr]): Set[Variable] = {
     case AST.Var(variable) => Set(variable)
     case AST.Abs(variable, _, body) => body - variable
     case AST.TyAbs(_, _, body) => body
+    case AST.InstAbs(_, body) => body
+    case AST.InstApp(function, _) => function
     case AST.Let(variable, _, value, body) => value ++ (body - variable)
     case AST.LetRec(variable, _, value, body) => (value - variable) ++ (body - variable)
     case AST.TypeLet(_, _, _, body) => body
@@ -346,11 +392,12 @@ def freeVars(expr: Rec[Expr]): Set[Variable] = {
     case AST.BinOp(_, left, right) => left ++ right
     case AST.Intrinsic(_, args) => args.foldLeft(Set.empty[Variable])(_ ++ _)
     case AST.StrInterp(parts) => parts.foldLeft(Set.empty[Variable])(_ ++ _)
-    case AST.Context(_, bindings, result) =>
-      bindings.foldRight(result) { (b, acc) =>
+    case AST.Context(_, bindings, result, ops) =>
+      val body = bindings.foldRight(result) { (b, acc) =>
         val valueFree = if (b.recursive) b.value - b.name else b.value
         valueFree ++ (acc - b.name)
       }
+      ops.fold(body)(o => body ++ o.pure ++ o.flatMap)
     case AST.UnaryOp(_, body) => body
     case AST.If(cond, thenBranch, elseBranch) => cond ++ thenBranch ++ elseBranch
     case AST.Num(_, _) | AST.Char(_) | AST.StringLit(_) | AST.Bool(_) | AST.UnitLit() => Set.empty
@@ -406,6 +453,9 @@ def substType(target: TypeVariable, replace: TypeRec[Type], in: TypeRec[Type]): 
       Right(HCofreeT(seed.extract, AST.Arrow(Right(from), Right(to))))
     case AST.TypeApp(function, argument) =>
       Right(HCofreeT(seed.extract, AST.TypeApp(Right(function), Right(argument))))
+    case AST.InstArrow(constraint, to) =>
+      val pending = Constraint[[y] =>> Either[TypeRec[y], TypeRec[y]]](constraint.name, constraint.arg.map(Right(_)))
+      Right(HCofreeT(seed.extract, AST.InstArrow(pending, Right(to))))
     case _ => Left(seed)
   }
 
@@ -470,6 +520,7 @@ def containsDataApplicationOf(t: Rec[Type], owner: TypeVariable): Boolean = {
     case AST.TypeVar(variable) => variable == owner
     case AST.Arrow(from, to) => from || to
     case AST.ForAll(_, _, body) => body
+    case AST.InstArrow(constraint, to) => to || constraint.arg.exists(identity)
     case AST.TypeAbs(_, _, body) => body
     case AST.TypeApp(function, argument) => function || argument
     case _ => false
@@ -495,24 +546,6 @@ def dataTypeApplication[D]
 
 def applyTypeConstructor(head: TypeVariable, args: Seq[TypeRec[Type]]): TypeRec[Type] =
   args.foldLeft(typeVarT(head)) { (acc, arg) => typeAppT(acc, arg) }
-
-@scala.annotation.tailrec
-def countLeadingForalls(t: TypeRec[Type], acc: Int = 0): Int = destructForAllK(t) match {
-  case Some((_, _, body)) => countLeadingForalls(body, acc + 1)
-  case None => acc
-}
-
-// 失敗時は実際に剥がせた ∀ の個数を Left で返す（エラー文の組み立ては呼び出し側の責務）
-def stripLeadingForalls(t: TypeRec[Type], count: Int): Either[Int, (Seq[(TypeVariable, Kind)], TypeRec[Type])] = {
-  @scala.annotation.tailrec
-  def loop(current: TypeRec[Type], remaining: Int, acc: List[(TypeVariable, Kind)]): Either[Int, (Seq[(TypeVariable, Kind)], TypeRec[Type])] =
-    if (remaining == 0) Right((acc.reverse, current))
-    else destructForAllK(current) match {
-      case Some((v, k, body)) => loop(body, remaining - 1, (v, k) :: acc)
-      case None => Left(count - remaining)
-    }
-  loop(t, count, Nil)
-}
 
 def typeConstructorHead(t: TypeRec[Type]): Option[(String, Seq[TypeRec[Type]])] = {
   val (head, args) = collectTypeApps(t)

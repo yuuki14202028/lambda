@@ -14,8 +14,8 @@ def main(args: String*): Unit = {
     _ = println(eraseIndex(resolved).show)
     typed <- TAnalyser.validate(resolved)
     derived = Deriver.desugar(typed)
-    contextFree <- ContextDesugar.desugar(derived)
-    desugared <- TraitEncoder.encode(contextFree)
+    contextFree = ContextDesugar.desugar(derived)
+    desugared = TraitEncoder.encode(contextFree)
     encoded = ChurchEncoder.encode(desugared)
     _ = println(eraseAnn(encoded).show)
   } yield encoded

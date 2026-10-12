@@ -6,7 +6,7 @@ class TraitPhase2Suite extends munit.FunSuite {
     ParserAST.programParser.parseAll(src).left.map(e => s"Parse error: $e").flatMap(p => TAnalyser.validate(p).left.map(_.render))
 
   private def desugar(src: String): Either[String, TypeRec[AST.Program.type]] =
-    validate(src).flatMap(p => TraitEncoder.encode(p).left.map(_.render))
+    validate(src).map(TraitEncoder.encode)
 
   private def church(src: String): Either[String, TypeRec[AST.Program.type]] =
     desugar(src).map(ChurchEncoder.encode)
@@ -90,14 +90,14 @@ class TraitPhase2Suite extends munit.FunSuite {
     }
   }
 
-  test("スーパークラス: 上位インスタンスがない impl は脱糖で No instance") {
+  test("スーパークラス: 上位インスタンスがない impl は型検査で No instance") {
     val src = eqOrd +
       """impl Ord[bool] {
         |  def lt = λx: bool. λy: bool. true
         |}
         |let main(): i32 = 0
         |""".stripMargin
-    assertLeftContains(desugar(src), "No instance for Eq[bool]")
+    assertLeftContains(validate(src), "No instance for Eq[bool]")
   }
 
   test("文脈付きインスタンス: Show[Maybe[a]] with Show[a] が解決される") {
@@ -128,7 +128,7 @@ class TraitPhase2Suite extends munit.FunSuite {
 
   test("文脈付きインスタンス: 文脈を満たせない場合は No instance") {
     val src = showMaybe + "let main(): i32 = show[Maybe[bool]](Nothing[bool])\n"
-    assertLeftContains(desugar(src), "No instance for Show[bool]")
+    assertLeftContains(validate(src), "No instance for Show[bool]")
   }
 
   test("文脈付きインスタンス: 同一 head は Overlapping instance") {
@@ -177,15 +177,63 @@ class TraitPhase2Suite extends munit.FunSuite {
       """let render[a](x: a): i32 with Show[a] = show[a](x)
         |let main(): i32 = render[bool](true)
         |""".stripMargin
-    assertLeftContains(desugar(src), "No instance for Show[bool]")
+    assertLeftContains(validate(src), "No instance for Show[bool]")
   }
 
-  test("with 制約付き関数: 型パラメータを超える多相型は拒否") {
+  test("with 制約付き関数: 宣言した型パラメータの先でさらに多相でもよい") {
     val src = showMaybe +
       """let f[a]: ∀b. b → i32 with Show[a] = Λb. λx: b. 0
+        |let main(): i32 = f[i32][bool](true)
+        |""".stripMargin
+    assertRight(church(src))
+  }
+
+  test("No instance は使用箇所の位置付きで報告される") {
+    val src = showMaybe +
+      """let main(): i32 =
+        |  show[bool](true)
+        |""".stripMargin
+    val rendered = ParserAST.programParser.parseAll(src).toOption
+      .flatMap(p => TAnalyser.validate(p).left.toOption)
+      .map(_.render("t.lam", cats.parse.LocationMap(src)))
+    val line = src.linesIterator.indexWhere(_.contains("show[bool]")) + 1
+    assert(rendered.exists(_.startsWith(s"t.lam:$line:3: No instance for Show[bool]")), clue(rendered))
+  }
+
+  test("インスタンスは宣言してから使う: impl より前の使用は No instance") {
+    val src =
+      """trait Show[a] {
+        |  def show(x: a): i32
+        |}
+        |let early(): i32 = show[i32](1)
+        |impl Show[i32] {
+        |  def show = λx: i32. x
+        |}
+        |let main(): i32 = early()
+        |""".stripMargin
+    assertLeftContains(validate(src), "No instance for Show[i32]")
+  }
+
+  test("インスタンスは自身のメソッド本体からはまだ見えない") {
+    val src = showMaybe +
+      """data rec L[a] = { N, C(a)(L[a]) }
+        |impl[a] Show[L[a]] with Show[a] {
+        |  def show = λl: L[a]. match l {
+        |    N => 0
+        |    C(x)(rest) => show[L[a]](rest)
+        |  }
+        |}
         |let main(): i32 = 0
         |""".stripMargin
-    assertLeftContains(validate(src), "polymorphic type beyond")
+    assertLeftContains(validate(src), "No instance for Show[L[a]]")
+  }
+
+  test("with 制約は in 式の let でも使える") {
+    val src = showMaybe +
+      """let main(): i32 =
+        |  let twice[a](x: a): i32 with Show[a] = show[a](x) in twice[i32](3)
+        |""".stripMargin
+    assertRight(church(src))
   }
 
   test("制約のカインド不一致は拒否") {

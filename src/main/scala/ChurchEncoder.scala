@@ -90,12 +90,6 @@ object ChurchEncoder {
   private def encodeType(t: TypeRec[Type]): Encode[TypeRec[Type]] =
     t.para(typeEncoderAlg)
 
-  private def mkTyAbs(variable: TypeVariable, kind: Kind, body: TypeRec[Expr]): TypeRec[Expr] =
-    tyAbsT(variable, forallTypeT(variable, kind, typeOf(body)), kind, body)
-
-  private def mkAbs(variable: Variable, paramType: TypeRec[Type], body: TypeRec[Expr]): TypeRec[Expr] =
-    absT(variable, arrowT(paramType, typeOf(body)), paramType, body)
-
   private def applyHandlers(
       target: TypeRec[Expr],
       handlers: Seq[TypeRec[Expr]],
@@ -276,11 +270,8 @@ object ChurchEncoder {
     case AST.TopTrait(variable, _, _, _) =>
       invariant(s"TopTrait ${variable.name} must be desugared by TraitEncoder before Church encoding")
 
-    case AST.TopImpl(variable, _, _, _, _) =>
+    case AST.TopImpl(variable, _, _, _, _, _) =>
       invariant(s"TopImpl ${variable.name} must be desugared by TraitEncoder before Church encoding")
-
-    case AST.TopLetWith(variable, _, _, _, _, _) =>
-      invariant(s"TopLetWith ${variable.name} must be desugared by TraitEncoder before Church encoding")
 
     case AST.TopDerive(traitName, _) =>
       invariant(s"TopDerive ${traitName.name} must be desugared by Deriver before Church encoding")

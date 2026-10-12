@@ -21,6 +21,9 @@ object Equivalence {
         case (AST.TypeAbs(lv, lk, lb), AST.TypeAbs(rv, rk, rb)) =>
           lk == rk && lb((l2r + (lv -> rv), r2l + (rv -> lv)))(rb)
         case (AST.TypeApp(lf, la), AST.TypeApp(rf, ra)) => lf(bound)(rf) && la(bound)(ra)
+        case (AST.InstArrow(lc, lt), AST.InstArrow(rc, rt)) =>
+          lc.name == rc.name && lc.arg.length == rc.arg.length &&
+            lc.arg.zip(rc.arg).forall { case (la, ra) => la(bound)(ra) } && lt(bound)(rt)
         case _ => false
       }
     }

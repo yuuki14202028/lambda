@@ -33,7 +33,8 @@ object Deriver {
       target: TypeVariable,
       dataDef: DataDef,
       fieldPlans: Seq[Seq[FieldPlan]],
-      inst: InstanceDef
+      inst: InstanceDef,
+      superEvidence: Seq[Evidence[TypeRec]]
   )
 
   private val functorMethod = Variable("map")
@@ -98,12 +99,17 @@ object Deriver {
     fieldPlans <- dataDef.constructors.toList.traverse { c =>
       c.fields.toList.traverse(field => classify(rule, traitName, target, dataDef, c.name, field, env))
     }
+    prefix = dataDef.params.init
+    targets = Seq(applyTypeConstructor(target, prefix.map { case (v, _) => typeVarT(v) }))
+    superEvidence <- Resolver.superConstraints(traitDef, targets).traverse(Resolver.resolve).run(env.withTypeVars(prefix))
   } yield {
-    val prefix = dataDef.params.init
-    val targets = Seq(applyTypeConstructor(target, prefix.map { case (v, _) => typeVarT(v) }))
     val inst = InstanceDef(traitName, targets, Seq.empty, instanceDictionaryName(traitName, Seq(target.name)), prefix)
-    Plan(rule, target, dataDef, fieldPlans, inst)
+    Plan(rule, target, dataDef, fieldPlans, inst, superEvidence)
   }
+
+  // フィールドの入れ子コンテナ G[σ̄] に対するインスタンス traitName[G[σ̄]] の根拠
+  private def containerEvidence(traitName: TypeVariable, container: TypeRec[Type], env: Env): EitherS[Evidence[TypeRec]] =
+    Resolver.resolve(TypeConstraint(traitName, Seq(container))).run(env)
 
   private def classify(
       rule: Rule,
@@ -142,7 +148,7 @@ object Deriver {
               if (args.init.exists(a => freeTypeVars(a).contains(param))) unsupported
               else if (!env.instances.contains(instanceKey(traitName, Seq(h.name))))
                 Left(CompileError.DeriveFieldInstanceMissing(traitName, target, ctor, h.name))
-              else go(args.last).map(FieldPlan.Nested.apply)
+              else containerEvidence(traitName, args.init.foldLeft(head)(typeAppT), env) *> go(args.last).map(FieldPlan.Nested.apply)
             case _ => unsupported
           }
         case _ => unsupported
@@ -176,31 +182,23 @@ object Deriver {
         MethodImpl[TypeRec](foldLeftMethod, None, foldBody(p, env, rightward = false))
       )
     }
-    topImplT(traitName, p.inst.params, p.inst.targets, Seq.empty, methods)
+    topImplT(traitName, p.inst.params, p.inst.targets, Seq.empty, methods, p.superEvidence)
   }
 
   // ---- 型付き AST 構築ヘルパー ----
 
-  private def applyTypeArgI(e: TypeRec[Expr], arg: TypeRec[Type]): TypeRec[Expr] =
-    destructForAllK(typeOf(e)) match {
-      case Some((v, _, body)) => tyAppT(Equivalence.normalize(substType(v, arg, body)), e, arg)
-      case None => invariant(s"derive: expected a polymorphic type, got ${typeOf(e).show}")
-    }
-
-  private def applyArgI(f: TypeRec[Expr], x: TypeRec[Expr]): TypeRec[Expr] =
-    destructArrow(typeOf(f)) match {
-      case Some((_, to)) => appT(to, f, x)
-      case None => invariant(s"derive: expected a function type, got ${typeOf(f).show}")
-    }
-
   private def valueRef(env: Env, name: Variable): TypeRec[Expr] =
     varrType(name, env.values.getOrElse(name, invariant(s"derive: ${name.name} is missing from Env")))
 
-  private def mkAbs(v: Variable, paramType: TypeRec[Type], body: TypeRec[Expr]): TypeRec[Expr] =
-    absT(v, arrowT(paramType, typeOf(body)), paramType, body)
-
-  private def mkTyAbs(v: TypeVariable, body: TypeRec[Expr]): TypeRec[Expr] =
-    tyAbsT(v, forallTypeT(v, Kind.Star, typeOf(body)), Kind.Star, body)
+  // 入れ子コンテナのインスタンスに委譲するメソッド参照 method[container]（制約は検査時と同じ根拠で解決する）
+  private def containerMethod(p: Plan, env: Env, method: Variable, container: TypeRec[Type]): TypeRec[Expr] = {
+    val applied = mkTyApp(valueRef(env, method), container)
+    val (_, to) = destructInstArrow(typeOf(applied))
+      .getOrElse(invariant(s"derive: ${method.name} is not a trait method: ${typeOf(applied).show}"))
+    val evidence = containerEvidence(p.inst.name, container, env)
+      .fold(err => invariant(s"derive: instance resolution failed after validation: ${err.render}"), identity)
+    instAppT(to, applied, evidence)
+  }
 
   /** 導出メソッドが共有する骨格。α / β はデータ型パラメータと衝突しない fresh な型変数 */
   private final case class Scaffold(
@@ -240,12 +238,12 @@ object Deriver {
     // t は α 代入済みのフィールド型。結果は t[α:=β] の値
     def transform(plan: FieldPlan, t: TypeRec[Type], x: TypeRec[Expr], depth: Int): TypeRec[Expr] = plan match {
       case FieldPlan.Const => x
-      case FieldPlan.Param => applyArgI(fRef, x)
-      case FieldPlan.Recurse => applyArgI(goRef, x)
+      case FieldPlan.Param => mkApp(fRef, x)
+      case FieldPlan.Recurse => mkApp(goRef, x)
       case FieldPlan.Func(toPlan) =>
         val (from, to) = destructArrow(t).getOrElse(invariant(s"derive map: expected an arrow field, got ${t.show}"))
         val y = Variable(s"$$y_$depth")
-        mkAbs(y, from, transform(toPlan, to, applyArgI(x, varrType(y, from)), depth + 1))
+        mkAbs(y, from, transform(toPlan, to, mkApp(x, varrType(y, from)), depth + 1))
       case FieldPlan.Nested(innerPlan) =>
         val (head, args) = collectTypeApps(t)
         val container = args.init.foldLeft(head)(typeAppT)
@@ -253,22 +251,22 @@ object Deriver {
         val innerB = Equivalence.normalize(substType(s.alpha, bT, innerA))
         val y = Variable(s"$$y_$depth")
         val innerF = mkAbs(y, innerA, transform(innerPlan, innerA, varrType(y, innerA), depth + 1))
-        val mapRef = applyTypeArgI(applyTypeArgI(applyTypeArgI(valueRef(env, functorMethod), container), innerA), innerB)
-        applyArgI(applyArgI(mapRef, innerF), x)
+        val mapRef = mkTyApp(mkTyApp(containerMethod(p, env, functorMethod, container), innerA), innerB)
+        mkApp(mkApp(mapRef, innerF), x)
     }
 
     val cases = p.dataDef.constructors.zip(p.fieldPlans).map { case (ctor, plans) =>
       val binders = ctor.fields.indices.map(i => Variable(s"$$x_$i"))
       val fieldTypes = ctor.fields.map(s.substLast)
-      val tyApplied = (s.prefixVars.map(typeVarT) :+ bT).foldLeft(valueRef(env, ctor.name))(applyTypeArgI)
+      val tyApplied = (s.prefixVars.map(typeVarT) :+ bT).foldLeft(valueRef(env, ctor.name))(mkTyApp)
       val applied = binders.lazyZip(fieldTypes).lazyZip(plans).foldLeft(tyApplied) {
-        case (acc, (x, t, plan)) => applyArgI(acc, transform(plan, t, varrType(x, t), 0))
+        case (acc, (x, t, plan)) => mkApp(acc, transform(plan, t, varrType(x, t), 0))
       }
       MatchCase[TypeRec](ctor.name, binders, applied)
     }
     val goValue = mkAbs(dVar, dAlpha, matchExprT(dBeta, varrType(dVar, dAlpha), cases))
     val letR = letRecT(goVar, goType, goType, goValue, goRef)
-    mkTyAbs(s.alpha, mkTyAbs(s.beta, mkAbs(fVar, fType, letR)))
+    mkTyAbs(s.alpha, Kind.Star, mkTyAbs(s.beta, Kind.Star, mkAbs(fVar, fType, letR)))
   }
 
   /** foldRight / foldLeft =
@@ -293,9 +291,9 @@ object Deriver {
     def combine(plan: FieldPlan, t: TypeRec[Type], x: TypeRec[Expr], acc: TypeRec[Expr], depth: Int): TypeRec[Expr] = plan match {
       case FieldPlan.Const => acc
       case FieldPlan.Param =>
-        if (rightward) applyArgI(applyArgI(fRef, x), acc)
-        else applyArgI(applyArgI(fRef, acc), x)
-      case FieldPlan.Recurse => applyArgI(applyArgI(goRef, x), acc)
+        if (rightward) mkApp(mkApp(fRef, x), acc)
+        else mkApp(mkApp(fRef, acc), x)
+      case FieldPlan.Recurse => mkApp(mkApp(goRef, x), acc)
       case FieldPlan.Nested(innerPlan) =>
         val (head, args) = collectTypeApps(t)
         val container = args.init.foldLeft(head)(typeAppT)
@@ -306,8 +304,8 @@ object Deriver {
         val innerF =
           if (rightward) mkAbs(y, innerA, mkAbs(innerAcc, bT, innerBody))
           else mkAbs(innerAcc, bT, mkAbs(y, innerA, innerBody))
-        val foldRef = applyTypeArgI(applyTypeArgI(applyTypeArgI(valueRef(env, methodName), container), innerA), bT)
-        applyArgI(applyArgI(applyArgI(foldRef, innerF), acc), x)
+        val foldRef = mkTyApp(mkTyApp(containerMethod(p, env, methodName, container), innerA), bT)
+        mkApp(mkApp(mkApp(foldRef, innerF), acc), x)
       case FieldPlan.Func(_) => invariant("derive Foldable: function fields must be rejected during validation")
     }
 
@@ -322,8 +320,8 @@ object Deriver {
       MatchCase[TypeRec](ctor.name, binders, body)
     }
     val goValue = mkAbs(dVar, dAlpha, mkAbs(accVar, bT, matchExprT(bT, varrType(dVar, dAlpha), cases)))
-    val finalLam = mkAbs(vVar, dAlpha, applyArgI(applyArgI(goRef, varrType(vVar, dAlpha)), varrType(zVar, bT)))
+    val finalLam = mkAbs(vVar, dAlpha, mkApp(mkApp(goRef, varrType(vVar, dAlpha)), varrType(zVar, bT)))
     val letR = letRecT(goVar, typeOf(finalLam), goType, goValue, finalLam)
-    mkTyAbs(s.alpha, mkTyAbs(s.beta, mkAbs(fVar, fType, mkAbs(zVar, bT, letR))))
+    mkTyAbs(s.alpha, Kind.Star, mkTyAbs(s.beta, Kind.Star, mkAbs(fVar, fType, mkAbs(zVar, bT, letR))))
   }
 }

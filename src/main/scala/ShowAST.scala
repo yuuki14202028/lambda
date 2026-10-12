@@ -9,7 +9,18 @@ private def showKindedParam(param: (TypeVariable, Kind)): String = param match {
 
 private def showConstraints(constraints: Seq[Constraint[ShowResult]]): String = constraints match {
   case Seq() => ""
-  case _ => constraints.map(c => s"${c.name.name}${c.arg.map(a => s"[$a]").mkString}").mkString(" with ", ", ", "")
+  case _ => constraints.map(showConstraint).mkString(" with ", ", ", "")
+}
+
+private def showConstraint(c: Constraint[ShowResult]): String = s"${c.name.name}${c.arg.map(a => s"[$a]").mkString}"
+
+private def showEvidence(e: Evidence[ShowResult]): String = e match {
+  case Evidence.Given(constraint) => s"given ${showConstraint(constraint)}"
+  case Evidence.Instance(traitName, heads, typeArgs, context) =>
+    val args = typeArgs.map(a => s"[$a]").mkString
+    val ctx = context.map(c => s"(${showEvidence(c)})").mkString
+    s"${instanceDictionaryName(traitName, heads).name}$args$ctx"
+  case Evidence.Super(traitName, index, of) => s"${superDictionaryName(traitName, index).name}(${showEvidence(of)})"
 }
 
 val showAlg: Algebra[AST, ShowResult] = [x] => node => node match {
@@ -32,7 +43,7 @@ val showAlg: Algebra[AST, ShowResult] = [x] => node => node match {
     val superText = showConstraints(supers)
     val methodText = methods.map(m => s"  def ${m.name.name}: ${m.sig}").mkString("\n")
     s"trait ${v.name}$suffix$superText {\n$methodText\n}"
-  case AST.TopImpl(v, params, targets, context, methods) =>
+  case AST.TopImpl(v, params, targets, context, methods, _) =>
     val suffix = params.map(showKindedParam).mkString
     val targetText = targets.map(t => s"[$t]").mkString
     val contextText = showConstraints(context)
@@ -41,13 +52,11 @@ val showAlg: Algebra[AST, ShowResult] = [x] => node => node match {
       s"  def ${m.name.name}$sigText = ${m.body}"
     }.mkString("\n")
     s"impl$suffix ${v.name}$targetText$contextText {\n$methodText\n}"
-  case AST.TopLetWith(v, params, constraints, types, value, recursive) =>
-    val suffix = params.map(showKindedParam).mkString
-    s"let ${if (recursive) "rec " else ""}${v.name}$suffix: $types${showConstraints(constraints)} = $value"
   case AST.TopDerive(traitName, target) => s"derive ${traitName.name}[${target.name}]"
   case AST.Abs(v, types, body)     => s"λ${v.name}: $types. $body"
   case AST.TyAbs(v, Kind.Star, body) => s"Λ${v.name}. $body"
   case AST.TyAbs(v, k, body)         => s"Λ(${v.name}: ${k.show}). $body"
+  case AST.InstAbs(constraint, body) => s"λ[${showConstraint(constraint)}]. $body"
   case AST.Let(v, types, value, body) => s"let ${v.name}: $types = $value in $body"
   case AST.LetRec(v, types, value, body) => s"let rec ${v.name}: $types = $value in $body"
   case AST.TypeLet(v, params, alias, body) =>
@@ -76,6 +85,7 @@ val showAlg: Algebra[AST, ShowResult] = [x] => node => node match {
     s"fold $scrutinee as $resultType with $caseText"
   case AST.App(func, arg)          => s"$func($arg)"
   case AST.TyApp(func, arg)        => s"$func[$arg]"
+  case AST.InstApp(func, evidence) => s"$func⟨${showEvidence(evidence)}⟩"
   case AST.Foreign(v, types)       => s"foreign[$types] ${v.name}"
   case AST.Var(v)                  => s"${v.name}"
   case AST.Num(v, t)               => if (t == "i32" || t == "f64" && v.exists(ch => ch == '.' || ch == 'e' || ch == 'E')) v else s"$v$t"
@@ -90,7 +100,7 @@ val showAlg: Algebra[AST, ShowResult] = [x] => node => node match {
     case ch => ch.toString
   } + "\""
   case AST.StrInterp(parts)        => parts.map(p => s"{$p}").mkString("`", "", "`")
-  case AST.Context(monad, bindings, result) =>
+  case AST.Context(monad, bindings, result, _) =>
     val bindingText = bindings.map { b =>
       if (b.monadic) s"${b.name.name}: ${b.annotation} = ${b.value};"
       else s"let ${if (b.recursive) "rec " else ""}${b.name.name}: ${b.annotation} = ${b.value};"
@@ -108,6 +118,7 @@ val showAlg: Algebra[AST, ShowResult] = [x] => node => node match {
   case AST.Primitive(name)         => name
   case AST.TypeVar(v)              => v.name
   case AST.Arrow(from, to)         => s"$from → $to"
+  case AST.InstArrow(constraint, to) => s"[${showConstraint(constraint)}] → $to"
   case AST.ForAll(v, Kind.Star, body) => s"∀${v.name}. $body"
   case AST.ForAll(v, k, body)         => s"∀(${v.name}: ${k.show}). $body"
   case AST.TypeApp(func, arg)         => s"$func[$arg]"

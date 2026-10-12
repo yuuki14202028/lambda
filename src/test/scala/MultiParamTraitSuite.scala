@@ -15,7 +15,7 @@ class MultiParamTraitSuite extends munit.FunSuite {
     ParserAST.programParser.parseAll(src).left.map(e => s"Parse error: $e").flatMap(p => TAnalyser.validate(p).left.map(_.render))
 
   private def desugar(src: String): Either[String, TypeRec[AST.Program.type]] =
-    validate(src).flatMap(p => TraitEncoder.encode(p).left.map(_.render))
+    validate(src).map(TraitEncoder.encode)
 
   private def church(src: String): Either[String, TypeRec[AST.Program.type]] =
     desugar(src).map(ChurchEncoder.encode)
@@ -75,7 +75,7 @@ class MultiParamTraitSuite extends munit.FunSuite {
 
   test("パース: 複数ターゲットの impl") {
     parseDecl("impl Conversion[i32][bool] {\n  def convert = λx: i32. true\n}\n") match {
-      case AST.TopImpl(v, params, targets, context, methods) =>
+      case AST.TopImpl(v, params, targets, context, methods, _) =>
         assertEquals(v, TypeVariable("Conversion"))
         assert(params.isEmpty)
         assertEquals(targets.map(_.show), Seq("i32", "bool"))
@@ -87,12 +87,10 @@ class MultiParamTraitSuite extends munit.FunSuite {
 
   test("パース: 複数引数の with 制約") {
     parseDecl("let f[a][b](x: a): i32 with Conversion[a][b] = 0\n") match {
-      case AST.TopLetWith(v, params, constraints, _, _, _) =>
+      case AST.TopLet(v, types, _) =>
         assertEquals(v, Variable("f"))
-        assertEquals(params.map(_._1), Seq(TypeVariable("a"), TypeVariable("b")))
-        assertEquals(constraints.map(_.name), Seq(TypeVariable("Conversion")))
-        assertEquals(constraints.head.arg.map(_.show), Seq("a", "b"))
-      case other => fail(s"not TopLetWith: $other")
+        assertEquals(types.show, "∀a. ∀b. [Conversion[a][b]] → a → i32")
+      case other => fail(s"not TopLet: $other")
     }
   }
 
@@ -219,17 +217,17 @@ class MultiParamTraitSuite extends munit.FunSuite {
     assertLeftContains(validate(src), "expects 2 type arguments, got 1")
   }
 
-  test("NoInstance: 引数の組に合うインスタンスがなければ脱糖で拒否") {
+  test("NoInstance: 引数の組に合うインスタンスがなければ型検査で拒否") {
     val src = conversionTrait +
       """impl Conversion[i32][bool] {
         |  def convert = λx: i32. true
         |}
         |let main(): i32 = convert[bool][i32](true)
         |""".stripMargin
-    assertLeftContains(desugar(src), "No instance")
+    assertLeftContains(validate(src), "No instance")
   }
 
-  test("AmbiguousConstraint: 型適用が trait パラメータ数に満たない裸参照は拒否") {
+  test("型適用が trait パラメータ数に満たない参照は、制約が残った型になり型検査で拒否") {
     val src = conversionTrait +
       """impl Conversion[i32][bool] {
         |  def convert = λx: i32. true
@@ -237,6 +235,6 @@ class MultiParamTraitSuite extends munit.FunSuite {
         |let f: ∀b. i32 → b = convert[i32]
         |let main(): i32 = 0
         |""".stripMargin
-    assertLeftContains(desugar(src), "Ambiguous constraint")
+    assertLeftContains(validate(src), "Type mismatch: expected ∀b. i32 → b, actual ∀b. [Conversion[i32][b]] → i32 → b")
   }
 }

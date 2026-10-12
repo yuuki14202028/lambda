@@ -5,20 +5,18 @@ import java.nio.file.Path
 enum DeclRef {
   case TraitDecl(name: TypeVariable)
   case ImplDecl(traitName: TypeVariable, heads: Seq[String])
-  case LetDecl(name: Variable)
   case DataDecl(name: TypeVariable)
   case TypeAliasDecl(name: TypeVariable)
 
   def shown: String = this match {
     case TraitDecl(n) => s"Trait ${n.name}"
     case ImplDecl(t, heads) => s"impl ${t.name}${heads.map(h => s"[$h]").mkString}"
-    case LetDecl(n) => s"let ${n.name}"
     case DataDecl(n) => s"Data type ${n.name}"
     case TypeAliasDecl(n) => s"Type alias ${n.name}"
   }
 
   def paramNoun: String = this match {
-    case ImplDecl(_, _) | LetDecl(_) => "type parameter"
+    case ImplDecl(_, _) => "type parameter"
     case _ => "parameter"
   }
 }
@@ -92,7 +90,6 @@ enum CompileError {
   case UndefinedTypeVariable(name: TypeVariable)
   case UndefinedPrimitive(name: String)
   case UndefinedTrait(name: TypeVariable, site: Option[DeclRef])
-  case UndefinedDataConstructor(dataName: TypeVariable)
   case AlreadyDefined(kind: NameKind, name: String)
   case ParamAlreadyDefined(owner: DeclRef)
   case DuplicateParams(owner: DeclRef)
@@ -135,11 +132,11 @@ enum CompileError {
   case BinderArityMismatch(constructor: Variable, expected: Int, actual: Int)
   case EmptyMatch
 
-  // ---- trait / impl / where ----
+  // ---- trait / impl / with ----
   case TraitNeedsParameter(name: TypeVariable)
   case DefaultMethodsUnsupported(name: TypeVariable)
-  case ConstraintArityMismatch(site: DeclRef, name: TypeVariable, expected: Int, actual: Int)
-  case ConstraintKindMismatch(site: DeclRef, name: TypeVariable, arg: TypeRec[Type], actual: Kind, expected: Kind)
+  case ConstraintArityMismatch(site: Option[DeclRef], name: TypeVariable, expected: Int, actual: Int)
+  case ConstraintKindMismatch(site: Option[DeclRef], name: TypeVariable, arg: TypeRec[Type], actual: Kind, expected: Kind)
   case ImplTargetArity(traitName: TypeVariable, expected: Int, actual: Int)
   case ImplKindMismatch(traitName: TypeVariable, target: TypeRec[Type], paramKind: Kind, targetKind: Kind)
   case InstanceHeadInvalid(traitName: TypeVariable, target: TypeRec[Type])
@@ -150,9 +147,6 @@ enum CompileError {
   case ExtraMethods(impl: DeclRef, methods: Seq[Variable])
   case MethodBodyTypeMismatch(impl: DeclRef, method: Variable, expected: TypeRec[Type], actual: TypeRec[Type])
   case MethodSigTypeMismatch(impl: DeclRef, method: Variable, declared: TypeRec[Type], expected: TypeRec[Type])
-  case EmptyWithClause(name: Variable)
-  case WithLeadingForalls(name: Variable, expected: Int, got: Int)
-  case WithPolymorphic(name: Variable)
 
   // ---- derive ----
   case DeriveUnsupportedTrait(traitName: TypeVariable)
@@ -163,10 +157,9 @@ enum CompileError {
   case DeriveUnsupportedField(traitName: TypeVariable, target: TypeVariable, constructor: Variable, field: TypeRec[Type])
   case DeriveFieldInstanceMissing(traitName: TypeVariable, target: TypeVariable, constructor: Variable, head: String)
 
-  // ---- 辞書解決（TraitEncoder） ----
+  // ---- 制約の解決（Resolver） ----
   case NoInstance(name: TypeVariable, args: Seq[TypeRec[Type]])
   case ResolutionDepthExceeded(name: TypeVariable, args: Seq[TypeRec[Type]])
-  case AmbiguousConstraint(name: Variable, arity: Int)
 
   // ---- context 記法 ----
   case ContextMonadKindInvalid(monad: TypeRec[Type], kind: Kind)
@@ -204,7 +197,6 @@ enum CompileError {
     case UndefinedPrimitive(name) => s"Primitive type $name is not defined"
     case UndefinedTrait(name, site) =>
       site.fold(s"Trait ${name.name} is not defined")(s => s"${s.shown}: trait ${name.name} is not defined")
-    case UndefinedDataConstructor(dataName) => s"Constructor for data type ${dataName.name} is not defined"
     case AlreadyDefined(kind, name) => s"${kind.shown} $name is already defined"
     case ParamAlreadyDefined(owner) => s"${owner.shown} has a ${owner.paramNoun} that is already defined"
     case DuplicateParams(owner) => s"${owner.shown} has duplicate ${owner.paramNoun}s"
@@ -260,9 +252,9 @@ enum CompileError {
     case TraitNeedsParameter(name) => s"Trait ${name.name} must have at least one parameter"
     case DefaultMethodsUnsupported(name) => s"Trait ${name.name}: default method implementations are not supported yet"
     case ConstraintArityMismatch(site, name, expected, actual) =>
-      s"${site.shown}: constraint ${name.name} expects $expected type arguments, got $actual"
+      s"${siteShown(site)}constraint ${name.name} expects $expected type arguments, got $actual"
     case ConstraintKindMismatch(site, name, arg, actual, expected) =>
-      s"${site.shown}: constraint ${name.name} argument ${arg.show} has kind ${actual.show}, expected ${expected.show}"
+      s"${siteShown(site)}constraint ${name.name} argument ${arg.show} has kind ${actual.show}, expected ${expected.show}"
     case ImplTargetArity(traitName, expected, actual) =>
       s"impl ${traitName.name}: trait expects $expected type argument(s), got $actual"
     case ImplKindMismatch(traitName, target, paramKind, targetKind) =>
@@ -279,11 +271,6 @@ enum CompileError {
       s"Method type mismatch in ${impl.shown}: ${method.name} must have type ${expected.show}, actual ${actual.show}"
     case MethodSigTypeMismatch(impl, method, declared, expected) =>
       s"Method type mismatch in ${impl.shown}: ${method.name} is declared as ${declared.show}, expected ${expected.show}"
-    case EmptyWithClause(name) => s"let ${name.name}: with clause must not be empty"
-    case WithLeadingForalls(name, expected, got) =>
-      s"let ${name.name}: a with-constrained function must bind its type parameters as leading ∀s (expected $expected leading ∀ binders, got $got)"
-    case WithPolymorphic(name) =>
-      s"let ${name.name}: a with-constrained function cannot have a polymorphic type beyond its declared type parameters"
 
     case DeriveUnsupportedTrait(traitName) =>
       s"derive: trait ${traitName.name} is not derivable (supported: Functor, Foldable with canonical signatures)"
@@ -302,8 +289,6 @@ enum CompileError {
     case NoInstance(name, args) => s"No instance for ${constraintShown(name, args)}"
     case ResolutionDepthExceeded(name, args) =>
       s"Instance resolution depth limit exceeded while resolving ${constraintShown(name, args)} (possible cycle)"
-    case AmbiguousConstraint(name, arity) =>
-      s"Ambiguous constraint: ${name.name} requires $arity type application(s) to resolve its dictionaries"
 
     case ContextMonadKindInvalid(monad, kind) =>
       s"context: ${monad.show} has kind ${kind.show}, expected ${Kind.Arrow(Kind.Star, Kind.Star).show}"
@@ -338,6 +323,8 @@ enum CompileError {
       case _ => render
     }
   }
+
+  private def siteShown(site: Option[DeclRef]): String = site.fold("")(s => s"${s.shown}: ")
 
   private def constraintShown(name: TypeVariable, args: Seq[TypeRec[Type]]): String =
     s"${name.name}${args.map(a => s"[${a.show}]").mkString}"

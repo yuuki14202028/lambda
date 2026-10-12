@@ -487,7 +487,7 @@ object Generator {
       ins("add", r(x0), r(x0), PageOff(lbl))
     )
     case AST.StrInterp(_) => sys.error("StrInterp must be desugared by the type checker before code generation")
-    case AST.Context(_, _, _) => sys.error("Context must be desugared by the type checker before code generation")
+    case AST.Context(_, _, _, _) => sys.error("Context must be desugared by ContextDesugar before code generation")
     case AST.Bool(v) => pure(loadImm32(if (v) 1 else 0))
     case AST.UnitLit() => pure(loadImm32(0))
 
@@ -559,6 +559,8 @@ object Generator {
     } yield closureAlloc(lbl)
 
     case AST.TyAbs(_, _, body) => body.result
+    case AST.InstAbs(_, _) => pure(sys.error("InstAbs must be desugared by TraitEncoder before code generation"))
+    case AST.InstApp(_, _) => pure(sys.error("InstApp must be desugared by TraitEncoder before code generation"))
 
     case AST.Let(Variable(param), _, value, body) => for {
       vc <- value.result
@@ -622,13 +624,13 @@ object Generator {
     case AST.TopType(_, _, _) => pure(Code.empty)
     case AST.TopData(_, _, _, _) => pure(Code.empty)
     case AST.TopTrait(_, _, _, _) => pure(sys.error("TopTrait must be desugared before code generation"))
-    case AST.TopImpl(_, _, _, _, _) => pure(sys.error("TopImpl must be desugared before code generation"))
-    case AST.TopLetWith(_, _, _, _, _, _) => pure(sys.error("TopLetWith must be desugared before code generation"))
+    case AST.TopImpl(_, _, _, _, _, _) => pure(sys.error("TopImpl must be desugared before code generation"))
     case AST.TopDerive(_, _) => pure(sys.error("TopDerive must be desugared before code generation"))
 
     case AST.Primitive(_) => pure(Code.empty)
     case AST.TypeVar(_) => pure(Code.empty)
     case AST.Arrow(_, _)  => pure(Code.empty)
+    case AST.InstArrow(_, _) => pure(sys.error("InstArrow must be desugared by TraitEncoder before code generation"))
     case AST.ForAll(_, _, _) => pure(Code.empty)
     case AST.TypeApp(_, _) => pure(Code.empty)
     case AST.TypeAbs(_, _, _) => pure(Code.empty)
@@ -708,21 +710,20 @@ object Generator {
     case AST.TopType(_, _, _) => State.pure((Code.empty, env))
     case AST.TopData(_, _, _, _) => State.pure((Code.empty, env))
     case AST.TopTrait(_, _, _, _) => sys.error("TopTrait must be desugared before code generation")
-    case AST.TopImpl(_, _, _, _, _) => sys.error("TopImpl must be desugared before code generation")
-    case AST.TopLetWith(_, _, _, _, _, _) => sys.error("TopLetWith must be desugared before code generation")
+    case AST.TopImpl(_, _, _, _, _, _) => sys.error("TopImpl must be desugared before code generation")
     case AST.TopDerive(_, _) => sys.error("TopDerive must be desugared before code generation")
   }
 
   private def topLevelName(decl: TypeRec[Decl]): Option[Variable] = decl.project match {
     case AST.TopLet(variable, _, _) => Some(variable)
     case AST.TopLetRec(variable, _, _) => Some(variable)
-    case AST.TopImport(_) | AST.TopType(_, _, _) | AST.TopData(_, _, _, _) | AST.TopTrait(_, _, _, _) | AST.TopImpl(_, _, _, _, _) | AST.TopLetWith(_, _, _, _, _, _) | AST.TopDerive(_, _) => None
+    case AST.TopImport(_) | AST.TopType(_, _, _) | AST.TopData(_, _, _, _) | AST.TopTrait(_, _, _, _) | AST.TopImpl(_, _, _, _, _, _) | AST.TopDerive(_, _) => None
   }
 
   private def topLevelFreeVars(decl: TypeRec[Decl]): Set[Variable] = decl.project match {
     case AST.TopLet(_, _, value) => freeVars(value)
     case AST.TopLetRec(variable, _, value) => freeVars(value) - variable
-    case AST.TopImport(_) | AST.TopType(_, _, _) | AST.TopData(_, _, _, _) | AST.TopTrait(_, _, _, _) | AST.TopImpl(_, _, _, _, _) | AST.TopLetWith(_, _, _, _, _, _) | AST.TopDerive(_, _) => Set.empty
+    case AST.TopImport(_) | AST.TopType(_, _, _) | AST.TopData(_, _, _, _) | AST.TopTrait(_, _, _, _) | AST.TopImpl(_, _, _, _, _, _) | AST.TopDerive(_, _) => Set.empty
   }
 
   private def genProgram(decls: Seq[TypeRec[Decl]]): Gen[AssemblyProgram] = ReaderT { initialEnv =>
