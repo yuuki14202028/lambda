@@ -7,7 +7,7 @@ Scala 3 で実装した、小さな型付きラムダ計算系言語（System F�
 
 - **System Fω**: 値のラムダ `λx: T. e`、型抽象 `ΛA. e`、型適用 `f[T]`、型レベルラムダとカインド（`*`, `* → *`）。型注釈と型適用はすべて明示で、HM 型推論は行いません
 - **代数的データ型**: `data` / 再帰型は `data rec`。`match` は全コンストラクタの網羅が必須、`fold` で再帰型を畳み込みます。バックエンドでは Church encoding に変換されます
-- **trait**: `trait` / `impl` による型クラス。高階カインドの trait（`Monad[m: * → *]` など）、`with C[a]` 節（宣言末尾）による制約・スーパークラスに対応。型適用が明示なので辞書解決は決定的で、辞書渡しコードへ脱糖されます
+- **trait**: `trait` / `impl` による型クラス。高階カインドの trait（`Monad[m: * → *]` など）、`with C[a]` 節（宣言末尾）による制約・スーパークラスに対応。メソッド自身の型変数にも制約を付けられます（`def traverse[g: * → *][a][b](f: a → g[b])(xs: t[a]): g[t[b]] with Applicative[g]`。impl 側のメソッドにも同じ `with` 節を書きます）。型適用が明示なので辞書解決は決定的で、型検査の中で行われ、辞書渡しコードへ脱糖されます。インスタンスは値や関数と同じく、宣言してから使います
 - **derive**: `derive Functor[Option]` / `derive Foldable[List]` で、データ型の構造から `map` / `foldRight` / `foldLeft` のインスタンスを自動導出します。導出対象は構造から一意に決まる trait（正準シグネチャと α 同値なもの）に限り、負の位置の出現や畳み込めないフィールドはコンパイルエラーになります
 - **context 記法**: do 記法相当。`context[M] { x: T = e; ...; result }` を `Monad` trait の `pure` / `flatMap` 呼び出しへ脱糖します
 - **糖衣構文**: 関数定義 `let f[A](x: T)(y: U): R = e`、ブロック式 `{ e; ...; result }`、文字列埋め込み `` `result = {compute()}\n` ``、2 引数関数の中置適用 `120 safeDiv 5`
@@ -46,7 +46,7 @@ sbt test                        # 全テスト（munit）
 ```
 ParserAST (cats-parse)
   → ImportResolver   import の解決・展開
-  → TAnalyser        型検査（trait / context / derive は構文を保ったまま型付け）
+  → TAnalyser        型検査（trait / context / derive は構文を保ったまま型付け。制約の解決もここで行う）
   → Deriver          derive 宣言を手書きと同形の impl へ合成
   → ContextDesugar   context ブロックを pure / flatMap へ脱糖
   → TraitEncoder     trait / impl を辞書渡しへ脱糖
@@ -55,7 +55,7 @@ ParserAST (cats-parse)
 ```
 
 全フェーズが単一の GADT 風 AST（`AST.scala`）を高階再帰スキーム（`HFix` / `HCofree`）で共有し、
-エラーは `Either[String, A]` で伝播します。各フェーズの設計はリポジトリ直下のドキュメントを参照してください。
+ユーザー起因のエラーは構造化された `CompileError` として型検査までに報告されます。各フェーズの設計はリポジトリ直下のドキュメントを参照してください。
 
 | ドキュメント | 内容 |
 | --- | --- |

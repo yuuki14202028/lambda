@@ -209,9 +209,9 @@ object ParserAST {
     val typeParams = sp *> typeParamP.rep0
     val params = sp *> functionParamsP
     val supers = withClauseP
-    val method = ((("def" -+> identifier.map(Variable.apply)) ~ typeParams ~ params ~ typeAnnP).map {
-      case (((name, typeParams), params), returnType) =>
-        val sig = polymorphicType(typeParams, functionType(params, returnType))
+    val method = ((("def" -+> identifier.map(Variable.apply)) ~ typeParams ~ params ~ typeAnnP ~ withClauseP).map {
+      case ((((name, typeParams), params), returnType), constraints) =>
+        val sig = polymorphicType(typeParams, constrainedType(constraints, functionType(params, returnType)))
         MethodSig(name, sig, None)
     } <* sp).rep
     val body = sp.with1 *> ('{' -*> method <*- '}')
@@ -227,10 +227,10 @@ object ParserAST {
     val typeParams = sp *> typeParamP.rep0
     val params = sp *> functionParamsP
     val returnAnn = typeAnnP.backtrack.?
-    val method = ((("def" -+> identifier.map(Variable.apply)) ~ typeParams ~ params ~ returnAnn ~ valueP).map {
-      case ((((name, typeParams), params), returnType), value) =>
-        val body = polymorphicValue(typeParams, functionValue(params, value))
-        val sig = returnType.map(rt => polymorphicType(typeParams, functionType(params, rt)))
+    val method = ((("def" -+> identifier.map(Variable.apply)) ~ typeParams ~ params ~ returnAnn ~ withClauseP ~ valueP).map {
+      case (((((name, typeParams), params), returnType), constraints), value) =>
+        val body = polymorphicValue(typeParams, constrainedValue(constraints, functionValue(params, value)))
+        val sig = returnType.map(rt => polymorphicType(typeParams, constrainedType(constraints, functionType(params, rt))))
         MethodImpl(name, sig, body)
     } <* sp).rep
     val body = sp.with1 *> ('{' -*> method <*- '}')
