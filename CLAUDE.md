@@ -40,6 +40,7 @@ TAnalyser が検査して InstanceDef を Env に登録し、Deriver が手書�
 - 適用 `InstApp`: 式の型が `[C[τ̄]] → τ` になった時点で TAnalyser が `Resolver` で制約を解決し、根拠（`Evidence`）を記録して挿入する
 
 解決は型検査の一部で、その時点までに宣言されたインスタンスとスコープ中の制約だけを見る（インスタンスも「宣言してから使う」。impl 自身のメソッド本体からそのインスタンスはまだ見えない）。
+`impl rec` と書いた impl だけ、メソッド本体から自身のインスタンスが見え、辞書は `let rec` に落ちる。再帰は `let rec` / `data rec` / `impl rec` の印がある所に限り、`rec` を使った所の停止性は保証しない（`data rec` の正の出現検査も行わない）。
 trait `C` は辞書のデータ型でもあり（`Env.dataTypes` に登録）、TraitEncoder は `InstArrow` / `InstAbs` / `InstApp` を通常の `→` / `λ` / 適用に置き換え、trait / impl を辞書のデータ型と値に落とすだけで、解決もユーザーエラーも持たない。
 
 エラー処理は 3 層に分かれる（Effects.scala / CompileError.scala）:

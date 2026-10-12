@@ -228,6 +228,44 @@ class TraitPhase2Suite extends munit.FunSuite {
     assertLeftContains(validate(src), "No instance for Show[L[a]]")
   }
 
+  test("impl rec: メソッド本体から自身のインスタンスを使える") {
+    val src = showMaybe +
+      """data rec L[a] = { N, C(a)(L[a]) }
+        |impl rec[a] Show[L[a]] with Show[a] {
+        |  def show = λl: L[a]. match l {
+        |    N => 0
+        |    C(x)(rest) => show[L[a]](rest)
+        |  }
+        |}
+        |let main(): i32 = show[L[i32]](C[i32](1)(N[i32]))
+        |""".stripMargin
+    assertRight(church(src))
+    desugar(src) match {
+      case Right(p) =>
+        val shown = p.show
+        assert(shown.contains("let rec $inst_Show_L"), clue(shown))
+        assert(!shown.contains("let rec $inst_Show_Maybe"), clue(shown))
+      case Left(err) => fail(err)
+    }
+  }
+
+  test("impl rec: 型パラメータも文脈もない形でパースできる") {
+    val src =
+      """data rec Nat = { Z, S(Nat) }
+        |trait Size[a] {
+        |  def size(x: a): i32
+        |}
+        |impl rec Size[Nat] {
+        |  def size = λn: Nat. match n {
+        |    Z => 0
+        |    S(m) => size[Nat](m)
+        |  }
+        |}
+        |let main(): i32 = size[Nat](S(Z))
+        |""".stripMargin
+    assertRight(church(src))
+  }
+
   test("with 制約は in 式の let でも使える") {
     val src = showMaybe +
       """let main(): i32 =

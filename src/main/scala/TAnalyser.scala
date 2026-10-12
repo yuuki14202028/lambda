@@ -351,7 +351,7 @@ object TAnalyser {
     case AST.TopType(_, _, _) => declarationNode("TopType")
     case AST.TopData(_, _, _, _) => declarationNode("TopData")
     case AST.TopTrait(_, _, _, _) => declarationNode("TopTrait")
-    case AST.TopImpl(_, _, _, _, _, _) => declarationNode("TopImpl")
+    case AST.TopImpl(_, _, _, _, _, _, _) => declarationNode("TopImpl")
     case AST.TopDerive(_, _) => declarationNode("TopDerive")
 
     case AST.Abs(variable, types, body) => for {
@@ -624,7 +624,7 @@ object TAnalyser {
         ))
       }
 
-    case AST.TopImpl(traitName, implParams, targets, context, methods, _) =>
+    case AST.TopImpl(traitName, implParams, targets, context, methods, _, recursive) =>
       val implScope = (e: Env) => e.withTypeVars(implParams)
       for {
         env <- ask
@@ -662,8 +662,11 @@ object TAnalyser {
         _ <- guard(!env.instances.contains(key), CompileError.OverlappingInstance(traitName, headNames))
         typedContext <- context.traverse(typedConstraint).local(implScope)
         expandedContext <- typedContext.traverse(expandConstraint(_, Some(implRef))).local(implScope)
-        // メソッド本体とスーパークラスの解決からは、impl の文脈がスコープ中の制約として見える
-        bodyScope = (e: Env) => implScope(e).withGivens(expandedContext)
+        inst = InstanceDef(traitName, expandedTargets, expandedContext, instanceDictionaryName(traitName, headNames), implParams)
+        // スーパークラスの解決とメソッド本体からは、impl の文脈がスコープ中の制約として見える。
+        // impl rec ではさらに、メソッド本体から自身のインスタンスが見える
+        contextScope = (e: Env) => implScope(e).withGivens(expandedContext)
+        bodyScope = (e: Env) => if (recursive) contextScope(e).copy(instances = e.instances + (key -> inst)) else contextScope(e)
         traitMethodNames = traitDef.methods.map(_._1)
         implMethodNames = methods.map(_.name)
         _ <- guard(implMethodNames.distinct.length == implMethodNames.length, CompileError.DuplicateMembers(implRef, MemberKind.MethodMember))
@@ -692,10 +695,9 @@ object TAnalyser {
             }
           } yield MethodImpl[TypeRec](m.name, typedSig, typedBody)
         }
-        superEvidence <- Resolver.superConstraints(traitDef, expandedTargets).traverse(Resolver.resolve).local(bodyScope)
-        inst = InstanceDef(traitName, expandedTargets, expandedContext, instanceDictionaryName(traitName, headNames), implParams)
+        superEvidence <- Resolver.superConstraints(traitDef, expandedTargets).traverse(Resolver.resolve).local(contextScope)
         // 後段がインスタンスを引けるよう、ターゲットは展開済みの型で持つ
-        typed = topImplT(traitName, implParams, expandedTargets, typedContext, typedMethods, superEvidence)
+        typed = topImplT(traitName, implParams, expandedTargets, typedContext, typedMethods, superEvidence, recursive)
       } yield (typed, env.copy(instances = env.instances + (key -> inst)))
 
     case AST.TopDerive(traitName, target) => for {

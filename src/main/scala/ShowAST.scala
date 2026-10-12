@@ -43,7 +43,7 @@ val showAlg: Algebra[AST, ShowResult] = [x] => node => node match {
     val superText = showConstraints(supers)
     val methodText = methods.map(m => s"  def ${m.name.name}: ${m.sig}").mkString("\n")
     s"trait ${v.name}$suffix$superText {\n$methodText\n}"
-  case AST.TopImpl(v, params, targets, context, methods, _) =>
+  case AST.TopImpl(v, params, targets, context, methods, _, recursive) =>
     val suffix = params.map(showKindedParam).mkString
     val targetText = targets.map(t => s"[$t]").mkString
     val contextText = showConstraints(context)
@@ -51,7 +51,7 @@ val showAlg: Algebra[AST, ShowResult] = [x] => node => node match {
       val sigText = m.sig.map(s => s": $s").getOrElse("")
       s"  def ${m.name.name}$sigText = ${m.body}"
     }.mkString("\n")
-    s"impl$suffix ${v.name}$targetText$contextText {\n$methodText\n}"
+    s"impl${if (recursive) " rec" else ""}$suffix ${v.name}$targetText$contextText {\n$methodText\n}"
   case AST.TopDerive(traitName, target) => s"derive ${traitName.name}[${target.name}]"
   case AST.Abs(v, types, body)     => s"λ${v.name}: $types. $body"
   case AST.TyAbs(v, Kind.Star, body) => s"Λ${v.name}. $body"

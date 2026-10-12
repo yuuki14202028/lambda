@@ -75,7 +75,7 @@ class MultiParamTraitSuite extends munit.FunSuite {
 
   test("パース: 複数ターゲットの impl") {
     parseDecl("impl Conversion[i32][bool] {\n  def convert = λx: i32. true\n}\n") match {
-      case AST.TopImpl(v, params, targets, context, methods, _) =>
+      case AST.TopImpl(v, params, targets, context, methods, _, _) =>
         assertEquals(v, TypeVariable("Conversion"))
         assert(params.isEmpty)
         assertEquals(targets.map(_.show), Seq("i32", "bool"))

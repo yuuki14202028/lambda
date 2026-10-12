@@ -270,7 +270,7 @@ object ChurchEncoder {
     case AST.TopTrait(variable, _, _, _) =>
       invariant(s"TopTrait ${variable.name} must be desugared by TraitEncoder before Church encoding")
 
-    case AST.TopImpl(variable, _, _, _, _, _) =>
+    case AST.TopImpl(variable, _, _, _, _, _, _) =>
       invariant(s"TopImpl ${variable.name} must be desugared by TraitEncoder before Church encoding")
 
     case AST.TopDerive(traitName, _) =>

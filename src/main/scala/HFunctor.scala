@@ -62,13 +62,13 @@ given HTraverse[AST] with {
         (f(m.sig), m.body.traverse(b => f(b))).mapN((sig, body) => MethodSig[S](m.name, sig, body))
       }
       (supersG, methodsG).mapN(AST.TopTrait(v, params, _, _))
-    case AST.TopImpl(v, params, targets, context, methods, superEvidence) =>
+    case AST.TopImpl(v, params, targets, context, methods, superEvidence, recursive) =>
       val contextG = context.traverse(traverseConstraint(_)(f))
       val methodsG = methods.traverse { m =>
         (m.sig.traverse(s => f(s)), f(m.body)).mapN((sig, body) => MethodImpl[S](m.name, sig, body))
       }
       val superEvidenceG = superEvidence.traverse(traverseEvidence(_)(f))
-      (targets.traverse(t => f(t)), contextG, methodsG, superEvidenceG).mapN(AST.TopImpl(v, params, _, _, _, _))
+      (targets.traverse(t => f(t)), contextG, methodsG, superEvidenceG).mapN(AST.TopImpl(v, params, _, _, _, _, recursive))
     case AST.TopDerive(traitName, target) =>
       Applicative[G].pure(AST.TopDerive(traitName, target))
     case AST.Abs(v, types, body) =>

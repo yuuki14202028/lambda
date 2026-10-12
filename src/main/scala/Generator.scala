@@ -624,7 +624,7 @@ object Generator {
     case AST.TopType(_, _, _) => pure(Code.empty)
     case AST.TopData(_, _, _, _) => pure(Code.empty)
     case AST.TopTrait(_, _, _, _) => pure(sys.error("TopTrait must be desugared before code generation"))
-    case AST.TopImpl(_, _, _, _, _, _) => pure(sys.error("TopImpl must be desugared before code generation"))
+    case AST.TopImpl(_, _, _, _, _, _, _) => pure(sys.error("TopImpl must be desugared before code generation"))
     case AST.TopDerive(_, _) => pure(sys.error("TopDerive must be desugared before code generation"))
 
     case AST.Primitive(_) => pure(Code.empty)
@@ -710,20 +710,20 @@ object Generator {
     case AST.TopType(_, _, _) => State.pure((Code.empty, env))
     case AST.TopData(_, _, _, _) => State.pure((Code.empty, env))
     case AST.TopTrait(_, _, _, _) => sys.error("TopTrait must be desugared before code generation")
-    case AST.TopImpl(_, _, _, _, _, _) => sys.error("TopImpl must be desugared before code generation")
+    case AST.TopImpl(_, _, _, _, _, _, _) => sys.error("TopImpl must be desugared before code generation")
     case AST.TopDerive(_, _) => sys.error("TopDerive must be desugared before code generation")
   }
 
   private def topLevelName(decl: TypeRec[Decl]): Option[Variable] = decl.project match {
     case AST.TopLet(variable, _, _) => Some(variable)
     case AST.TopLetRec(variable, _, _) => Some(variable)
-    case AST.TopImport(_) | AST.TopType(_, _, _) | AST.TopData(_, _, _, _) | AST.TopTrait(_, _, _, _) | AST.TopImpl(_, _, _, _, _, _) | AST.TopDerive(_, _) => None
+    case AST.TopImport(_) | AST.TopType(_, _, _) | AST.TopData(_, _, _, _) | AST.TopTrait(_, _, _, _) | AST.TopImpl(_, _, _, _, _, _, _) | AST.TopDerive(_, _) => None
   }
 
   private def topLevelFreeVars(decl: TypeRec[Decl]): Set[Variable] = decl.project match {
     case AST.TopLet(_, _, value) => freeVars(value)
     case AST.TopLetRec(variable, _, value) => freeVars(value) - variable
-    case AST.TopImport(_) | AST.TopType(_, _, _) | AST.TopData(_, _, _, _) | AST.TopTrait(_, _, _, _) | AST.TopImpl(_, _, _, _, _, _) | AST.TopDerive(_, _) => Set.empty
+    case AST.TopImport(_) | AST.TopType(_, _, _) | AST.TopData(_, _, _, _) | AST.TopTrait(_, _, _, _) | AST.TopImpl(_, _, _, _, _, _, _) | AST.TopDerive(_, _) => Set.empty
   }
 
   private def genProgram(decls: Seq[TypeRec[Decl]]): Gen[AssemblyProgram] = ReaderT { initialEnv =>

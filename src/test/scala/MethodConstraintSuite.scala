@@ -63,7 +63,7 @@ class MethodConstraintSuite extends munit.FunSuite {
 
   test("パース: impl メソッドの with 節は本体の暗黙引数の抽象になる") {
     parseDecl("impl Wrap[Box] {\n  def wrapIn[g: * → *][a](x: Box[a]) with Pointed[g] = point[g][Box[a]](x)\n}\n") match {
-      case AST.TopImpl(_, _, _, _, methods, _) =>
+      case AST.TopImpl(_, _, _, _, methods, _, _) =>
         assertEquals(methods.map(_.body.show), Seq("Λ(g: * → *). Λa. λ[Pointed[g]]. λx: Box[a]. point[g][Box[a]](x)"))
       case other => fail(s"not TopImpl: $other")
     }

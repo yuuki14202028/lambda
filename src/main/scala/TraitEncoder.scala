@@ -30,7 +30,7 @@ object TraitEncoder {
 
   private def encodeDecl(decl: TypeRec[Decl], env: Env): Seq[TypeRec[Decl]] = decl.project match {
     case AST.TopTrait(name, params, _, _) => encodeTrait(name, params, env)
-    case AST.TopImpl(name, _, targets, _, methods, superEvidence) => Seq(encodeImpl(name, targets, methods, superEvidence, env))
+    case AST.TopImpl(name, _, targets, _, methods, superEvidence, recursive) => Seq(encodeImpl(name, targets, methods, superEvidence, recursive, env))
     case _ => Seq(encodeIn(decl, Seq.empty, env))
   }
 
@@ -119,7 +119,7 @@ object TraitEncoder {
     (dictDecl +: superProjections) ++ methodProjections
   }
 
-  /** impl[ā] C[T̄] with D₁, …, Dₖ { def mᵢ = eᵢ }
+  /** impl[ā] C[T̄] with D₁, …, Dₖ { def mᵢ = eᵢ }      （impl rec は let rec になる）
    * let $inst_C_h̄ : ∀ā. D₁ → … → Dₖ → C[T̄] =
    *   Λā. λ$ctx_1: D₁. … MkC[T̄](スーパークラスの辞書…)(e₁)…(eₙ)   (eᵢ は trait の宣言順)
    */
@@ -128,6 +128,7 @@ object TraitEncoder {
       targets: Seq[TypeRec[Type]],
       methods: Seq[MethodImpl[TypeRec]],
       superEvidence: Seq[Evidence[TypeRec]],
+      recursive: Boolean,
       env: Env
   ): TypeRec[Decl] = {
     val traitDef = traitOf(traitName, env)
@@ -147,6 +148,7 @@ object TraitEncoder {
     val constructed = (superDicts ++ bodies).foldLeft(inst.targets.foldLeft(varrType(dictionaryConstructor(traitName), ctorType))(mkTyApp))(mkApp)
     val withContext = context.foldRight(constructed) { case ((_, dictVar, dictType), acc) => mkAbs(dictVar, dictType, acc) }
     val value = inst.params.foldRight(withContext) { case ((p, k), acc) => mkTyAbs(p, k, acc) }
-    topLetT(inst.dictName, typeOf(value), value)
+    // impl rec のメソッド本体は自身の辞書 $inst_C_h̄ を参照するので、再帰束縛にする
+    if (recursive) topLetRecT(inst.dictName, typeOf(value), value) else topLetT(inst.dictName, typeOf(value), value)
   }
 }

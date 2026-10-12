@@ -221,8 +221,10 @@ object ParserAST {
   }
 
   lazy val implP: Parser[IndexedRec[Decl]] = {
-    val implParams = ("impl" *> sp *> typeParamP.rep.map(_.toList)).backtrack | ("impl" *> gap).as(List.empty[(TypeVariable, Kind)])
-    val head = implParams ~ (sp.with1 *> identifier.map(TypeVariable.apply))
+    // impl rec は、メソッド本体から自身のインスタンスを使える（let rec / data rec と同じ明示の印）
+    val recursive = (gap *> "rec" <* Parser.not(identChar)).backtrack.?.map(_.isDefined)
+    val implParams = (sp.with1 *> typeParamP.rep.map(_.toList)).backtrack | gap.as(List.empty[(TypeVariable, Kind)])
+    val head = ("impl" *> recursive) ~ implParams ~ (sp.with1 *> identifier.map(TypeVariable.apply))
     val targets = sp *> typeP.brackets.rep.map(_.toList)
     val typeParams = sp *> typeParamP.rep0
     val params = sp *> functionParamsP
@@ -235,7 +237,7 @@ object ParserAST {
     } <* sp).rep
     val body = sp.with1 *> ('{' -*> method <*- '}')
     (head ~ targets ~ withClauseP ~ body).map {
-      case ((((implParams, name), targets), context), methods) => AST.TopImpl(name, implParams, targets, context, methods.toList, Seq.empty)
+      case (((((recursive, implParams), name), targets), context), methods) => AST.TopImpl(name, implParams, targets, context, methods.toList, Seq.empty, recursive)
     }.indexed
   }
 

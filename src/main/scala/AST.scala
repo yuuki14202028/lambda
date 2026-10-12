@@ -17,7 +17,7 @@ enum AST[R[_], I] {
   case TopType(variable: TypeVariable, params: Seq[(TypeVariable, Kind)], alias: R[Type]) extends AST[R, Decl]
   case TopData(variable: TypeVariable, params: Seq[(TypeVariable, Kind)], constructors: Seq[DataConstructor[R]], recursive: Boolean) extends AST[R, Decl]
   case TopTrait(variable: TypeVariable, params: Seq[(TypeVariable, Kind)], supers: Seq[Constraint[R]], methods: Seq[MethodSig[R]]) extends AST[R, Decl]
-  case TopImpl(variable: TypeVariable, params: Seq[(TypeVariable, Kind)], targets: Seq[R[Type]], context: Seq[Constraint[R]], methods: Seq[MethodImpl[R]], superEvidence: Seq[Evidence[R]]) extends AST[R, Decl]
+  case TopImpl(variable: TypeVariable, params: Seq[(TypeVariable, Kind)], targets: Seq[R[Type]], context: Seq[Constraint[R]], methods: Seq[MethodImpl[R]], superEvidence: Seq[Evidence[R]], recursive: Boolean) extends AST[R, Decl]
   case TopDerive(traitName: TypeVariable, target: TypeVariable) extends AST[R, Decl]
   case Abs(variable: Variable, types: R[Type], body: R[Expr]) extends AST[R, Expr]
   case TyAbs(variable: TypeVariable, kind: Kind, body: R[Expr]) extends AST[R, Expr]
@@ -184,8 +184,8 @@ def topType(variable: TypeVariable, params: Seq[(TypeVariable, Kind)], alias: Re
 def topData(variable: TypeVariable, params: Seq[(TypeVariable, Kind)], constructors: Seq[DataConstructor[Rec]], recursive: Boolean = false): Rec[Decl] =
   HFix(AST.TopData(variable, params, constructors, recursive))
 def topTrait(v: TypeVariable, p: Seq[(TypeVariable, Kind)], s: Seq[Constraint[Rec]], m: Seq[MethodSig[Rec]]): Rec[Decl] = HFix(AST.TopTrait(v, p, s, m))
-def topImpl(variable: TypeVariable, params: Seq[(TypeVariable, Kind)], targets: Seq[Rec[Type]], context: Seq[Constraint[Rec]], methods: Seq[MethodImpl[Rec]]): Rec[Decl] =
-  HFix(AST.TopImpl(variable, params, targets, context, methods, Seq.empty))
+def topImpl(variable: TypeVariable, params: Seq[(TypeVariable, Kind)], targets: Seq[Rec[Type]], context: Seq[Constraint[Rec]], methods: Seq[MethodImpl[Rec]], recursive: Boolean = false): Rec[Decl] =
+  HFix(AST.TopImpl(variable, params, targets, context, methods, Seq.empty, recursive))
 def topDerive(traitName: TypeVariable, target: TypeVariable): Rec[Decl] = HFix(AST.TopDerive(traitName, target))
 def abs(variable: Variable, types: Rec[Type], body: Rec[Expr]): Rec[Expr] = HFix(AST.Abs(variable, types, body))
 def tyAbs(variable: TypeVariable, kind: Kind, body: Rec[Expr]): Rec[Expr] = HFix(AST.TyAbs(variable, kind, body))
@@ -256,8 +256,8 @@ def topDataT(variable: TypeVariable, params: Seq[(TypeVariable, Kind)], construc
   HCofree(DeclAnn, AST.TopData(variable, params, constructors, recursive))
 def topTraitT(variable: TypeVariable, params: Seq[(TypeVariable, Kind)], supers: Seq[Constraint[TypeRec]], methods: Seq[MethodSig[TypeRec]]): TypeRec[Decl] =
   HCofree(DeclAnn, AST.TopTrait(variable, params, supers, methods))
-def topImplT(variable: TypeVariable, params: Seq[(TypeVariable, Kind)], targets: Seq[TypeRec[Type]], context: Seq[Constraint[TypeRec]], methods: Seq[MethodImpl[TypeRec]], superEvidence: Seq[Evidence[TypeRec]]): TypeRec[Decl] =
-  HCofree(DeclAnn, AST.TopImpl(variable, params, targets, context, methods, superEvidence))
+def topImplT(variable: TypeVariable, params: Seq[(TypeVariable, Kind)], targets: Seq[TypeRec[Type]], context: Seq[Constraint[TypeRec]], methods: Seq[MethodImpl[TypeRec]], superEvidence: Seq[Evidence[TypeRec]], recursive: Boolean = false): TypeRec[Decl] =
+  HCofree(DeclAnn, AST.TopImpl(variable, params, targets, context, methods, superEvidence, recursive))
 def topDeriveT(traitName: TypeVariable, target: TypeVariable): TypeRec[Decl] =
   HCofree(DeclAnn, AST.TopDerive(traitName, target))
 def absT(variable: Variable, t: TypeRec[Type], types: TypeRec[Type], body: TypeRec[Expr]): TypeRec[Expr] =
