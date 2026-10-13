@@ -1,3 +1,6 @@
+// module: 修飾した参照、入れ子、open、private、opaque type / opaque data、module の中の trait と import。
+// 期待する出力は EndToEndSuite に書いてある。
+
 import "std/operators"
 import "std/functor"
 

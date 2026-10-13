@@ -1,3 +1,6 @@
+// 末尾呼び出し: 末尾位置の呼び出しはジャンプになるので、深い末尾再帰でもスタックを消費しない。
+// 期待する出力は EndToEndSuite に書いてある。
+
 import "std/operators"
 import "std/list"
 

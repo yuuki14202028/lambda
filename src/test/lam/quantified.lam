@@ -1,3 +1,6 @@
+// 量化された制約: 高階の不動点型のインスタンス、呼び出し側での組み立て、スーパークラス、前提の入れ子。
+// 期待する出力は EndToEndSuite に書いてある。
+
 import "std/operators"
 
 let printInt: i32 → i32 = foreign[i32 → i32] print_int

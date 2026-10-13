@@ -1,3 +1,6 @@
+// rec { … }: 相互再帰の関数・データ型・インスタンス・derive と、式の中の相互再帰。
+// 期待する出力は EndToEndSuite に書いてある。
+
 import "std/operators"
 import "std/functor"
 

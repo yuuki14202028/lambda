@@ -1,3 +1,6 @@
+// インスタンスの明示: summon で辞書を取り出し、(with d) で渡し、using でスコープに入れる。
+// 期待する出力は EndToEndSuite に書いてある。
+
 import "std/operators"
 
 let printInt: i32 → i32 = foreign[i32 → i32] print_int

@@ -1,7 +1,8 @@
 error: syntax error
- --> syntax_comment.lam:1:17
+ --> syntax_comment.lam:1:16
   |
-1 | let x: i32 = 1 // one
-  |                 ^ expected an expression, found `/`
+1 | let x: i32 = 1 # one
+  |                ^ unexpected `#`
   |
-  = help: this language has no comment syntax
+  = note: a declaration is complete before this point, so a new declaration (`let`, `rec`, `data`, `type`, `trait`, `impl`, `derive`, `module`, `open`, `import`) or the end of the file is expected
+  = help: comments are written `// …` (to the end of the line) or `/* … */`

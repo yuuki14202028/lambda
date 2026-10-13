@@ -12,6 +12,7 @@ Scala 3 で実装した、小さな型付きラムダ計算系言語（System F�
 - **derive**: `derive Functor[Option]` / `derive Foldable[List]` / `derive Traversable[List]` で、データ型の構造から `map` / `foldRight` / `foldLeft` / `traverse` のインスタンスを自動導出します。導出対象は構造から一意に決まる trait（正準シグネチャと α 同値なもの）に限り、負の位置の出現や畳み込めないフィールドはコンパイルエラーになります
 - **context 記法**: do 記法相当。`context[M] { x: T = e; ...; result }` を `Monad` trait の `pure` / `flatMap` 呼び出しへ脱糖します
 - **糖衣構文**: 関数定義 `let f[A](x: T)(y: U): R = e`、ブロック式 `{ e; ...; result }`、文字列埋め込み `` `result = {compute()}\n` ``、2 引数関数の中置適用 `120 safeDiv 5`
+- **コメント**: `// …`（行末まで）と `/* … */`（入れ子にできる）
 - **import**: `import "std/operators"` は同梱の `stdlib/` を、それ以外のパスはソースファイルからの相対で解決し、ファイルの宣言をその場に展開します（module の中に書けば、その module の中に展開します）
 - **module**: `module M { 宣言… }` で名前空間を作ります（入れ子可）。外からは `M.x` / `M.T` と修飾して参照し、`open M` で修飾なしでも書けるようになります。`private` を付けた宣言は外から見えません。`opaque type T = i32` は module の中では `i32` と同じ型、外では中身のわからない型になり、`opaque data` は型の名前だけを公開して構成子を隠します。module の中からは、自身や外側の module を修飾子にした名前（`M` の中の `M.x`）も書けます。インスタンス（`impl` / `derive`）は module の中に書いてもプログラム全体で有効です。`opaque type` に対する `impl` は、書いた場所での型に対するインスタンスになります（module の中では表現の型、外では抽象型）
 - **C FFI**: `foreign[T → U] name` で C 関数を参照。実装は `runtime/ffi.c`

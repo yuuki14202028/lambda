@@ -1,3 +1,6 @@
+// match のパターン: 入れ子の構成子、リテラル（数・文字・bool・文字列・負の数）、変数、_、選択肢（|）、条件（if）。
+// 期待する出力は EndToEndSuite に書いてある。
+
 import "std/operators"
 
 let printInt: i32 → i32 = foreign[i32 → i32] print_int

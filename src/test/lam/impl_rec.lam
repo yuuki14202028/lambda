@@ -1,3 +1,6 @@
+// rec impl: メソッド本体から自身のインスタンスを使う（リストの要素数を、要素のインスタンスを通して数える）。
+// 期待する出力は EndToEndSuite に書いてある。
+
 import "std/operators"
 import "std/list"
 import "std/list_instances"

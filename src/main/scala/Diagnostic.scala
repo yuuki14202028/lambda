@@ -592,7 +592,8 @@ object Diagnostic {
       Option.when(has("""\blet\s+rec\b"""))("recursion is marked in front of the declaration: write `rec let …`"),
       Option.when(has("""\bdata\s+rec\b"""))("recursion is marked in front of the declaration: write `rec data …`"),
       Option.when(has("""\bimpl\s+rec\b"""))("recursion is marked in front of the declaration: write `rec impl …`"),
-      Option.when(has("""//|/\*|--|#"""))("this language has no comment syntax"),
+      Option.when(has("""--|#""") || rest.startsWith("*/"))("comments are written `// …` (to the end of the line) or `/* … */`"),
+      Option.when(file.text.sliding(2).count(_ == "/*") > file.text.sliding(2).count(_ == "*/"))("a `/*` comment is not closed"),
       Option.when(has("""\bfold\b.*\bwith\b"""))("the cases of a fold are written in braces: `fold e as T { C(x) => … }`"),
       Option.when(has("""^\s*(rec\s+)?let\s+\w+(\[[^\]]*\])*(\([^)]*\))*\s*="""))("every definition states its type: `let x: T = …`, or `let f(x: T): U = …` for a function"),
       Option.when(token.nonEmpty && Set("let", "rec", "data", "type", "trait", "impl", "derive", "module", "open", "import", "in", "then", "else", "with", "as", "match", "fold", "if")(token) && startsExpression)(

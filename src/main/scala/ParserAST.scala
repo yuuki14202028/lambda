@@ -9,9 +9,18 @@ object ParserAST {
   given Conversion[String, Parser[Unit]] = Parser.string
   given Conversion[Char, Parser[Unit]] = Parser.char
 
-  private val sp: Parser0[Unit] = Parser.charIn(" \t\n\r").rep0.void
-  private val sp1: Parser0[Unit] = Parser.charIn(" \t").rep0.void
-  private val gap: Parser[Unit] = Parser.charIn(" \t\n\r").rep.void
+  // コメント: 行末までの `// …` と、入れ子にできる `/* … */`。空白と同じ扱い
+  private val lineComment: Parser[Unit] = Parser.string("//") *> Parser.charWhere(ch => ch != '\n' && ch != '\r').rep0.void
+  private val blockComment: Parser[Unit] = Parser.recursive[Unit] { nested =>
+    val inside = nested | (Parser.not(Parser.string("*/")).with1 *> Parser.anyChar).void
+    Parser.string("/*") *> inside.rep0 *> Parser.string("*/")
+  }
+  private val comment: Parser[Unit] = lineComment | blockComment
+
+  private val sp: Parser0[Unit] = (Parser.charIn(" \t\n\r").void | comment).rep0.void
+  // 行の中の空白（宣言の区切りの改行は含まない。行末のコメントは含む）
+  private val sp1: Parser0[Unit] = (Parser.charIn(" \t").void | comment).rep0.void
+  private val gap: Parser[Unit] = (Parser.charIn(" \t\n\r").void | comment).rep.void
 
   private def spaced(sep: Parser[Unit]): Parser[Unit] = sp.with1 *> sep <* sp
 

@@ -1,3 +1,6 @@
+// trait のデフォルトメソッド: 省略したメソッドがデフォルトで埋まること、上書き、スーパークラスの利用。
+// 期待する出力は EndToEndSuite に書いてある。
+
 import "std/operators"
 
 let printInt: i32 → i32 = foreign[i32 → i32] print_int

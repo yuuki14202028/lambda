@@ -1,0 +1,7 @@
+error: syntax error
+ --> syntax_unclosed_comment.lam:3:1
+  |
+3 | 
+  | ^ expected `*/`, found the end of the file
+  |
+  = help: a `/*` comment is not closed
