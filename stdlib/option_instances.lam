@@ -1,6 +1,7 @@
 import "std/option"
 import "std/functor"
 import "std/applicative"
+import "std/pair"
 import "std/monad"
 import "std/foldable"
 import "std/semigroup"
@@ -13,12 +14,9 @@ impl Applicative[Option] {
   def pure[a](x: a): Option[a] = Some[a](x)
 
   def apply[a][b](f: Option[a → b]): Option[a] → Option[b] =
-    λopt: Option[a]. match f {
-      Some(g) => match opt {
-        Some(x) => Some[b](g(x))
-        None => None[b]
-      }
-      None => None[b]
+    λopt: Option[a]. match Pair[Option[a → b]][Option[a]](f)(opt) {
+      Pair(Some(g))(Some(x)) => Some[b](g(x))
+      _ => None[b]
     }
 }
 

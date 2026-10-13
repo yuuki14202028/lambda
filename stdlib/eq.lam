@@ -1,3 +1,6 @@
+import "std/operators"
+
 trait Eq[a] {
   def eq(x: a)(y: a): bool
+  def neq(x: a)(y: a): bool = !eq(x)(y)
 }
