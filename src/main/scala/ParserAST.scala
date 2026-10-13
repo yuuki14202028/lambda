@@ -89,7 +89,7 @@ object ParserAST {
   }
 
   lazy val expr: Parser[IndexedRec[Expr]] =
-    Parser.defer(recExprP | usingP | dataLetP | foldP | matchP | typeLetP | tyAbsP | absP | contextP.backtrack | letExprP | ifP | logicalOr)
+    Parser.defer(recExprP | usingP | instanceP | dataLetP | foldP | matchP | typeLetP | tyAbsP | absP | contextP.backtrack | letExprP | ifP | logicalOr)
 
 
   lazy val tyAbsP: Parser[IndexedRec[Expr]] = binderP('Λ', expr)(AST.TyAbs.apply)
@@ -264,10 +264,8 @@ object ParserAST {
     }.indexed
   }
 
-  lazy val implP: Parser[IndexedRec[Decl]] = {
-    val implParams = (sp.with1 *> typeParamP.rep.map(_.toList)).backtrack | gap.as(List.empty[(TypeVariable, Kind)])
-    val head = ("impl" *> implParams) ~ (sp.with1 *> qualifiedIdentifier.map(TypeVariable.apply))
-    val targets = sp *> typeP.brackets.rep.map(_.toList)
+  // impl の本体: { def m = e … }
+  private lazy val implMethodsP: Parser[List[MethodImpl[IndexedRec]]] = {
     val typeParams = sp *> typeParamP.rep0
     val params = sp *> functionParamsP
     val returnAnn = typeAnnP.backtrack.?
@@ -277,11 +275,23 @@ object ParserAST {
         val sig = returnType.map(rt => polymorphicType(typeParams, constrainedType(constraints, functionType(params, rt))))
         MethodImpl(name, sig, body)
     } <* sp).rep
-    val body = sp.with1 *> ('{' -*> method <*- '}')
-    (head ~ targets ~ withClauseP ~ body).map {
-      case ((((implParams, name), targets), context), methods) => AST.TopImpl(name, implParams, targets, context, methods.toList, Seq.empty)
+    ('{' -*> method <*- '}').map(_.toList)
+  }
+
+  lazy val implP: Parser[IndexedRec[Decl]] = {
+    val implParams = (sp.with1 *> typeParamP.rep.map(_.toList)).backtrack | gap.as(List.empty[(TypeVariable, Kind)])
+    val head = ("impl" *> implParams) ~ (sp.with1 *> qualifiedIdentifier.map(TypeVariable.apply))
+    val targets = sp *> typeP.brackets.rep.map(_.toList)
+    (head ~ targets ~ withClauseP ~ (sp.with1 *> implMethodsP)).map {
+      case ((((implParams, name), targets), context), methods) => AST.TopImpl(name, implParams, targets, context, methods, Seq.empty)
     }.indexed
   }
+
+  // 式としての impl: 辞書の値を作る（型パラメータと文脈は書かない。外側のものが使える）
+  lazy val instanceP: Parser[IndexedRec[Expr]] =
+    (("impl" -+> qualifiedIdentifier.map(TypeVariable.apply)) ~ (sp *> Parser.defer(typeP).brackets.rep.map(_.toList)) ~ (sp.with1 *> Parser.defer(implMethodsP))).map {
+      case ((name, targets), methods) => AST.Instance(name, targets, methods, Seq.empty)
+    }.indexed
 
   private lazy val topDeriveP: Parser[IndexedRec[Decl]] =
     ("derive" -+> qualifiedIdentifier.map(TypeVariable.apply) ~ qualifiedIdentifier.map(TypeVariable.apply).brackets).map {

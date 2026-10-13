@@ -160,4 +160,87 @@ class ExplicitInstanceSuite extends munit.FunSuite {
   test("using に辞書でない値は渡せない") {
     assertLeftContains(validate(prelude + "let n: i32 = using 1 in 2\n" + main), "using expects a dictionary")
   }
+
+  // ---- impl の式 ----
+
+  private val traits =
+    """let __not_bool(a: bool): bool = intrinsic[not_bool](a)
+      |trait Same[a] {
+      |  def same(x: a)(y: a): bool
+      |  def differ(x: a)(y: a): bool = !same(x)(y)
+      |}
+      |trait Ranked[a] with Same[a] {
+      |  def before(x: a)(y: a): bool
+      |  def after(x: a)(y: a): bool = before(y)(x)
+      |}
+      |impl Same[i32] { def same = λx: i32. λy: i32. true }
+      |""".stripMargin
+
+  test("impl の式は辞書の値で、型は trait の型") {
+    val src = traits + "let d: Same[bool] = impl Same[bool] { def same(x: bool)(y: bool): bool = true }\n"
+    assertRight(encode(src + main))
+  }
+
+  test("impl の式: 省略したメソッドはデフォルトで埋まる") {
+    val shown = encode(traits + "let d: Same[bool] = impl Same[bool] { def same = λx: bool. λy: bool. true }\n" + main).fold(fail(_), _.show)
+    val line = shown.linesIterator.find(_.startsWith("let d:")).getOrElse(fail(shown))
+    assert(line.contains("$default_Same_differ"), clue(line))
+  }
+
+  test("impl の式: デフォルトのないメソッドは省略できない") {
+    assertLeftContains(validate(traits + "let d: Same[bool] = impl Same[bool] { def differ = λx: bool. λy: bool. true }\n" + main), "same")
+  }
+
+  test("impl の式: メソッドの型は trait のシグネチャと一致しなければならない") {
+    assertLeftContains(validate(traits + "let d: Same[bool] = impl Same[bool] { def same = λx: bool. x }\n" + main), "Method type mismatch")
+  }
+
+  test("impl の式はインスタンスとして登録されない") {
+    val src = traits + "let d: Same[bool] = impl Same[bool] { def same = λx: bool. λy: bool. true }\nlet b: bool = same[bool](true)(false)\n"
+    assertLeftContains(validate(src + main), "No instance for Same[bool]")
+    assertRight(encode(traits + "let d: Same[bool] = impl Same[bool] { def same = λx: bool. λy: bool. true }\nlet b: bool = same[bool](with d)(true)(false)\n" + main))
+  }
+
+  test("impl の式: スーパークラスの辞書は、その位置で解決される") {
+    val src = traits + "let d: Ranked[i32] = impl Ranked[i32] { def before = λx: i32. λy: i32. false }\n"
+    val shown = encode(src + main).fold(fail(_), _.show)
+    assert(shown.linesIterator.exists(l => l.startsWith("let d:") && l.contains("$inst_Same_i32")), clue(shown))
+  }
+
+  test("impl の式: スーパークラスのインスタンスがなければエラー。using で入れれば作れる") {
+    assertLeftContains(validate(traits + "let d: Ranked[bool] = impl Ranked[bool] { def before = λx: bool. λy: bool. false }\n" + main), "No instance for Same[bool]")
+    val src = traits +
+      """let d: Ranked[bool] =
+        |  using (impl Same[bool] { def same = λx: bool. λy: bool. true }) in
+        |  impl Ranked[bool] { def before = λx: bool. λy: bool. false }
+        |let b: bool = after[bool](with d)(true)(false)
+        |""".stripMargin
+    assertRight(encode(src + main))
+  }
+
+  test("impl の式は、型変数や関数型に対しても作れる") {
+    val src = traits +
+      """let always[a]: Same[a] = impl Same[a] { def same = λx: a. λy: a. true }
+        |let onFunctions: Same[i32 → i32] = impl Same[i32 → i32] { def same = λf: i32 → i32. λg: i32 → i32. false }
+        |let b: bool = differ[bool](with always[bool])(true)(false)
+        |""".stripMargin
+    assertRight(encode(src + main))
+  }
+
+  test("impl の式: 外側の制約と引数を本体で使える") {
+    val src = traits +
+      """let lifted[a][b](project: b → a): Same[b] with Same[a] =
+        |  impl Same[b] { def same(x: b)(y: b): bool = same[a](project(x))(project(y)) }
+        |let b: bool = same[bool](with lifted[i32][bool](λv: bool. 1))(true)(false)
+        |""".stripMargin
+    assertRight(encode(src + main))
+  }
+
+  test("impl の式: 型引数の数とカインドの検査") {
+    assertLeftContains(validate(traits + "let d: Same[bool] = impl Same[bool][bool] { def same = λx: bool. λy: bool. true }\n" + main), "expects 1 type argument")
+    assertLeftContains(
+      validate(traits + "data Box[a] = { MkBox(a) }\nlet d: i32 = impl Same[Box] { def same = λx: i32. λy: i32. true }\n" + main),
+      "Kind mismatch"
+    )
+  }
 }

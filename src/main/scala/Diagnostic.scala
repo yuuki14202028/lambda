@@ -215,6 +215,10 @@ object Diagnostic {
         "an instance without a `with` context is built immediately, and its dictionary holds the dictionaries of its superclasses, so those must already exist"),
       Seq(s"move the declaration of `$wanted` before this one")
     )
+    case Hint.ProvideWithUsing(wanted) => (
+      Nil,
+      Seq(s"an `impl` expression takes its superclass dictionaries from the scope: write `using (impl $wanted { … }) in impl …`")
+    )
     case Hint.AddConstraint(wanted) => (
       Nil,
       Seq(s"the type is a type parameter, so require the instance from the caller: add `with $wanted` to the enclosing definition")

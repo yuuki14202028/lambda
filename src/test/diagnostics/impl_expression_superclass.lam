@@ -1,0 +1,13 @@
+trait Same[a] {
+  def same(x: a)(y: a): bool
+}
+
+trait Ranked[a] with Same[a] {
+  def before(x: a)(y: a): bool
+}
+
+let order: Ranked[bool] = impl Ranked[bool] {
+  def before(x: bool)(y: bool): bool = x
+}
+
+let main(): i32 = 0

@@ -143,6 +143,11 @@ given HTraverse[AST] with {
       (f(func), traverseEvidence(evidence)(f)).mapN(AST.InstApp(_, _))
     case AST.Using(dictionary, body) =>
       (f(dictionary), f(body)).mapN(AST.Using(_, _))
+    case AST.Instance(traitName, targets, methods, superEvidence) =>
+      val methodsG = methods.traverse { m =>
+        (m.sig.traverse(s => f(s)), f(m.body)).mapN((sig, body) => MethodImpl[S](m.name, sig, body))
+      }
+      (targets.traverse(t => f(t)), methodsG, superEvidence.traverse(traverseEvidence(_)(f))).mapN(AST.Instance(traitName, _, _, _))
     case AST.Summon(constraint, evidence) =>
       (traverseConstraint(constraint)(f), evidence.traverse(traverseEvidence(_)(f))).mapN(AST.Summon(_, _))
     case AST.Foreign(v, types) =>

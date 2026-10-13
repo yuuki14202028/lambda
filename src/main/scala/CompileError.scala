@@ -94,6 +94,7 @@ enum Hint {
   case PrivateMember(name: String)                                                     // その名前は module の中にあるが、公開されていない
   case OpaqueType(name: String)                                                        // module の外では表現と別の型
   case SuperclassDeclaredLater(constraint: String)                                     // スーパークラスのインスタンスが rec の組の後ろにある
+  case ProvideWithUsing(constraint: String)                                            // impl の式のスーパークラスは using で入れられる
 }
 
 /** ユーザー起因のコンパイルエラー。エラーの種類ごとに case を持ち、

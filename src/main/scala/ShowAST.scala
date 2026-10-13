@@ -126,6 +126,9 @@ val showAlg: Algebra[AST, ShowResult] = [x] => node => node match {
   case AST.InstApp(func, evidence) => s"$func⟨${showEvidence(evidence)}⟩"
   case AST.Summon(constraint, _)   => s"summon[${showConstraint(constraint)}]"
   case AST.Using(dictionary, body) => s"using $dictionary in $body"
+  case AST.Instance(traitName, targets, methods, _) =>
+    val methodText = methods.map(m => s"def ${m.name.name}${m.sig.fold("")(s => s": $s")} = ${m.body}").mkString("; ")
+    s"impl ${traitName.name}${targets.map(t => s"[$t]").mkString} { $methodText }"
   case AST.Foreign(v, types)       => s"foreign[$types] ${v.name}"
   case AST.Var(v)                  => s"${v.name}"
   case AST.Num(v, t)               => if (t == "i32" || t == "f64" && v.exists(ch => ch == '.' || ch == 'e' || ch == 'E')) v else s"$v$t"

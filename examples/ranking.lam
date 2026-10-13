@@ -8,10 +8,15 @@ import "std/prelude"
 // ---- 順序の辞書を作る道具 ----
 
 module Ordering {
-  // 「前に来るか」の関数から Ord の辞書を作る。trait の辞書は、スーパークラスの辞書とメソッドを並べたデータ
+  // 「前に来るか」の関数から Ord の辞書を作る。
+  // impl の式は、インスタンスとして登録しない辞書の値。書かなかったメソッド（neq や leq など）はデフォルトで埋まる
   let fromBefore[a](before: a → a → bool): Ord[a] =
-    rec let same(x: a)(y: a): bool = !before(x)(y) && !before(y)(x) in
-    MkOrd[a](MkEq[a](same)(λx: a. λy: a. !same(x)(y)))(before)(λx: a. λy: a. !before(y)(x))(λx: a. λy: a. before(y)(x))(λx: a. λy: a. !before(x)(y))
+    // Ord はスーパークラスに Eq を持つので、先に Eq の辞書を作ってスコープに入れる
+    using (impl Eq[a] {
+      def eq(x: a)(y: a): bool = !before(x)(y) && !before(y)(x)
+    }) in impl Ord[a] {
+      def lt = before
+    }
 
   // 値から取り出したキーの順序で比べる
   let by[a][k](key: a → k): Ord[a] with Ord[k] = fromBefore[a](λx: a. λy: a. lt[k](key(x))(key(y)))

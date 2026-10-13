@@ -587,6 +587,7 @@ object Generator {
     case AST.InstApp(_, _) => pure(sys.error("InstApp must be desugared by TraitEncoder before code generation"))
     case AST.Summon(_, _) => pure(sys.error("Summon must be desugared by TraitEncoder before code generation"))
     case AST.Using(_, _) => pure(sys.error("Using must be desugared by TraitEncoder before code generation"))
+    case AST.Instance(_, _, _, _) => pure(sys.error("Instance must be desugared by TraitEncoder before code generation"))
 
     case AST.Let(Variable(param), _, value, body) => for {
       vc <- nonTail(value.result)

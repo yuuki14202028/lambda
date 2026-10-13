@@ -1,0 +1,9 @@
+error: no instance for `Same[bool]`
+ --> impl_expression_superclass.lam:9:27
+  |
+9 | let order: Ranked[bool] = impl Ranked[bool] {
+  |                           ^^^^^^^^^^^^^^^^^^^ this needs the instance
+  |
+  = note: required for `Ranked[bool]` by `trait Ranked with Same[a]`
+  = note: no instance of this trait is declared before this point (an instance is visible only after its `impl`)
+  = help: an `impl` expression takes its superclass dictionaries from the scope: write `using (impl Same[bool] { … }) in impl …`

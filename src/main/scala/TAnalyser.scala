@@ -458,6 +458,7 @@ object TAnalyser {
       he.ast match {
         case AST.InstApp(_, evidence) => inChildren ++ inEvidence(evidence)
         case AST.Summon(_, evidence) => inChildren ++ evidence.fold(Set.empty)(inEvidence)
+        case AST.Instance(_, _, _, superEvidence) => inChildren ++ superEvidence.flatMap(inEvidence)
         case _ => inChildren
       }
     }
@@ -761,6 +762,39 @@ object TAnalyser {
     } yield resolved
 
     case AST.InstApp(_, _) => invariant("InstApp with resolved evidence is inserted by the type checker and cannot appear in its input")
+
+    // impl C[τ̄] { … }（式）: インスタンスとして登録しない impl。メソッドの検査は宣言の impl と同じ
+    case AST.Instance(writtenTrait, targets, methods, _) => for {
+      env <- ask
+      traitName <- resolveTrait(writtenTrait)
+      traitDef <- lift(env.traits.get(traitName).toRight(CompileError.UndefinedTrait(traitName, None)))
+      _ <- guard(targets.length == traitDef.param.length, CompileError.ImplTargetArity(traitName, traitDef.param.length, targets.length))
+      typedTargets <- targets.traverse(identity)
+      expandedKinded <- typedTargets.traverse(expandWellKinded)
+      _ <- expandedKinded.zip(traitDef.param).zip(typedTargets).traverse_ { case (((expanded, targetKind), (_, paramKind)), written) =>
+        guardAt(written, targetKind == paramKind, CompileError.ImplKindMismatch(traitName, expanded, paramKind, targetKind))
+      }
+      expandedTargets = expandedKinded.map(_._1)
+      shown = expandedTargets.map(_.show)
+      // 宣言の impl と同じ検査に乗せる（型パラメータ・文脈・組はなし。辞書の名前は使われない）
+      head = ImplHead(
+        traitName, traitDef, Seq.empty, expandedTargets, Seq.empty, DeclRef.ImplDecl(traitName, shown), instanceKey(traitName, shown),
+        InstanceDef(traitName, expandedTargets, Seq.empty, Variable("$instance"), Seq.empty)
+      )
+      checked <- ReaderT((e: Env) => implBody(head, methods, group = Map.empty).run(e).left.map { error =>
+        // スーパークラスの辞書がないときは、using で入れる方法を案内する
+        error.core match {
+          case CompileError.NoInstance(name, args) if error.requirements.nonEmpty =>
+            CompileError.Hinted(error, Seq(Hint.ProvideWithUsing(showTypeConstraint(TypeConstraint(name, args)))))
+          case _ => error
+        }
+      })
+      typed <- checked.project match {
+        case AST.TopImpl(_, _, _, _, typedMethods, superEvidence) =>
+          okT(instanceT(applyTypeConstructor(traitName, expandedTargets), traitName, expandedTargets, typedMethods, superEvidence))
+        case _ => invariant("implBody must produce an impl")
+      }
+    } yield typed
 
     // using d in e: d の型（辞書の型）が表す制約を、e の中でスコープに入れる
     case AST.Using(dictionary, body) => for {
