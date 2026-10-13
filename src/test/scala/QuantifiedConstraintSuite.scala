@@ -116,8 +116,85 @@ class QuantifiedConstraintSuite extends munit.FunSuite {
     assertLeftContains(validate(src + main), "already defined")
   }
 
-  test("スーパークラスには書けない") {
-    assertLeftContains(validate(prelude + "trait Deep[f: * → *] with ∀a. Size[a] ⇒ Size[f[a]] { def deep(x: f[i32]): i32 }\n" + main), "superclass")
+  // ---- スーパークラス ----
+
+  private val deep = prelude +
+    """trait Deep[f: * → *] with ∀a. Size[a] ⇒ Size[f[a]] { def deep(x: f[i32]): i32 }
+      |""".stripMargin
+
+  test("スーパークラスに書ける: インスタンスは、その量化された制約を満たさなければならない") {
+    assertRight(encode(deep + "impl Deep[Box] { def deep = λb: Box[i32]. size[Box[i32]](b) }\n" + main))
+    assertLeftContains(validate(deep + "impl Deep[Bare] { def deep = λb: Bare[i32]. 0 }\n" + main), "No instance")
+  }
+
+  test("スーパークラスの量化された制約は、その trait の制約からインスタンスのように使える") {
+    val src = deep +
+      """let viaSuper[f: * → *](x: f[i32]): i32 with Deep[f] = size[f[i32]](x)
+        |let twiceVia[f: * → *](x: f[f[i32]]): i32 with Deep[f] = size[f[f[i32]]](x)
+        |impl Deep[Box] { def deep = λb: Box[i32]. 0 }
+        |let n: i32 = viaSuper[Box](MkBox[i32](1))
+        |""".stripMargin
+    val shown = encode(src + main).fold(fail(_), _.show)
+    assert(shown.contains("$super_Deep_0"), clue(shown))
+  }
+
+  test("スーパークラスの量化された制約の前提が満たせなければエラー") {
+    val src = deep + "let bad[f: * → *](x: f[bool]): i32 with Deep[f] = size[f[bool]](x)\n"
+    assertLeftContains(validate(src + main), "No instance")
+  }
+
+  test("スーパークラスの量化された制約を、量化された制約を要求する関数へ渡せる") {
+    assertRight(encode(deep + "let pass[f: * → *](x: f[i32]): i32 with Deep[f] = twice[f](x)\n" + main))
+  }
+
+  test("デフォルトメソッドの本体でも、量化されたスーパークラスを使える") {
+    val src = prelude +
+      """trait Deep[f: * → *] with ∀a. Size[a] ⇒ Size[f[a]] {
+        |  def start(x: f[i32]): f[i32]
+        |  def measure(x: f[i32]): i32 = size[f[i32]](start(x))
+        |}
+        |impl Deep[Box] { def start = λb: Box[i32]. b }
+        |let n: i32 = measure[Box](MkBox[i32](1))
+        |""".stripMargin
+    assertRight(encode(src + main))
+  }
+
+  // ---- 前提の入れ子 ----
+
+  private val compose = prelude +
+    """data Compose[f: * → *][g: * → *][a] = { MkCompose(f[g[a]]) }
+      |impl[f: * → *][g: * → *][a] Size[Compose[f][g][a]] with ∀b. Size[b] ⇒ Size[f[b]], ∀b. Size[b] ⇒ Size[g[b]], Size[a] {
+      |  def size = λc: Compose[f][g][a]. match c { MkCompose(inner) => size[f[g[a]]](inner) }
+      |}
+      |let nested[h: (* → *) → * → *](x: h[Box][i32]): i32 with ∀(f: * → *). (∀b. Size[b] ⇒ Size[f[b]]) ⇒ Size[h[f][i32]] =
+      |  size[h[Box][i32]](x)
+      |""".stripMargin
+
+  test("前提に量化された制約を書ける（括弧で囲む）") {
+    val env = validate(compose + main).fold(fail(_), _.extract match { case ProgramAnn(e) => e })
+    assertEquals(
+      env.values(Variable("nested")).show,
+      "∀(h: (* → *) → * → *). [∀(f: * → *). (∀b. Size[b] ⇒ Size[f[b]]) ⇒ Size[h[f][i32]]] → h[Box][i32] → i32"
+    )
+    assertRight(encode(compose + main))
+  }
+
+  test("前提が量化された制約は、インスタンスから組み立てられる") {
+    assertRight(encode(compose + "let n: i32 = nested[Compose[Box]](MkCompose[Box][Box][i32](MkBox[Box[i32]](MkBox[i32](1))))\n" + main))
+  }
+
+  test("量化された前提が満たせなければエラー") {
+    val src = compose + "let bad[h: (* → *) → * → *](x: h[Bare][i32]): i32 with ∀(f: * → *). (∀b. Size[b] ⇒ Size[f[b]]) ⇒ Size[h[f][i32]] = size[h[Bare][i32]](x)\n"
+    assertLeftContains(validate(src + main), "No instance")
+  }
+
+  test("入れ子の束縛変数も、型引数の代入で捕獲されない") {
+    val src = compose +
+      """let outer[b](x: Compose[Box][Box][b]): i32 with Size[b] = size[Compose[Box][Box][b]](x)
+        |let renamed[h: (* → *) → * → *][f: * → *](x: h[Box][i32]): i32 with ∀(g: * → *). (∀c. Size[c] ⇒ Size[g[c]]) ⇒ Size[h[g][i32]] =
+        |  nested[h](x)
+        |""".stripMargin
+    assertRight(encode(src + main))
   }
 
   test("入れ子にした非再帰のデータ型を符号化できる") {

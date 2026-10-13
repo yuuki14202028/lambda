@@ -17,7 +17,8 @@ private def showConstraint(c: Constraint[ShowResult]): String = {
     case (v, Kind.Star) => s"∀${v.name}. "
     case (v, k) => s"∀(${v.name}: ${k.show}). "
   }.mkString
-  val premises = if (c.premises.isEmpty) "" else c.premises.map(showConstraint).mkString("", ", ", " ⇒ ")
+  def premise(p: Constraint[ShowResult]): String = if (p.quantified) s"(${showConstraint(p)})" else showConstraint(p)
+  val premises = if (c.premises.isEmpty) "" else c.premises.map(premise).mkString("", ", ", " ⇒ ")
   s"$binders$premises${c.name.name}${c.arg.map(a => s"[$a]").mkString}"
 }
 

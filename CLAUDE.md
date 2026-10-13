@@ -42,8 +42,8 @@ TAnalyser が検査して InstanceDef を Env に登録し、Deriver が手書�
 - 抽象 `InstAbs`: `λ[Show[a]]. e`（本体でその制約がスコープに入る。`Env.givens`）
 - 適用 `InstApp`: 式の型が `[C[τ̄]] → τ` になった時点で TAnalyser が `Resolver` で制約を解決し、根拠（`Evidence`）を記録して挿入する
 
-制約 `Constraint(name, arg, params, premises)` は量化された制約 `∀params. premises ⇒ name[arg]` も表す（`with ∀a. Show[a] ⇒ Show[f[a]]`。前提は単純な制約に限り、スーパークラスには書けない）。辞書の型は `∀params. 前提の辞書… → name[arg]`（文脈付きインスタンスの辞書と同じ形）で、`params` は制約の中だけの束縛子として `substType` / `freeTypeVars` / `Equivalence.alpha` が扱う。
-スコープ中の量化された制約はインスタンスのように使われ（根拠 `Evidence.Apply`）、量化された制約を示すときは `params` と前提をスコープに入れてヘッドを解決する（根拠 `Evidence.Abs`。辞書は `Λparams. λ前提の辞書. …`）。
+制約 `Constraint(name, arg, params, premises)` は量化された制約 `∀params. premises ⇒ name[arg]` も表す（`with ∀a. Show[a] ⇒ Show[f[a]]`。前提にも量化された制約を書け、スーパークラスにも書ける）。辞書の型は `∀params. 前提の辞書… → name[arg]`（文脈付きインスタンスの辞書と同じ形）で、`params` は制約の中だけの束縛子として `substType` / `freeTypeVars` / `Equivalence.alpha` が扱う。
+スコープ中の量化された制約（スコープ中の制約のスーパークラスとして得られるものを含む。`Resolver.superClosure`）はインスタンスのように使われ（根拠 `Evidence.Apply`）、量化された制約を示すときは `params` と前提をスコープに入れてヘッドを解決する（根拠 `Evidence.Abs`。辞書は `Λparams. λ前提の辞書. …`）。
 
 trait のメソッドはデフォルトの本体を持てる（`MethodSig.body`、`TraitDef.defaults`）。本体は、必須メソッド（デフォルトを持たないメソッド）を trait の型パラメータでの普通の値として、スーパークラスの制約を givens としてスコープに入れて検査する。自身のインスタンスも他のデフォルトも見えないので、辞書は自分自身を参照しない（`rec` 不要）。TraitEncoder はデフォルトを `$default_C_m: ∀p̄. スーパークラスの辞書… → 必須メソッド… → シグネチャ` に落とし、impl で省略されたメソッドをその適用で埋める（そのときだけ、定義されたメソッドを `$method_i` に束縛する）。
 

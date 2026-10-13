@@ -96,7 +96,6 @@ enum CompileError {
   case ModifierOutsideModule(modifier: Modifier)
   case MixedRecursiveGroup
   case NoConstraintToSatisfy(actual: TypeRec[Type])
-  case QuantifiedSuperclassUnsupported(traitName: TypeVariable)
   case DefaultMethodTypeMismatch(traitName: TypeVariable, method: Variable, expected: TypeRec[Type], actual: TypeRec[Type])
   case QuantifiedParamUnused(traitName: TypeVariable, param: TypeVariable)
   case AlreadyDefined(kind: NameKind, name: String)
@@ -215,7 +214,6 @@ enum CompileError {
     case UndefinedModule(path) => s"Module ${path.mkString(".")} is not defined"
     case DefaultMethodTypeMismatch(traitName, method, expected, actual) =>
       s"Trait ${traitName.name}: the default of method ${method.name} has type ${actual.show}, expected ${expected.show}"
-    case QuantifiedSuperclassUnsupported(traitName) => s"Trait ${traitName.name}: a superclass cannot be a quantified constraint"
     case QuantifiedParamUnused(traitName, param) =>
       s"Quantified constraint on ${traitName.name}: type variable ${param.name} does not appear in the constraint's arguments"
     case NoConstraintToSatisfy(actual) => s"Cannot pass an instance with (with …): the expression has type ${actual.show}, which takes no instance"

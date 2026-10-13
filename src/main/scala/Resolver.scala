@@ -9,6 +9,7 @@ import scala.annotation.tailrec
  *
  * 解決順: スコープ中の制約 → スコープ中の量化された制約（前提を再帰的に解決）
  *         → インスタンス（文脈を再帰的に解決）→ スコープ中の制約のスーパークラス射影
+ * 「スコープ中の量化された制約」には、スコープ中の制約のスーパークラスとして得られるものも含む。
  * 量化された制約 ∀ā. P̄ ⇒ C[τ̄] を示すには、ā と P̄ をスコープに入れて C[τ̄] を解決する。
  */
 object Resolver {
@@ -52,12 +53,8 @@ object Resolver {
       if (!used.contains(param)) (current, used + param)
       else {
         val renamed = freshTypeVariable(param, used)
-        def rename(t: TypeRec[Type]): TypeRec[Type] = substType(param, typeVarT(renamed), t)
-        val next = Constraint[TypeRec](
-          current.name, current.arg.map(rename),
-          current.params.map { case (p, k) => (if (p == param) renamed else p, k) },
-          current.premises.map(p => Constraint[TypeRec](p.name, p.arg.map(rename)))
-        )
+        val next = instantiate(current.copy(params = Nil), Seq(param), Seq(typeVarT(renamed)))
+          .copy(params = current.params.map { case (p, k) => (if (p == param) renamed else p, k) })
         (next, used + renamed)
       }
     }
@@ -88,7 +85,9 @@ object Resolver {
 
   // スコープ中の量化された制約 ∀ā. P̄ ⇒ C[τ̄] のヘッドが合えば、前提 P̄ の解決結果を返す
   private def resolveViaQuantifiedGiven(env: Env, constraint: TypeConstraint, depth: Int): Option[EitherS[Evidence[TypeRec]]] =
-    env.givens.iterator.filter(g => g.quantified && g.name == constraint.name && g.arg.length == constraint.arg.length).flatMap { assumed =>
+    (env.givens.map(g => (g, Evidence.Given(g): Evidence[TypeRec])) ++ superClosure(env)).iterator.filter { case (g, _) =>
+      g.quantified && g.name == constraint.name && g.arg.length == constraint.arg.length
+    }.flatMap { case (assumed, evidence) =>
       val paramVars = assumed.params.map(_._1)
       assumed.arg.zip(constraint.arg).toList
         .foldLeftM(Map.empty[TypeVariable, TypeRec[Type]]) { case (acc, (pattern, actual)) => matchTypes(pattern, actual, paramVars.toSet, acc) }
@@ -97,7 +96,7 @@ object Resolver {
           val typeArgs = paramVars.map(subst)
           assumed.premises
             .traverse(premise => resolveIn(env, instantiate(premise, paramVars, typeArgs), depth + 1))
-            .map(Evidence.Apply(Evidence.Given(assumed), typeArgs, _))
+            .map(Evidence.Apply(evidence, typeArgs, _))
         }
     }.nextOption()
 
@@ -116,13 +115,15 @@ object Resolver {
       .map(Evidence.Instance(constraint.name, heads, typeArgs, _))
   }
 
-  // スコープ中の制約からスーパークラス射影をたどって目的の制約に到達できれば成功（幅優先）
-  private def resolveViaSupers(env: Env, constraint: TypeConstraint): Option[Evidence[TypeRec]] = {
+  // スコープ中の（単純な）制約からスーパークラス射影をたどって得られる制約と、その根拠（幅優先。出発点は含まない）
+  private def superClosure(env: Env): List[(TypeConstraint, Evidence[TypeRec])] = {
     type Node = (TypeConstraint, Evidence[TypeRec])
 
+    // 量化された制約のスーパークラスはたどらない（具体化して初めて trait の制約になる）
     def children(node: Node): List[Node] = {
       val (reached, evidence) = node
-      env.traits.get(reached.name).fold(List.empty[Node]) { traitDef =>
+      if (reached.quantified) Nil
+      else env.traits.get(reached.name).fold(List.empty[Node]) { traitDef =>
         traitDef.supers.zipWithIndex.toList.map { case (sup, index) =>
           (instantiate(sup, traitDef.paramVars, reached.arg), Evidence.Super(reached.name, index, evidence))
         }
@@ -130,13 +131,15 @@ object Resolver {
     }
 
     @tailrec
-    def search(queue: List[Node]): Option[Evidence[TypeRec]] = queue match {
-      case Nil => None
-      case (node @ (reached, evidence)) :: rest =>
-        if (sameConstraint(reached, constraint)) Some(evidence) else search(rest ++ children(node))
+    def collect(queue: List[Node], found: List[Node]): List[Node] = queue match {
+      case Nil => found.reverse
+      case node :: rest => collect(rest ++ children(node), node :: found)
     }
 
-    // スコープ中の制約そのものは resolveIn が先に調べているので、その子から探索する
-    search(env.givens.toList.filterNot(_.quantified).map(g => (g, Evidence.Given(g): Evidence[TypeRec])).flatMap(children))
+    collect(env.givens.toList.map(g => (g, Evidence.Given(g): Evidence[TypeRec])).flatMap(children), Nil)
   }
+
+  // スコープ中の制約そのものは resolveIn が先に調べているので、スーパークラスとして得られるものから探す
+  private def resolveViaSupers(env: Env, constraint: TypeConstraint): Option[Evidence[TypeRec]] =
+    superClosure(env).collectFirst { case (reached, evidence) if sameConstraint(reached, constraint) => evidence }
 }

@@ -152,9 +152,10 @@ object ParserAST {
   private lazy val simpleConstraintP: Parser[Constraint[IndexedRec]] =
     (qualifiedIdentifier.map(TypeVariable.apply) ~ typeP.brackets.rep0).map { case (name, args) => Constraint[IndexedRec](name, args) }
 
-  // C[τ̄]、または量化された制約 ∀a. P₁, …, Pₖ ⇒ C[τ̄]（前提は省略できる）
+  // C[τ̄]、または量化された制約 ∀a. P₁, …, Pₖ ⇒ C[τ̄]（前提は省略できる。量化された前提は括弧で囲む）
   private lazy val constraintP: Parser[Constraint[IndexedRec]] = {
-    val premises = (simpleConstraintP.repSep(spaced(',').backtrack) <* spaced('⇒')).backtrack.?
+    val premise = simpleConstraintP | Parser.defer(constraintP).parens
+    val premises = (premise.repSep(spaced(',').backtrack) <* spaced('⇒')).backtrack.?
     val quantified = (binderHead('∀').rep ~ premises ~ simpleConstraintP).map { case ((params, premises), head) =>
       Constraint[IndexedRec](head.name, head.arg, params.toList, premises.fold(List.empty)(_.toList))
     }

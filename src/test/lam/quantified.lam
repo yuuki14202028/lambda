@@ -36,10 +36,55 @@ let viaTwice[g: * → *](x: g[i32]): i32 with ∀b. Size[b] ⇒ Size[g[b]] = twi
 
 let sameName[a](x: ListF[a][i32]): i32 with Size[a] = twice[ListF[a]](x)
 
+trait Wrap[f: * → *] {
+  def wrap[a](x: a): f[a]
+  def unwrap[a](x: f[a]): a
+}
+
+trait Lifts[t: (* → *) → * → *] with ∀(m: * → *). Wrap[m] ⇒ Wrap[t[m]] {
+  def lift[m: * → *][a](x: m[a]): t[m][a] with Wrap[m]
+}
+
+data Id[a] = { MkId(a) }
+
+impl Wrap[Id] {
+  def wrap[a](x: a): Id[a] = MkId[a](x)
+  def unwrap[a](x: Id[a]): a = match x { MkId(v) => v }
+}
+
+data Layer[m: * → *][a] = { MkLayer(m[a]) }
+
+impl[m: * → *] Wrap[Layer[m]] with Wrap[m] {
+  def wrap[a](x: a): Layer[m][a] = MkLayer[m][a](wrap[m][a](x))
+  def unwrap[a](x: Layer[m][a]): a = match x { MkLayer(inner) => unwrap[m][a](inner) }
+}
+
+impl Lifts[Layer] {
+  def lift[m: * → *][a](x: m[a]): Layer[m][a] with Wrap[m] = MkLayer[m][a](x)
+}
+
+let roundTrip[t: (* → *) → * → *][m: * → *](x: i32): i32 with Lifts[t], Wrap[m] =
+  unwrap[t[m]][i32](lift[t][m][i32](wrap[m][i32](x)))
+
+let twoLayers[t: (* → *) → * → *][m: * → *](x: i32): i32 with Lifts[t], Wrap[m] =
+  unwrap[t[t[m]]][i32](wrap[t[t[m]]][i32](x))
+
+data Compose[f: * → *][g: * → *][a] = { MkCompose(f[g[a]]) }
+
+impl[f: * → *][g: * → *][a] Size[Compose[f][g][a]] with ∀b. Size[b] ⇒ Size[f[b]], ∀b. Size[b] ⇒ Size[g[b]], Size[a] {
+  def size = λc: Compose[f][g][a]. match c { MkCompose(inner) => size[f[g[a]]](inner) }
+}
+
+let nested[h: (* → *) → * → *](x: h[ListF[i32]][i32]): i32 with ∀(f: * → *). (∀b. Size[b] ⇒ Size[f[b]]) ⇒ Size[h[f][i32]] =
+  size[h[ListF[i32]][i32]](x)
+
 let main(): i32 = {
   printInt(size[Fix[ListF[i32]]](cons(1)(cons(2)(cons(3)(nil)))));
   printInt(twice[ListF[i32]](ConsF[i32][i32](4)(5)));
   printInt(viaTwice[ListF[i32]](ConsF[i32][i32](10)(20)));
   printInt(sameName[i32](ConsF[i32][i32](1)(2)));
+  printInt(roundTrip[Layer][Id](42));
+  printInt(twoLayers[Layer][Id](7));
+  printInt(nested[Compose[ListF[i32]]](MkCompose[ListF[i32]][ListF[i32]][i32](ConsF[i32][ListF[i32][i32]](1)(ConsF[i32][i32](2)(3)))));
   0
 }

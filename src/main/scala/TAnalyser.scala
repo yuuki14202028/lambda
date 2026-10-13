@@ -173,14 +173,19 @@ object TAnalyser {
   private def expandConstraint(c: Constraint[TypeRec], site: Option[DeclRef]): Check[TypeConstraint] = for {
     resolved <- resolveConstraintNames(c)
     _ <- KAnalyser.checkConstraint(resolved, site)
-    // 解決はヘッドの照合でパラメータを決めるので、パラメータはヘッドの引数に現れなければならない
-    _ <- resolved.params.traverse_ { case (param, _) =>
-      guard(resolved.arg.exists(arg => freeTypeVars(arg).contains(param)), CompileError.QuantifiedParamUnused(c.name, param))
-    }
+    _ <- checkQuantifiedParams(resolved)
   } yield resolved.hmap([y] => (t: TypeRec[y]) => t.extract match {
     case TypeAnn => Equivalence.normalize(t)
     case _ => t
   })
+
+  // 解決はヘッドの照合でパラメータを決めるので、パラメータはヘッドの引数に現れなければならない（前提の中でも同じ）
+  private def checkQuantifiedParams(c: TypeConstraint): Check[Unit] = for {
+    _ <- c.params.traverse_ { case (param, _) =>
+      guard(c.arg.exists(arg => freeTypeVars(arg).contains(param)), CompileError.QuantifiedParamUnused(c.name, param))
+    }
+    _ <- c.premises.traverse_(checkQuantifiedParams)
+  } yield ()
 
   private def resolveConstraintNames(c: Constraint[TypeRec]): Check[TypeConstraint] = underParams(c.params) {
     (c.arg.traverse(resolveNames), c.premises.traverse(resolveConstraintNames)).mapN(Constraint[TypeRec](c.name, _, c.params, _))
@@ -889,7 +894,6 @@ object TAnalyser {
           CompileError.DictionaryCtorAlreadyDefined(name, ctorName)
         )
         typedSupers <- supers.traverse(typedConstraint).local(scope)
-        _ <- guard(!typedSupers.exists(_.quantified), CompileError.QuantifiedSuperclassUnsupported(name))
         typedSigs <- methods.zip(methodNames).traverse { case (m, method) => m.sig.local(scope).map(method -> _) }
         signature <- traitOf(name, params, typedSupers, methods.zip(typedSigs).map { case (m, (method, sig)) =>
           // 本体の有無だけを伝える（本体そのものは下で検査する）
