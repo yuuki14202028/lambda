@@ -113,4 +113,6 @@ PatternDesugar は行列から決定木を作り、構成子 1 段の `Match`（
 
 ## 規約
 
+- 言語の説明は `docs/language.md`。`lam` のコード例は DocSuite がコンパイルして確かめるので、構文や標準ライブラリを変えたら文書も直す
+
 - ドキュメント・コミットメッセージは日本語。コミットは gitmoji prefix（`:sparkles:` 等）を使う
