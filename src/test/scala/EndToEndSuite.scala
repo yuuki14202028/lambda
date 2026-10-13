@@ -60,7 +60,17 @@ class EndToEndSuite extends munit.FunSuite {
   example("ranking")
   example("json")
 
-  program("main.lam", "result = Just(9)\n")
+  program(
+    "main.lam",
+    """v + v = <2, 4>
+      |double = <2, 4>, 42, abab
+      |equal = true
+      |compute = Some(9), None
+      |classify = [zero, negative, small, large]
+      |squares = [1, 4, 9, 16], sum = 30
+      |dot = 100
+      |""".stripMargin
+  )
   // 失敗したテストの番号が終了コードになる
   program("stdlib_test.lam", "")
   program("src/test/lam/traverse.lam", "6\n-1\n7\n-1\n6\n-7\n4\n100\n-1\n")

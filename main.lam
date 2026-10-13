@@ -1,57 +1,74 @@
-import "stdlib/operators"
-import "stdlib/functor"
+// サンプルプログラム: 標準ライブラリを使った小さな一巡り。
+// ./run.sh でコンパイルして実行する（期待する出力は EndToEndSuite に書いてある）。
 
-let printStr: foreign.C.String → i32 = foreign[foreign.C.String → i32] printf
-let intToStr: i32 → foreign.C.String = foreign[i32 → foreign.C.String] int_to_string
+import "std/prelude"
 
-let identity[a](x: a): a = x
+// ---- 自分の型に演算子を定義する ----
+//
+// a + b は「+ に宣言された関数 add に、a の型を渡したもの」の呼び出し。
+// std/operators が operator + = add と宣言しているので、Add を実装すれば + が使える。
 
-data Maybe[a] = { Nothing, Just(a) }
+data Vec = { MkVec(i32)(i32) }
 
-trait Show[a] {
-  def show(x: a): foreign.C.String
-}
-
-let printf[a](x: a): i32 with Show[a] = printStr(show[a](x))
-
-impl Show[i32] {
-  def show = intToStr
-}
-
-impl Show[foreign.C.String] {
-  def show = identity[foreign.C.String]
-}
-
-impl[a] Show[Maybe[a]] with Show[a] {
-  def show = λm: Maybe[a]. match m {
-    Nothing => "Nothing"
-    Just(x) => `Just({show[a](x)})`
+impl Add[Vec] {
+  def add(v: Vec)(w: Vec): Vec = match v {
+    MkVec(x1)(y1) => match w {
+      MkVec(x2)(y2) => MkVec(x1 + x2)(y1 + y2)
+    }
   }
 }
 
-trait Monad[m: * → *] {
-  def pure[a](x: a): m[a]
-  def flatMap[a][b](v: m[a])(f: a → m[b]): m[b]
-}
-
-impl Monad[Maybe] {
-  def pure[a](x: a): m[a] = Just[a](x)
-  def flatMap[a][b](m: Maybe[a])(f: a → Maybe[b]): Maybe[b] = match m {
-    Nothing => Nothing[b]
-    Just(x) => f(x)
+impl Eq[Vec] {
+  def eq(v: Vec)(w: Vec): bool = match Pair[Vec][Vec](v)(w) {
+    Pair(MkVec(x1)(y1))(MkVec(x2)(y2)) => x1 == x2 && y1 == y2
   }
 }
 
-let safeDiv(x: i32)(y: i32): Maybe[i32] =
-  if y == 0 then Nothing[i32] else Just[i32](x / y)
+impl Show[Vec] {
+  def show = λv: Vec. match v {
+    MkVec(x)(y) => `<{x}, {y}>`
+  }
+}
 
-let compute(): Maybe[i32] = context[Maybe] {
-  step1: i32 = 120 safeDiv 5;
+// 制約があれば、型変数にも演算子を使える
+let double[a](x: a): a with Add[a] = x + x
+
+// ---- context: 失敗しうる計算をつなぐ ----
+
+let safeDiv(x: i32)(y: i32): Option[i32] =
+  if y == 0 then None[i32] else Some[i32](x / y)
+
+let compute(divisor: i32): Option[i32] = context[Option] {
+  step1: i32 = 120 safeDiv divisor;
   step2: i32 = step1 safeDiv 3;
   step2 + 1
 }
 
+// ---- パターン: 入れ子・リテラル・条件 ----
+
+let classify(n: i32): String = match n {
+  0 => "zero"
+  _ if n < 0 => "negative"
+  1 | 2 | 3 => "small"
+  _ => "large"
+}
+
+rec let sumPairs(xs: List[Pair[i32][i32]]): i32 = match xs {
+  Nil => 0
+  Cons(Pair(a)(b))(rest) => a * b + sumPairs(rest)
+}
+
 let main(): i32 = {
-  printf[foreign.C.String](`result = {compute()}\n`);
-  0
+  let v: Vec = MkVec(1)(2) in
+  let numbers: List[i32] = range(1)(5) in
+  let squares: List[i32] = map[List][i32][i32](λn: i32. n * n)(numbers) in {
+    println(`v + v = {v + v}`);
+    println(`double = {double[Vec](v)}, {double[i32](21)}, {double[String]("ab")}`);
+    println(`equal = {v + v == double[Vec](v)}`);
+    println(`compute = {compute(5)}, {compute(0)}`);
+    println(`classify = {map[List][i32][String](classify)(Cons[i32](0)(Cons[i32](-4)(Cons[i32](2)(Cons[i32](9)(Nil[i32])))))}`);
+    println(`squares = {squares}, sum = {foldLeft[List][i32][i32](λacc: i32. λn: i32. acc + n)(0)(squares)}`);
+    println(`dot = {sumPairs(zip[i32][i32](numbers)(squares))}`);
+    0
+  }
 }

@@ -98,7 +98,7 @@ src/test/scala/   テスト（munit）
 stdlib/           標準ライブラリ（import "std/..." で解決）
 runtime/ffi.c     foreign で参照する C 関数の実装
 benchmarks/       フィボナッチによる他言語比較
-main.lam          サンプルプログラム（trait / context / 文字列埋め込み）
+main.lam          サンプルプログラム（演算子の trait / context / パターン / 文字列埋め込み）
 examples/         まとまった量のサンプル
   calculator.lam    式の電卓（module の中の構文解析器、相互再帰、パターン、context、デフォルトメソッド）
   transformer.lam   モナド変換子（高階カインド、量化されたスーパークラス）
