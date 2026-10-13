@@ -103,4 +103,6 @@ main.lam          サンプルプログラム（trait / context / 文字列埋�
 examples/         まとまった量のサンプル
   calculator.lam    式の電卓（module の中の構文解析器、相互再帰、パターン、context、デフォルトメソッド）
   transformer.lam   モナド変換子（高階カインド、量化されたスーパークラス）
+  ranking.lam       成績の集計（順序の辞書を作って summon / (with d) / using で差し替える、入れ子の module、derive）
+  json.lam          JSON 風の値の読み書き（リストや組を通した再帰、文字列、入れ子パターン、Option の context）
 ```

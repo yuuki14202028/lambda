@@ -1,0 +1,15 @@
+[145, 145, 160, 160]
+[160, 160, 145, 145]
+by name:
+[alice (85, 75), bob (50, 95), carol (70, 90), dave (85, 60)]
+by total, highest first:
+[alice (85, 75), carol (70, 90), bob (50, 95), dave (85, 60)]
+by math (highest first), then by name:
+[alice (85, 75), dave (85, 60), carol (70, 90), bob (50, 95)]
+best in english:
+Some(bob (50, 95))
+totals:
+[carol: 160, alice: 160, dave: 145, bob: 145]
+erin: true
+Some([70, 85, 85, 50])
+None

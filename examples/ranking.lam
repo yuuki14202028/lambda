@@ -1,0 +1,114 @@
+// 成績の集計: 並べ替えの順序を、インスタンスの辞書として作って差し替える。
+//
+// 整列の関数は Ord[a] を要求するだけで、どの順序で並べるかは呼び出し側が決める:
+// 解決に任せる（数の昇順）、辞書を渡す（(with d)）、式の中で差し替える（using d in …）。
+
+import "std/prelude"
+
+// ---- 順序の辞書を作る道具 ----
+
+module Ordering {
+  // 「前に来るか」の関数から Ord の辞書を作る。trait の辞書は、スーパークラスの辞書とメソッドを並べたデータ
+  let fromBefore[a](before: a → a → bool): Ord[a] =
+    rec let same(x: a)(y: a): bool = !before(x)(y) && !before(y)(x) in
+    MkOrd[a](MkEq[a](same)(λx: a. λy: a. !same(x)(y)))(before)(λx: a. λy: a. !before(y)(x))(λx: a. λy: a. before(y)(x))(λx: a. λy: a. !before(x)(y))
+
+  // 値から取り出したキーの順序で比べる
+  let by[a][k](key: a → k): Ord[a] with Ord[k] = fromBefore[a](λx: a. λy: a. lt[k](key(x))(key(y)))
+
+  // 逆順
+  let reversed[a](order: Ord[a]): Ord[a] = fromBefore[a](λx: a. λy: a. lt[a](with order)(y)(x))
+
+  // 先に first で比べ、同じなら second で比べる
+  let thenBy[a](first: Ord[a])(second: Ord[a]): Ord[a] = fromBefore[a](λx: a. λy: a.
+    lt[a](with first)(x)(y) || (!lt[a](with first)(y)(x) && lt[a](with second)(x)(y)))
+}
+
+// ---- 整列 ----
+
+module Sorting {
+  // 整列済みのリストに 1 つ挿入する
+  private rec let insert[a](x: a)(sorted: List[a]): List[a] with Ord[a] = match sorted {
+    Nil => Cons[a](x)(Nil[a])
+    Cons(y)(rest) if lt[a](x)(y) => Cons[a](x)(sorted)
+    Cons(y)(rest) => Cons[a](y)(insert[a](x)(rest))
+  }
+
+  let sort[a](xs: List[a]): List[a] with Ord[a] = foldRight[List][a][List[a]](insert[a])(Nil[a])(xs)
+
+  // いちばん前に来るもの
+  let first[a](xs: List[a]): Option[a] with Ord[a] = head[a](sort[a](xs))
+}
+
+// ---- 成績 ----
+
+module Grades {
+  data Student = { MkStudent(String)(i32)(i32) }
+
+  let name(s: Student): String = match s { MkStudent(n)(_)(_) => n }
+  let math(s: Student): i32 = match s { MkStudent(_)(m)(_) => m }
+  let english(s: Student): i32 = match s { MkStudent(_)(_)(e) => e }
+  let total(s: Student): i32 = math(s) + english(s)
+
+  impl Show[Student] {
+    def show = λs: Student. `{name(s)} ({math(s)}, {english(s)})`
+  }
+
+  // 点数は 0 から 100 まで
+  let valid(score: i32): Option[i32] = if score >= 0 && score <= 100 then Some[i32](score) else None[i32]
+
+  module Summary {
+    // 名前と、何かの値（合計や平均など）の組。値について map / fold / traverse できる
+    data Scored[a] = { MkScored(String)(a) }
+
+    derive Functor[Scored]
+    derive Foldable[Scored]
+    derive Traversable[Scored]
+
+    impl[a] Show[Scored[a]] with Show[a] {
+      def show = λs: Scored[a]. match s { MkScored(label)(value) => `{label}: {value}` }
+    }
+
+    let of(s: Student): Scored[i32] = MkScored[i32](name(s))(total(s))
+  }
+}
+
+open Ordering
+open Sorting
+open Grades
+
+let students: List[Student] =
+  Cons[Student](MkStudent("carol")(70)(90))(
+  Cons[Student](MkStudent("alice")(85)(75))(
+  Cons[Student](MkStudent("dave")(85)(60))(
+  Cons[Student](MkStudent("bob")(50)(95))(Nil[Student]))))
+
+let byName: Ord[Student] = by[Student][String](name)
+let byMath: Ord[Student] = by[Student][i32](math)
+let byTotal: Ord[Student] = by[Student][i32](total)
+
+let main(): i32 = {
+  // 解決に任せる: 数の昇順
+  display[List[i32]](sort[i32](map[List][Student][i32](total)(students)));
+  // 辞書を渡す: 数の降順
+  display[List[i32]](sort[i32](with reversed[i32](summon[Ord[i32]]))(map[List][Student][i32](total)(students)));
+
+  // Student にはインスタンスがないので、順序はその場で決める
+  println("by name:");
+  display[List[Student]](sort[Student](with byName)(students));
+  println("by total, highest first:");
+  display[List[Student]](using reversed[Student](byTotal) in sort[Student](students));
+  println("by math (highest first), then by name:");
+  display[List[Student]](using thenBy[Student](reversed[Student](byMath))(byName) in sort[Student](students));
+  println("best in english:");
+  display[Option[Student]](first[Student](with reversed[Student](by[Student][i32](english)))(students));
+
+  // 入れ子の module の型と、導出したインスタンス
+  println("totals:");
+  display[List[Summary.Scored[i32]]](map[List][Student][Summary.Scored[i32]](Summary.of)(students));
+  display[Summary.Scored[bool]](map[Summary.Scored][i32][bool](λt: i32. t >= 150)(Summary.of(MkStudent("erin")(80)(80))));
+  // 点数の検査: 1 つでも範囲の外なら全体が None
+  display[Option[List[i32]]](traverse[List][Option][i32][i32](valid)(map[List][Student][i32](math)(students)));
+  display[Option[Summary.Scored[i32]]](traverse[Summary.Scored][Option][i32][i32](valid)(Summary.of(MkStudent("frank")(90)(90))));
+  0
+}

@@ -57,6 +57,8 @@ class EndToEndSuite extends munit.FunSuite {
 
   example("calculator")
   example("transformer")
+  example("ranking")
+  example("json")
 
   program("main.lam", "result = Just(9)\n")
   // 失敗したテストの番号が終了コードになる

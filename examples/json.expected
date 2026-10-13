@@ -1,0 +1,9 @@
+null  (total 0)
+[1, 2, [3, 4], true]  (total 10)
+{"name": "lambda", "size": 42}  (total 42)
+{"point": {"x": 3, "y": 4}, "tags": ["a", "b"], "ok": false}  (total 7)
+cannot read: [1, 2
+cannot read: {"a": }
+cannot read: [1] 2
+Some(4)
+None
