@@ -75,7 +75,7 @@ given HTraverse[AST] with {
       f(alias).map(AST.TopType(v, params, _))
     case AST.TopData(v, params, ctors) =>
       ctors.traverse { c =>
-        c.fields.traverse(field => f(field)).map(fs => DataConstructor[S](c.name, fs))
+        c.fields.traverse(field => f(field)).map(fs => DataConstructor[S](c.name, fs, c.fieldNames))
       }.map(AST.TopData(v, params, _))
     case AST.TopTrait(v, params, supers, methods) =>
       val supersG = supers.traverse(traverseConstraint(_)(f))
@@ -117,12 +117,12 @@ given HTraverse[AST] with {
       (f(alias), f(body)).mapN(AST.TypeLet(v, params, _, _))
     case AST.DataLet(v, params, ctors, body) =>
       val ctorsG = ctors.traverse { c =>
-        c.fields.traverse(field => f(field)).map(fs => DataConstructor[S](c.name, fs))
+        c.fields.traverse(field => f(field)).map(fs => DataConstructor[S](c.name, fs, c.fieldNames))
       }
       (ctorsG, f(body)).mapN(AST.DataLet(v, params, _, _))
     case AST.DataLetRec(datas, body) =>
       val datasG = datas.traverse { d =>
-        d.constructors.traverse(c => c.fields.traverse(field => f(field)).map(fs => DataConstructor[S](c.name, fs)))
+        d.constructors.traverse(c => c.fields.traverse(field => f(field)).map(fs => DataConstructor[S](c.name, fs, c.fieldNames)))
           .map(DataBinding[S](d.variable, d.params, _))
       }
       (datasG, f(body)).mapN(AST.DataLetRec(_, _))

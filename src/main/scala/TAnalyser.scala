@@ -723,7 +723,8 @@ object TAnalyser {
       variable: TypeVariable,
       params: Seq[(TypeVariable, Kind)],
       constructors: Seq[DataConstructor[TC]],
-      peers: Seq[DataHead]
+      peers: Seq[DataHead],
+      local: Boolean // 式の中の data（module を持たないので、名前付きフィールドは書けない）
   ): Check[(Seq[DataConstructor[TypeRec]], Env => Env)] = {
     val owner = DeclRef.DataDecl(variable)
     val names = constructors.map(_.name)
@@ -736,7 +737,11 @@ object TAnalyser {
         names.forall(name => !env.values.contains(name) && !env.constructors.contains(name)),
         CompileError.MemberAlreadyDefined(owner, MemberKind.ConstructorMember)
       )
-      typed <- constructors.traverse(c => c.fields.traverse(_.local(fieldScope(variable, params, peers))).map(DataConstructor[TypeRec](c.name, _)))
+      fieldNames = constructors.flatMap(_.fieldNames.flatten)
+      _ <- guard(fieldNames.distinct.length == fieldNames.length, CompileError.DuplicateMembers(owner, MemberKind.FieldMember))
+      _ <- guard(fieldNames.isEmpty || !local, CompileError.FieldNamesNotAllowed(variable, FieldNamesReason.LocalData))
+      _ <- guard(fieldNames.isEmpty || constructors.length == 1, CompileError.FieldNamesNotAllowed(variable, FieldNamesReason.SeveralConstructors))
+      typed <- constructors.traverse(c => c.fields.traverse(_.local(fieldScope(variable, params, peers))).map(DataConstructor[TypeRec](c.name, _, c.fieldNames)))
       dataDef <- dataOf(variable, params, typed, peers)
       _ <- guard(
         peers.nonEmpty || !dataDef.constructors.exists(_.fields.exists(field => containsDataApplicationOf(field, variable))),
@@ -1018,7 +1023,7 @@ object TAnalyser {
     } yield typeLetT(variable, params, typeOf(typedBody), typedAlias, typedBody)
 
     case AST.DataLet(variable, params, constructors, body) => for {
-      checked <- checkData(variable, params, constructors, peers = Seq.empty)
+      checked <- checkData(variable, params, constructors, peers = Seq.empty, local = true)
       (typedConstructors, extend) = checked
       typedBody <- body.local(extend)
     } yield dataLetT(variable, params, typeOf(typedBody), typedConstructors, typedBody)
@@ -1029,7 +1034,7 @@ object TAnalyser {
         // 先に宣言したメンバーの定義を見せながら順に検査する。名前の重複はここで見つかる
         checked <- datas.foldLeft(Check.pure((Seq.empty[DataBinding[TypeRec]], identity[Env]))) { (acc, d) =>
           acc.flatMap { case (done, extend) =>
-            checkData(d.variable, d.params, d.constructors, peers).local(extend).map { case (typedConstructors, define) =>
+            checkData(d.variable, d.params, d.constructors, peers, local = true).local(extend).map { case (typedConstructors, define) =>
               (done :+ DataBinding[TypeRec](d.variable, d.params, typedConstructors), extend.andThen(define))
             }
           }
@@ -1389,13 +1394,39 @@ object TAnalyser {
     env <- ask
     name <- memberType(variable)
     scope = (e: Env) => visible.foldLeft(e)(_.exportType(_))
-    members = constructors.map(c => DataConstructor[TC](Variable(env.qualify(c.name.name)), c.fields.map(_.local(scope))))
-    checked <- checkData(name, params, members, peers)
+    members = constructors.map(c => DataConstructor[TC](Variable(env.qualify(c.name.name)), c.fields.map(_.local(scope)), c.fieldNames))
+    checked <- checkData(name, params, members, peers, local = false)
     (typedConstructors, extend) = checked
     result <- extending(topDataT(name, params, typedConstructors)) { e =>
-      constructors.foldLeft(extend(e).exportType(variable))((acc, c) => acc.exportValue(c.name))
+      val defined = constructors.foldLeft(extend(e).exportType(variable))((acc, c) => acc.exportValue(c.name))
+      val accessors = fieldAccessors(name, typedConstructors)
+      if (accessors.isEmpty) defined
+      else {
+        // アクセサは型の module（型と同じ名前の module）の公開メンバー。module は後から開いてメンバーを足せる
+        val module = accessors.foldLeft(defined.modules.getOrElse(name.name, Names.empty)) { case (names, (field, accessor)) => names.withValue(field, accessor) }
+        defineAccessors(name, typedConstructors)(defined).copy(
+          modules = defined.modules + (name.name -> module),
+          scope = defined.scope.withModule(variable.name, name.name),
+          members = defined.members.withModule(variable.name, name.name)
+        )
+      }
     }
   } yield result
+
+  // 名前付きフィールドのアクセサ: フィールドの名前 → 型の module の中の完全な名前
+  private def fieldAccessors(owner: TypeVariable, constructors: Seq[DataConstructor[TypeRec]]): Seq[(String, Variable)] =
+    constructors.flatMap(_.fieldNames.flatten).map(field => field -> fieldAccessorName(owner, field))
+
+  // アクセサの型 ∀ā. T[ā] → フィールドの型 を登録する（フィールドの型は、登録済みのデータ型の定義から読む）
+  private def defineAccessors(owner: TypeVariable, constructors: Seq[DataConstructor[TypeRec]])(env: Env): Env =
+    env.dataTypes.get(owner).fold(env) { dataDef =>
+      val receiver = applyTypeConstructor(owner, dataDef.paramVars.map(typeVarT))
+      val typed = for {
+        (written, definition) <- constructors.zip(dataDef.constructors)
+        case (Some(field), fieldType) <- written.names.zip(definition.fields)
+      } yield fieldAccessorName(owner, field) -> dataDef.params.foldRight(arrowT(receiver, fieldType)) { case ((v, k), body) => forallTypeT(v, k, body) }
+      env.copy(values = env.values ++ typed)
+    }
 
   // ---- impl ----
 
@@ -1628,14 +1659,14 @@ object TAnalyser {
     case AST.TopLet(variable, types, _) => (expandChecked(types), ask).mapN((t, env) => env.withValue(variable, t))
     case AST.TopType(variable, params, alias) => (aliasOf(params, alias), ask).mapN((definition, env) => env.withAlias(variable, definition))
     case AST.TopData(variable, params, constructors) =>
-      (dataOf(variable, params, constructors, peers = Seq.empty), ask).mapN((dataDef, env) => defineData(variable, dataDef)(env))
+      (dataOf(variable, params, constructors, peers = Seq.empty), ask).mapN((dataDef, env) => defineAccessors(variable, constructors)(defineData(variable, dataDef)(env)))
     case AST.TopRec(decls) =>
       val peers = decls.map(_.project).collect { case AST.TopData(variable, params, _) => (variable, params) }
       decls.foldLeft(ask) { (sealedSoFar, member) =>
         sealedSoFar.flatMap { env =>
           (member.project match {
             case AST.TopData(variable, params, constructors) =>
-              (dataOf(variable, params, constructors, peers), ask).mapN((dataDef, e) => defineData(variable, dataDef)(e))
+              (dataOf(variable, params, constructors, peers), ask).mapN((dataDef, e) => defineAccessors(variable, constructors)(defineData(variable, dataDef)(e)))
             case _ => sealDecl(member)
           }).local((_: Env) => env)
         }
@@ -1685,6 +1716,15 @@ object TAnalyser {
     before <- StateT.get[EitherS, Env]
     _ <- StateT.liftF[EitherS, Env, Unit](Either.cond(before.path.nonEmpty, (), CompileError.ModifierOutsideModule(modifier)))
     typed <- checkDecl(inner)
+    _ <- StateT.liftF[EitherS, Env, Unit]((modifier, typed.project) match {
+      case (Modifier.Opaque, AST.TopData(variable, _, constructors)) if constructors.exists(_.named) =>
+        Left(CompileError.FieldNamesNotAllowed(variable, FieldNamesReason.OpaqueData))
+      case (Modifier.Opaque, AST.TopRec(decls)) =>
+        decls.map(_.project).collectFirst {
+          case AST.TopData(variable, _, constructors) if constructors.exists(_.named) => CompileError.FieldNamesNotAllowed(variable, FieldNamesReason.OpaqueData)
+        }.toLeft(())
+      case _ => Right(())
+    })
     _ <- StateT.modify[EitherS, Env] { after =>
       (modifier, typed.project) match {
         case (Modifier.Private, _) => after.copy(members = before.members, privates = after.privates ++ after.members.since(before.members))

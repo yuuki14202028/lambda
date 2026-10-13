@@ -203,6 +203,32 @@ let unit: Shape = Rectangle(1)(1)
 let boxed: Box[i32] = MkBox[i32](42)
 ```
 
+### 名前付きフィールド
+
+構成子が 1 つの data では、構成子の引数に名前を付けられます（関数の引数と同じ書き方です）。名前を付けたフィールドごとに、その値を読む関数が**型の module** にできます。
+
+```lam
+data Student = { MkStudent(name: String)(math: i32)(english: i32) }
+
+// 構築は位置で書く
+let alice: Student = MkStudent("Alice")(80)(90)
+
+// alice.math は Student.math(alice)（ドット記法は 9 章）
+let total(s: Student): i32 = s.math + s.english
+
+// フィールドの関数は普通の関数なので、そのまま渡せる
+let mathScores(students: List[Student]): List[i32] = map[List][Student][i32](Student.math)(students)
+
+// 型の module に関数を足すと、同じ書き方で呼べる
+module Student {
+  let passed(s: Student): bool = s.math >= 60 && s.english >= 60
+}
+
+let ok: bool = alice.passed
+```
+
+名前のないフィールドと混ぜられ、型引数を持つ data（`data Box[a] = { MkBox(content: a) }`）や `rec data` でも使えます。パターンは今までどおり位置で書きます（`MkStudent(n)(_)(_)`）。構成子が複数ある data、式の中の data、`opaque data` には書けません。
+
 ### match
 
 `match` は値を構成子で場合分けします。すべての値がどれかの分岐に当たらなければコンパイルエラーで、当たらない値の例が示されます。

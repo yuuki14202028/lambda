@@ -1,0 +1,4 @@
+module M {
+  opaque data Point = { MkPoint(x: i32)(y: i32) }
+}
+let main(): i32 = 0

@@ -25,6 +25,7 @@ clang -arch arm64 build/out.s runtime/ffi.c -o build/out   # 手動リンク
 ```
 ParserAST (cats-parse) → ImportResolver → TAnalyser (型検査)
   → ModuleDesugar (module を平らな宣言列へ戻し、opaque type を表現へ読み替える)
+  → RecordDesugar (名前付きフィールドのアクセサを生成する)
   → Deriver (derive 宣言を型付き TopImpl へ合成) → ContextDesugar (context ブロックを bind/ret へ脱糖)
   → PatternDesugar (match と束縛のパターンを、構成子 1 段の分岐と if / let へ展開する)
   → SelectDesugar (ドット記法 x.f を、型の module の関数の適用へ展開する)
@@ -71,6 +72,10 @@ trait `C` は辞書のデータ型でもあり（`Env.dataTypes` に登録）、
 
 `x.f[T]` は「`x` の型の module にある関数 `f`」の呼び出し（Lean 4 の一般化フィールド記法と同じ考え方）。型の module は型と同じ完全な名前の module で（`moduleOfType`。組み込みの型はその名前、`foreign.C.String` は `String`。型変数・関数の型にはない）、メンバーは `Env.moduleMember` で引く。関数の型 `∀ā. [制約]* → P → …` の `P` を受け手の型と見比べて（`matchType`。形を上から比べるだけで推論はしない）`P` に現れる型引数を決め、それが `ā` の先頭に並んでいることを確かめる。残りの型引数は名前の直後に書かれたもの（`Select.typeArgs`）で、数が合わなければエラー。全部を適用して制約を解決した関数を `Select.resolved` に記録し、SelectDesugar が受け手への適用に展開する。
 パーサは、式の続きの `.f[T]` を `Select` に、`.` を含む名前 `a.b.c[T]` を `Path` に読む。`Path` は型検査が「値を指すいちばん短い前半」を値として読み、残りを `Select` にする（`checkPath`。値は同名の module を隠す。前半のどれも値でなければ、全体を修飾された名前として扱う）。型検査後の AST に `Path` は残らない。
+
+### 名前付きフィールド
+
+構成子が 1 つの data は、構成子の引数に名前を付けられる（`MkStudent(name: String)(math: i32)`。`DataConstructor.fieldNames`）。名前付きフィールドは、型の module のメンバーとしてアクセサ `Student.name: ∀ā. Student[ā] → フィールドの型` を持つ。型検査（`checkTopData`）がアクセサの名前と型を Env に登録し（`defineAccessors`。module を閉じるときの読み直しでも同じ関数を使う）、型の module を作る（または足す）。`s.name` はドット記法の規則で `Student.name(s)` になるので、レコード専用の解決はない。アクセサの本体は RecordDesugar（ModuleDesugar の直後）が `Λā. λr. match r { C(x̄) => xᵢ }` として宣言の後ろに生成する。構築とパターンは位置のまま。構成子が複数の data・式の中の data・opaque data には書けない（`FieldNamesNotAllowed`）。
 
 ### match のパターン
 

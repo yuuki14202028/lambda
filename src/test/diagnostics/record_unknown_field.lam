@@ -1,0 +1,4 @@
+data Point = { MkPoint(x: i32)(y: i32) }
+let p: Point = MkPoint(1)(2)
+let n: i32 = p.z
+let main(): i32 = 0

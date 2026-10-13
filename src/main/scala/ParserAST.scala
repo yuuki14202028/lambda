@@ -239,7 +239,11 @@ object ParserAST {
   }.indexed
 
   private lazy val dataConstructorP: Parser[DataConstructor[IndexedRec]] = {
-    (identifier.map(Variable.apply) ~ typeP.parens.rep0).map(DataConstructor.apply)
+    // フィールドには名前を付けられる: MkStudent(name: String)(math: i32)
+    val field = (((identifier <* spaced(':')).backtrack.map(Option(_)) ~ typeP) | typeP.map(t => (Option.empty[String], t))).parens
+    (identifier.map(Variable.apply) ~ field.rep0).map { case (name, fields) =>
+      DataConstructor[IndexedRec](name, fields.map(_._2), if (fields.exists(_._1.nonEmpty)) fields.map(_._1) else Nil)
+    }
   }
 
   private lazy val dataBinding: Parser[(TypeVariable, Seq[(TypeVariable, Kind)], Seq[DataConstructor[IndexedRec]])] = {

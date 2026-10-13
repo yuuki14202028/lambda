@@ -44,7 +44,7 @@ private def showRecBindings(bindings: Seq[RecBinding[ShowResult]]): String = {
 
 private def showData(v: TypeVariable, params: Seq[(TypeVariable, Kind)], constructors: Seq[DataConstructor[ShowResult]]): String = {
   val ctorText = constructors.map { ctor =>
-    val fields = ctor.fields.map(field => s"($field)").mkString
+    val fields = ctor.fields.zip(ctor.names).map { case (field, name) => s"(${name.fold("")(_ + ": ")}$field)" }.mkString
     s"| ${ctor.name.name}$fields"
   }.mkString(" ")
   s"data ${v.name}${params.map(showKindedParam).mkString} = $ctorText"

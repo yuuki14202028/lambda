@@ -1,0 +1,9 @@
+error: module `Point` has no member `z`
+ --> record_unknown_field.lam:3:14
+  |
+3 | let n: i32 = p.z
+  |              ^^^ this value has type `Point`
+  |
+  = note: `x.z` calls the function `Point.z`, because the type of `x` is `Point`
+  = help: define it in the module of the type: `module Point { let z… }`, or call the function directly
+  = help: similar names exist: `x`, `y`

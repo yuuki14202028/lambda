@@ -1,0 +1,8 @@
+error: data type `Shape` cannot have named fields
+ --> record_several_constructors.lam:1:1
+  |
+1 | data Shape = { Circle(radius: i32), Square(side: i32) }
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ this data type does not have exactly one constructor
+  |
+  = note: a named field `C(name: T)` generates the function `name` that reads the field from any value of the type, so the type must have one constructor
+  = help: remove the names and read the fields with `match`

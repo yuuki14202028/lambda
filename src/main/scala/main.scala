@@ -8,7 +8,7 @@ object Compiler {
    * PatternDesugar はその後に走る。演算子とドット記法は制約の根拠を含む関数呼び出しになるので、TraitEncoder より前 */
   def desugar(typed: TypeRec[AST.Program.type]): TypeRec[AST.Program.type] =
     ChurchEncoder.encode(TraitEncoder.encode(OperatorDesugar.desugar(SelectDesugar.desugar(
-      PatternDesugar.desugar(ContextDesugar.desugar(Deriver.desugar(ModuleDesugar.desugar(typed))))
+      PatternDesugar.desugar(ContextDesugar.desugar(Deriver.desugar(RecordDesugar.desugar(ModuleDesugar.desugar(typed)))))
     ))))
 
   /** ソースをアセンブリへコンパイルする。trace には脱糖前後のプログラムの表示が渡される */

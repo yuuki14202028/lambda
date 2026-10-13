@@ -34,13 +34,25 @@ enum NameKind {
   }
 }
 
+enum FieldNamesReason {
+  case SeveralConstructors, LocalData, OpaqueData
+
+  def shown: String = this match {
+    case SeveralConstructors => "it does not have exactly one constructor"
+    case LocalData => "it is declared inside an expression"
+    case OpaqueData => "it is opaque"
+  }
+}
+
 enum MemberKind {
   case ConstructorMember
   case MethodMember
+  case FieldMember
 
   def singular: String = this match {
     case ConstructorMember => "constructor"
     case MethodMember => "method"
+    case FieldMember => "field"
   }
 }
 
@@ -133,6 +145,8 @@ enum CompileError {
   case SelectNotApplicable(function: Variable, fnType: TypeRec[Type], receiverType: TypeRec[Type])
   case SelectTypeArguments(function: Variable, fnType: TypeRec[Type], expected: Int, actual: Int)
   case ModifierOutsideModule(modifier: Modifier)
+  // 名前付きフィールドを書けない data: 構成子が 1 つでない / 式の中の data / opaque data
+  case FieldNamesNotAllowed(data: TypeVariable, reason: FieldNamesReason)
   case MixedRecursiveGroup
   case NoConstraintToSatisfy(actual: TypeRec[Type])
   case NotADictionary(actual: TypeRec[Type])
@@ -334,6 +348,7 @@ enum CompileError {
     case NoConstraintToSatisfy(actual) => s"Cannot pass an instance with (with …): the expression has type ${actual.show}, which takes no instance"
     case MixedRecursiveGroup => "rec { } must contain declarations of one kind: let, data, or impl / derive"
     case ModifierOutsideModule(modifier) => s"${modifier.keyword} can only be used inside a module"
+    case FieldNamesNotAllowed(data, reason) => s"Data type ${data.name} cannot have named fields: ${reason.shown}"
     case AlreadyDefined(kind, name) => s"${kind.shown} $name is already defined"
     case ParamAlreadyDefined(owner) => s"${owner.shown} has a ${owner.paramNoun} that is already defined"
     case DuplicateParams(owner) => s"${owner.shown} has duplicate ${owner.paramNoun}s"

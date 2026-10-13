@@ -1,0 +1,61 @@
+// 名前付きフィールド: 構成子の引数に名前を付けると、型の module にフィールドを読む関数ができる。
+// 期待する出力は EndToEndSuite に書いてある。
+
+import "std/operators"
+import "std/list"
+
+let printInt: i32 → i32 = foreign[i32 → i32] print_int
+
+data Point = { MkPoint(x: i32)(y: i32) }
+
+// フィールドの関数は型の module のメンバー。同じ module に関数を足せる
+module Point {
+  let norm1(p: Point): i32 = p.x + p.y
+  let moved(p: Point)(dx: i32)(dy: i32): Point = MkPoint(p.x + dx)(p.y + dy)
+}
+
+// 型引数を持つ data。フィールドの型は、受け手の型から決まる
+data Tagged[a] = { MkTagged(tag: i32)(value: a) }
+
+// 名前のないフィールドと混ぜられる
+data Line = { MkLine(from: Point)(Point)(width: i32) }
+
+// rec の組でも使える
+rec {
+  data Tree = { Node(label: i32)(children: Forest) }
+  data Forest = { Empty, Trees(Tree)(Forest) }
+}
+
+rec {
+  let treeSize(t: Tree): i32 = 1 + forestSize(t.children)
+  let forestSize(f: Forest): i32 = match f {
+    Empty => 0
+    Trees(t)(rest) => treeSize(t) + forestSize(rest)
+  }
+}
+
+module Geometry {
+  data Circle = { MkCircle(center: Point)(radius: i32) }
+  let unit: Circle = MkCircle(MkPoint(0)(0))(1)
+}
+
+let main(): i32 = {
+  let p: Point = MkPoint(3)(4) in {
+    printInt(p.x);
+    printInt(p.y);
+    // 関数として書いてもよい
+    printInt(Point.x(p));
+    printInt(p.norm1);
+    printInt(p.moved(10)(20).y);
+    printInt(MkTagged[Point](7)(p).value.x);
+    printInt(MkTagged[bool](7)(true).tag);
+    printInt(MkLine(p)(MkPoint(0)(0))(2).from.y);
+    printInt(MkLine(p)(MkPoint(0)(0))(2).width);
+    printInt(treeSize(Node(1)(Trees(Node(2)(Empty))(Trees(Node(3)(Empty))(Empty)))));
+    printInt(Node(9)(Empty).label);
+    printInt(Geometry.unit.radius + Geometry.unit.center.x);
+    // 位置でのパターンは今までどおり
+    printInt(match p { MkPoint(a)(b) => a * b });
+    0
+  }
+}

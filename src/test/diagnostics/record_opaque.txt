@@ -1,0 +1,8 @@
+error: data type `M.Point` cannot have named fields
+ --> record_opaque.lam:2:3
+  |
+2 |   opaque data Point = { MkPoint(x: i32)(y: i32) }
+  |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ this data type is opaque
+  |
+  = note: a named field generates a public function that reads the field, which would show the representation that `opaque` hides
+  = help: remove the names and write the functions the module should offer

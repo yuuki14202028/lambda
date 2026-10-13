@@ -298,6 +298,22 @@ object Diagnostic {
         notes = Seq(
           s"${name(function.name)} has type ${ty(fnType)}",
           "the type parameters that appear in the type of the first argument are read from the value before the dot; the remaining ones are written after the name: `x.f[T]`"))
+      case FieldNamesNotAllowed(data, reason) =>
+        val (label, note, help) = reason match {
+          case FieldNamesReason.SeveralConstructors => (
+            "this data type does not have exactly one constructor",
+            "a named field `C(name: T)` generates the function `name` that reads the field from any value of the type, so the type must have one constructor",
+            "remove the names and read the fields with `match`")
+          case FieldNamesReason.LocalData => (
+            "this data type is declared inside an expression",
+            "a named field generates a function in the module of the type, and a data type declared with `data … in` has no module",
+            "declare the data type at the top level, or remove the names")
+          case FieldNamesReason.OpaqueData => (
+            "this data type is opaque",
+            "a named field generates a public function that reads the field, which would show the representation that `opaque` hides",
+            "remove the names and write the functions the module should offer")
+        }
+        Description(s"data type ${name(data.name)} cannot have named fields", label, notes = Seq(note), helps = Seq(help))
       case ModifierOutsideModule(modifier) => Description(
         s"${name(modifier.keyword)} is only allowed inside a module",
         "this declaration is not inside a `module { … }`",

@@ -96,7 +96,11 @@ enum Modifier {
 
 // rec let / rec { let …  let … } の束縛。値からは組の全員が見える
 case class RecBinding[R[_]](variable: Variable, types: R[Type], value: R[Expr])
-case class DataConstructor[R[_]](name: Variable, fields: Seq[R[Type]])
+// fieldNames は fields と同じ長さ（名前のないフィールドは None）。名前付きのフィールド C(name: T) は、型の module にアクセサを生成する
+case class DataConstructor[R[_]](name: Variable, fields: Seq[R[Type]], fieldNames: Seq[Option[String]] = Nil) {
+  def names: Seq[Option[String]] = if (fieldNames.isEmpty) fields.map(_ => None) else fieldNames
+  def named: Boolean = fieldNames.exists(_.nonEmpty)
+}
 case class MatchCase[R[_]](constructor: Variable, binders: Seq[Variable], body: R[Expr])
 
 /** match のパターン。パーサは引数のない名前を Constructor(x, Nil, Nil) として読み、
@@ -770,6 +774,9 @@ def dataTypeApplication[D]
     case _ => Left(CompileError.NotADataType(t))
   }
 }
+
+// 名前付きフィールド field のアクセサ（型 owner の module のメンバー）
+def fieldAccessorName(owner: TypeVariable, field: String): Variable = Variable(s"${owner.name}.$field")
 
 def applyTypeConstructor(head: TypeVariable, args: Seq[TypeRec[Type]]): TypeRec[Type] =
   args.foldLeft(typeVarT(head)) { (acc, arg) => typeAppT(acc, arg) }
