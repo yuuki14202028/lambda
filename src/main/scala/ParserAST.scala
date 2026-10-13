@@ -136,10 +136,24 @@ object ParserAST {
     param.rep0
   }
 
+  // 束縛に書けるパターン: 引数のある構成子か _（引数のない名前は、これまでどおり変数の束縛）
+  private def destructuring(pattern: Pattern[IndexedRec]): Boolean = pattern match {
+    case Pattern.Located(_, inner) => destructuring(inner)
+    case Pattern.Constructor(_, args, _) => args.nonEmpty
+    case Pattern.Wildcard() => true
+    case _ => false
+  }
+
+  private lazy val bindingPatternP: Parser[Pattern[IndexedRec]] = Parser.defer(patternP).filter(destructuring)
+
+  // let パターン: T = e
+  private lazy val patternBinding: Parser[((Pattern[IndexedRec], IndexedRec[Type]), IndexedRec[Expr])] =
+    (("let" -+> bindingPatternP) ~ typeAnnP).backtrack ~ valueP
+
   private lazy val letExprP: Parser[IndexedRec[Expr]] = {
-    Parser.defer((binding ~ inBody).map {
-      case ((v, t, value), body) => AST.Let(v, t, value, body)
-    }).indexed
+    val destructured = (patternBinding ~ inBody).map { case (((pattern, types), value), body) => AST.LetPattern(pattern, types, value, body) }
+    val plain = Parser.defer(binding ~ inBody).map { case ((v, t, value), body) => AST.Let(v, t, value, body) }
+    (destructured | plain).indexed
   }
 
   // rec の後には、宣言 1 つか { } で囲んだ宣言の組を書く
@@ -429,7 +443,13 @@ object ParserAST {
       ContextStep.Let[IndexedRec](name, types, value)
     }
     val recLets: Parser[ContextStep[IndexedRec]] = (recBindings <* spaced(';')).backtrack.map(ContextStep.Rec[IndexedRec](_))
-    val bindings = (recLets | pureLet | monadicBinding).rep0
+    val patternLet: Parser[ContextStep[IndexedRec]] = (patternBinding <* spaced(';')).backtrack.map { case ((pattern, types), value) =>
+      ContextStep.LetPattern[IndexedRec](pattern, types, value)
+    }
+    val patternBind: Parser[ContextStep[IndexedRec]] = (bindingPatternP ~ typeAnnP ~ valueP <* spaced(';')).backtrack.map {
+      case ((pattern, types), value) => ContextStep.BindPattern[IndexedRec](pattern, types, value)
+    }
+    val bindings = (recLets | patternLet | pureLet | patternBind | monadicBinding).rep0
     val body = '{' -*> (bindings.with1 ~ Parser.defer(expr)) <*- '}'
     (monad ~ (sp.with1 *> body)).map { case (m, (bs, result)) => AST.Context(m, bs, result, None) }.indexed
   }

@@ -705,6 +705,24 @@ object TAnalyser {
     } yield result
   }
 
+  // 束縛のパターン: すべての値に当たらなければならない（当たらない値があれば、その例を示す）
+  private def checkBindingPattern(pattern: Pattern[TC], valueType: TypeRec[Type]): Check[(Pattern[TypeRec], Seq[(Variable, TypeRec[Type])])] = {
+    val span = pattern match {
+      case Pattern.Located(found, _) => Some(found)
+      case _ => None
+    }
+    locatedAt(span)(for {
+      checked <- checkPattern(pattern, valueType)
+      (typed, bindings) = checked
+      names = bindings.map(_._1)
+      _ <- guard(names.distinct.length == names.length, CompileError.AlreadyDefined(NameKind.VariableName, names.diff(names.distinct).head.name))
+      _ <- lift(PatternDesugar.check(valueType, Seq(PatternCase[TypeRec](typed, None, unitLitT(unitTypeT)))).left.map {
+        case CompileError.NonExhaustivePatterns(example, _) => CompileError.RefutablePattern(example)
+        case other => other
+      })
+    } yield checked)
+  }
+
   // context[M] が使うメソッド参照 name[M]（M の制約もここで解決する）
   private def contextMethod(name: Variable, monad: TypeRec[Type]): Check[TypeRec[Expr]] = for {
     env <- ask
@@ -818,6 +836,14 @@ object TAnalyser {
       (typedTypes, typedValue, declaredType) = binding
       typedBody <- body.local((e: Env) => e.withValue(variable, declaredType))
     } yield letT(variable, typeOf(typedBody), typedTypes, typedValue, typedBody)
+
+    case AST.LetPattern(pattern, types, value, body) => for {
+      binding <- checkBinding(Variable("_"), types, value)
+      (typedTypes, typedValue, declaredType) = binding
+      checked <- checkBindingPattern(pattern, declaredType)
+      (typedPattern, bindings) = checked
+      typedBody <- body.local((e: Env) => e.withValues(bindings))
+    } yield letPatternT(typeOf(typedBody), typedPattern, typedTypes, typedValue, typedBody)
 
     case AST.LetRec(bindings, body) => for {
       checked <- checkRecBindings(bindings.map(b => (b.variable, b.types, b.value)))
@@ -988,6 +1014,18 @@ object TAnalyser {
             checkBinding(name, annotation, value).map { case (_, typedValue, annType) =>
               (scope + (name -> annType), done :+ ContextStep.Let[TypeRec](name, annType, typedValue))
             }
+          case ContextStep.BindPattern(pattern, annotation, value) => for {
+            binding <- checkBinding(Variable("_"), annotation, value, typeAppT(monadType, _))
+            (_, typedValue, annType) = binding
+            checked <- checkBindingPattern(pattern, annType)
+            (typedPattern, bindings) = checked
+          } yield (scope ++ bindings, done :+ ContextStep.BindPattern[TypeRec](typedPattern, annType, typedValue))
+          case ContextStep.LetPattern(pattern, annotation, value) => for {
+            binding <- checkBinding(Variable("_"), annotation, value)
+            (_, typedValue, annType) = binding
+            checked <- checkBindingPattern(pattern, annType)
+            (typedPattern, bindings) = checked
+          } yield (scope ++ bindings, done :+ ContextStep.LetPattern[TypeRec](typedPattern, annType, typedValue))
           case ContextStep.Rec(recBindings) =>
             checkRecBindings(recBindings.map(b => (b.variable, b.types, b.value))).map { checked =>
               (scope ++ checked.map(b => b.variable -> b.declaredType),

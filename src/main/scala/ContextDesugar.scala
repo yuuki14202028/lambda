@@ -43,6 +43,18 @@ object ContextDesugar {
             } yield applied
             case ContextStep.Let(name, annotation, value) => Right(letT(name, typeOf(acc), annotation, value, acc))
             case ContextStep.Rec(bindings) => Right(letRecGroupT(bindings, typeOf(acc), acc))
+            // パターンの束縛は、分岐が 1 つの match にする（PatternDesugar が展開する）
+            case ContextStep.LetPattern(pattern, _, value) =>
+              Right(patternMatchT(typeOf(acc), value, Seq(PatternCase[TypeRec](pattern, None, acc))))
+            case ContextStep.BindPattern(pattern, annotation, value) =>
+              val bound = Variable("$bound")
+              val continuation = mkAbs(bound, annotation, patternMatchT(typeOf(acc), varrType(bound, annotation), Seq(PatternCase[TypeRec](pattern, None, acc))))
+              for {
+                bindA <- applyTypeArg(ops.flatMap, annotation, Kind.Star)
+                bindR <- applyTypeArg(bindA, resultType, Kind.Star)
+                bindValue <- applyArg(bindR, value)
+                applied <- applyArg(bindValue, continuation)
+              } yield applied
           }
         }
       }

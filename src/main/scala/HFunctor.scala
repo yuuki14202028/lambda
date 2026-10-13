@@ -106,6 +106,8 @@ given HTraverse[AST] with {
       (traverseConstraint(constraint)(f), f(body)).mapN(AST.InstAbs(_, _))
     case AST.Let(v, types, vall, body) =>
       (f(types), f(vall), f(body)).mapN(AST.Let(v, _, _, _))
+    case AST.LetPattern(pattern, types, value, body) =>
+      (traversePattern(pattern)(f), f(types), f(value), f(body)).mapN(AST.LetPattern(_, _, _, _))
     case AST.LetRec(bindings, body) =>
       val bindingsG = bindings.traverse(b => (f(b.types), f(b.value)).mapN(RecBinding[S](b.variable, _, _)))
       (bindingsG, f(body)).mapN(AST.LetRec(_, _))
@@ -164,6 +166,10 @@ given HTraverse[AST] with {
         case ContextStep.Let(name, annotation, value) => (f(annotation), f(value)).mapN(ContextStep.Let[S](name, _, _))
         case ContextStep.Rec(bindings) =>
           bindings.traverse(b => (f(b.types), f(b.value)).mapN(RecBinding[S](b.variable, _, _))).map(ContextStep.Rec[S](_))
+        case ContextStep.BindPattern(pattern, annotation, value) =>
+          (traversePattern(pattern)(f), f(annotation), f(value)).mapN(ContextStep.BindPattern[S](_, _, _))
+        case ContextStep.LetPattern(pattern, annotation, value) =>
+          (traversePattern(pattern)(f), f(annotation), f(value)).mapN(ContextStep.LetPattern[S](_, _, _))
       }
       val opsG = ops.traverse(o => (f(o.pure), f(o.flatMap)).mapN(ContextOps[S](_, _)))
       (f(monad), stepsG, f(result), opsG).mapN(AST.Context(_, _, _, _))

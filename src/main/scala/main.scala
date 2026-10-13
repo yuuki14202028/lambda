@@ -4,13 +4,18 @@ import java.nio.file.{Files, Path, Paths}
 
 object Compiler {
 
+  /** 型検査の後の脱糖。順序に意味がある: context の束縛のパターンは ContextDesugar が match にするので、
+   * PatternDesugar はその後に走る */
+  def desugar(typed: TypeRec[AST.Program.type]): TypeRec[AST.Program.type] =
+    ChurchEncoder.encode(TraitEncoder.encode(PatternDesugar.desugar(ContextDesugar.desugar(Deriver.desugar(ModuleDesugar.desugar(typed))))))
+
   /** ソースをアセンブリへコンパイルする。trace には脱糖前後のプログラムの表示が渡される */
   def compile(src: String, srcPath: Path, trace: String => Unit = _ => ()): Either[CompileError, String] = for {
     ast <- ParserAST.programParser.parseAll(src).left.map(CompileError.ParseFailure.apply)
     resolved <- ImportResolver.resolve(ast, srcPath)
     _ = trace(eraseIndex(resolved).show)
     typed <- TAnalyser.validate(resolved)
-    encoded = ChurchEncoder.encode(TraitEncoder.encode(ContextDesugar.desugar(Deriver.desugar(PatternDesugar.desugar(ModuleDesugar.desugar(typed))))))
+    encoded = desugar(typed)
     _ = trace(eraseAnn(encoded).show)
   } yield Generator.generate(encoded)
 }

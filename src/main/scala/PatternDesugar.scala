@@ -151,6 +151,9 @@ object PatternDesugar {
     val compiler = new Compiler
     val alg: Algebra[TypedAST, TypeRec] = [x] => he => (he.ann, he.ast) match {
       case (ExprAnn(resultType), AST.PatternMatch(scrutinee, cases)) => lower(compiler, resultType, scrutinee, cases)
+      // let パターン = e in body は、分岐が 1 つの match
+      case (ExprAnn(resultType), AST.LetPattern(pattern, _, value, body)) =>
+        lower(compiler, resultType, value, Seq(PatternCase[TypeRec](pattern, None, body)))
       case (ann, node) => HCofree(ann, node)
     }
     program.cata(alg)

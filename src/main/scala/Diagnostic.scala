@@ -425,6 +425,11 @@ object Diagnostic {
         notes = if (guarded) Seq("a case with an `if` condition does not count as covering its pattern, because the condition may be false") else Nil,
         helps = Seq(s"add a case for ${name(example)}, or a final `_ => …`")
       )
+      case RefutablePattern(example) => Description(
+        "this pattern does not match every value",
+        s"${name(example)} is not matched",
+        notes = Seq("a pattern in a binding must always succeed, because there is no other case to fall back to"),
+        helps = Seq("use `match` to handle the other cases"))
       case UnreachableCase(index) => Description(
         s"case $index of this match can never be reached",
         "no value reaches this case",

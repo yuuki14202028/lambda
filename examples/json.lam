@@ -53,28 +53,24 @@ module Reading {
 
   // "…"（エスケープは扱わない）
   private let quoted(text: String)(at: i32): Step[String] = context[Option] {
-    opening: Pair[unit][i32] = expect('"')(text)(at);
-    body: Pair[String][i32] = match opening {
-      Pair(_)(start) => Some[Pair[String][i32]](span(λc: char. c != '"')(text)(start))
-    };
-    closing: Pair[unit][i32] = match body {
-      Pair(_)(end) => expect('"')(text)(end)
-    };
-    match Pair[Pair[String][i32]][Pair[unit][i32]](body)(closing) {
-      Pair(Pair(content)(_))(Pair(_)(next)) => Pair[String][i32](content)(next)
-    }
+    Pair(_)(start): Pair[unit][i32] = expect('"')(text)(at);
+    let Pair(content)(end): Pair[String][i32] = span(λc: char. c != '"')(text)(start);
+    Pair(_)(next): Pair[unit][i32] = expect('"')(text)(end);
+    Pair[String][i32](content)(next)
   }
 
   rec {
     let value(text: String)(at: i32): Step[Json] = match Str.charAt(text)(skip(text)(at)) {
       Some('[') => items(text)(skip(text)(at) + 1)
       Some('{') => members(text)(skip(text)(at) + 1)
-      Some('"') => map[Option][Pair[String][i32]][Pair[Json][i32]](λp: Pair[String][i32]. match p {
-        Pair(s)(next) => Pair[Json][i32](JString(s))(next)
-      })(quoted(text)(at))
-      Some(c) if Char.isDigit(c) => map[Option][Pair[i32][i32]][Pair[Json][i32]](λp: Pair[i32][i32]. match p {
-        Pair(n)(next) => Pair[Json][i32](JNumber(n))(next)
-      })(number(text)(at))
+      Some('"') => context[Option] {
+        Pair(s)(next): Pair[String][i32] = quoted(text)(at);
+        Pair[Json][i32](JString(s))(next)
+      }
+      Some(c) if Char.isDigit(c) => context[Option] {
+        Pair(n)(next): Pair[i32][i32] = number(text)(at);
+        Pair[Json][i32](JNumber(n))(next)
+      }
       _ => match word(text)(at) {
         Some(Pair("null")(next)) => done[Json](JNull)(next)
         Some(Pair("true")(next)) => done[Json](JBool(true))(next)
@@ -87,47 +83,43 @@ module Reading {
     let items(text: String)(at: i32): Step[Json] = match expect(']')(text)(at) {
       Some(Pair(_)(next)) => done[Json](JArray(Nil[Json]))(next)
       None => context[Option] {
-        first: Pair[Json][i32] = value(text)(at);
-        rest: Pair[List[Json]][i32] = match first { Pair(_)(next) => moreItems(text)(next) };
-        match Pair[Pair[Json][i32]][Pair[List[Json]][i32]](first)(rest) {
-          Pair(Pair(x)(_))(Pair(xs)(next)) => Pair[Json][i32](JArray(Cons[Json](x)(xs)))(next)
-        }
+        Pair(x)(afterFirst): Pair[Json][i32] = value(text)(at);
+        Pair(xs)(next): Pair[List[Json]][i32] = moreItems(text)(afterFirst);
+        Pair[Json][i32](JArray(Cons[Json](x)(xs)))(next)
       }
     }
 
     // `, 値` のくり返しと、閉じる `]`
     let moreItems(text: String)(at: i32): Step[List[Json]] = match expect(',')(text)(at) {
-      None => map[Option][Pair[unit][i32]][Pair[List[Json]][i32]](λp: Pair[unit][i32]. match p {
-        Pair(_)(next) => Pair[List[Json]][i32](Nil[Json])(next)
-      })(expect(']')(text)(at))
+      None => context[Option] {
+        Pair(_)(next): Pair[unit][i32] = expect(']')(text)(at);
+        Pair[List[Json]][i32](Nil[Json])(next)
+      }
       Some(Pair(_)(afterComma)) => context[Option] {
-        x: Pair[Json][i32] = value(text)(afterComma);
-        xs: Pair[List[Json]][i32] = match x { Pair(_)(next) => moreItems(text)(next) };
-        match Pair[Pair[Json][i32]][Pair[List[Json]][i32]](x)(xs) {
-          Pair(Pair(item)(_))(Pair(others)(next)) => Pair[List[Json]][i32](Cons[Json](item)(others))(next)
-        }
+        Pair(item)(afterItem): Pair[Json][i32] = value(text)(afterComma);
+        Pair(others)(next): Pair[List[Json]][i32] = moreItems(text)(afterItem);
+        Pair[List[Json]][i32](Cons[Json](item)(others))(next)
       }
     }
 
     // オブジェクトの中身: `{` の後から `}` まで（空でないものだけを扱う）
     let members(text: String)(at: i32): Step[Json] = context[Option] {
-      key: Pair[String][i32] = quoted(text)(at);
-      colon: Pair[unit][i32] = match key { Pair(_)(next) => expect(':')(text)(next) };
-      item: Pair[Json][i32] = match colon { Pair(_)(next) => value(text)(next) };
-      rest: Pair[Json][i32] = match item {
-        Pair(_)(next) => match expect(',')(text)(next) {
-          Some(Pair(_)(afterComma)) => members(text)(afterComma)
-          None => map[Option][Pair[unit][i32]][Pair[Json][i32]](λp: Pair[unit][i32]. match p {
-            Pair(_)(end) => Pair[Json][i32](JObject(Nil[Pair[String][Json]]))(end)
-          })(expect('}')(text)(next))
+      Pair(key)(afterKey): Pair[String][i32] = quoted(text)(at);
+      Pair(_)(afterColon): Pair[unit][i32] = expect(':')(text)(afterKey);
+      Pair(item)(afterItem): Pair[Json][i32] = value(text)(afterColon);
+      // 残りのメンバー（なければ、閉じる `}`）
+      Pair(rest)(next): Pair[Json][i32] = match expect(',')(text)(afterItem) {
+        Some(Pair(_)(afterComma)) => members(text)(afterComma)
+        None => context[Option] {
+          Pair(_)(end): Pair[unit][i32] = expect('}')(text)(afterItem);
+          Pair[Json][i32](JObject(Nil[Pair[String][Json]]))(end)
         }
       };
-      match rest {
-        Pair(JObject(others))(next) => match Pair[Pair[String][i32]][Pair[Json][i32]](key)(item) {
-          Pair(Pair(k)(_))(Pair(v)(_)) => Pair[Json][i32](JObject(Cons[Pair[String][Json]](Pair[String][Json](k)(v))(others)))(next)
-        }
-        other => other
-      }
+      let others: List[Pair[String][Json]] = match rest {
+        JObject(fields) => fields
+        _ => Nil[Pair[String][Json]]
+      };
+      Pair[Json][i32](JObject(Cons[Pair[String][Json]](Pair[String][Json](key)(item))(others)))(next)
     }
   }
 

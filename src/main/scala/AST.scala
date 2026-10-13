@@ -28,6 +28,8 @@ enum AST[R[_], I] {
   case InstAbs(constraint: Constraint[R], body: R[Expr]) extends AST[R, Expr]
   case Let(variable: Variable, types: R[Type], value: R[Expr], body: R[Expr]) extends AST[R, Expr]
   case LetRec(bindings: Seq[RecBinding[R]], body: R[Expr]) extends AST[R, Expr]
+  // let パターン: T = e in body: 値を分解して束縛する（分岐が 1 つの match。パターンはすべての値に当たるものに限る）
+  case LetPattern(pattern: Pattern[R], types: R[Type], value: R[Expr], body: R[Expr]) extends AST[R, Expr]
   case TypeLet(variable: TypeVariable, params: Seq[(TypeVariable, Kind)], alias: R[Type], body: R[Expr]) extends AST[R, Expr]
   case DataLet(variable: TypeVariable, params: Seq[(TypeVariable, Kind)], constructors: Seq[DataConstructor[R]], body: R[Expr]) extends AST[R, Expr]
   case DataLetRec(datas: Seq[DataBinding[R]], body: R[Expr]) extends AST[R, Expr]
@@ -133,6 +135,8 @@ enum ContextStep[R[_]] {
   case Bind(name: Variable, annotation: R[Type], value: R[Expr]) // x: T = e;          モナドの中身を束縛する
   case Let(name: Variable, annotation: R[Type], value: R[Expr])  // let x: T = e;
   case Rec(bindings: Seq[RecBinding[R]])                         // rec let …;  /  rec { let …  let … };
+  case BindPattern(pattern: Pattern[R], annotation: R[Type], value: R[Expr]) // パターン: T = e;     モナドの中身を分解して束縛する
+  case LetPattern(pattern: Pattern[R], annotation: R[Type], value: R[Expr])  // let パターン: T = e;
 }
 // context[M] が使う pure[M] / flatMap[M]。型検査が名前と制約を解決して埋める（パース直後は None）
 case class ContextOps[R[_]](pure: R[Expr], flatMap: R[Expr])
@@ -381,6 +385,8 @@ def letT(variable: Variable, t: TypeRec[Type], types: TypeRec[Type], value: Type
   HCofree(ExprAnn(t), AST.Let(variable, types, value, body))
 def letRecT(variable: Variable, t: TypeRec[Type], types: TypeRec[Type], value: TypeRec[Expr], body: TypeRec[Expr]): TypeRec[Expr] =
   letRecGroupT(Seq(RecBinding[TypeRec](variable, types, value)), t, body)
+def letPatternT(t: TypeRec[Type], pattern: Pattern[TypeRec], types: TypeRec[Type], value: TypeRec[Expr], body: TypeRec[Expr]): TypeRec[Expr] =
+  HCofree(ExprAnn(t), AST.LetPattern(pattern, types, value, body))
 def letRecGroupT(bindings: Seq[RecBinding[TypeRec]], t: TypeRec[Type], body: TypeRec[Expr]): TypeRec[Expr] =
   HCofree(ExprAnn(t), AST.LetRec(bindings, body))
 def typeLetT(variable: TypeVariable, params: Seq[(TypeVariable, Kind)], t: TypeRec[Type], alias: TypeRec[Type], body: TypeRec[Expr]): TypeRec[Expr] =
@@ -514,6 +520,7 @@ def freeVars(expr: Rec[Expr]): Set[Variable] = {
       methods.foldLeft(Set.empty[Variable])(_ ++ _.body) ++ superEvidence.flatMap(inEvidence)
     case AST.Let(variable, _, value, body) => value ++ (body - variable)
     case AST.LetRec(bindings, body) => bindings.foldLeft(body)(_ ++ _.value) -- bindings.map(_.variable)
+    case AST.LetPattern(pattern, _, value, body) => value ++ (body -- patternVariables(pattern))
     case AST.TypeLet(_, _, _, body) => body
     case AST.DataLet(_, _, _, body) => body
     case AST.DataLetRec(_, body) => body
@@ -548,6 +555,8 @@ def freeVars(expr: Rec[Expr]): Set[Variable] = {
         case (ContextStep.Bind(name, _, value), acc) => value ++ (acc - name)
         case (ContextStep.Let(name, _, value), acc) => value ++ (acc - name)
         case (ContextStep.Rec(bindings), acc) => bindings.foldLeft(acc)(_ ++ _.value) -- bindings.map(_.variable)
+        case (ContextStep.BindPattern(pattern, _, value), acc) => value ++ (acc -- patternVariables(pattern))
+        case (ContextStep.LetPattern(pattern, _, value), acc) => value ++ (acc -- patternVariables(pattern))
       }
       ops.fold(body)(o => body ++ o.pure ++ o.flatMap)
     case AST.UnaryOp(_, body) => body

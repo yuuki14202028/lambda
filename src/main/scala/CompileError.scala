@@ -174,6 +174,7 @@ enum CompileError {
   case EmptyMatch
   case NonExhaustivePatterns(example: String, guarded: Boolean = false)
   case UnreachableCase(index: Int)
+  case RefutablePattern(example: String)
   case NotAConstructor(name: Variable)
   case OrPatternBindingMismatch(first: Seq[Variable], other: Seq[Variable])
   case PatternConstructorMismatch(constructor: Variable, scrutinee: TypeRec[Type])
@@ -373,6 +374,7 @@ enum CompileError {
       s"Constructor ${constructor.name} expects $expected binders, got $actual"
     case EmptyMatch => "Match must have at least one case"
     case NonExhaustivePatterns(example, _) => s"Match is not exhaustive: no case matches $example"
+    case RefutablePattern(example) => s"A binding pattern must match every value: $example is not matched"
     case UnreachableCase(index) => s"Match case $index is unreachable: earlier cases already match everything it matches"
     case OrPatternBindingMismatch(first, other) =>
       s"The alternatives of an or-pattern must bind the same variables with the same types: (${first.map(_.name).mkString(", ")}) vs (${other.map(_.name).mkString(", ")})"

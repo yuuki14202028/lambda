@@ -99,6 +99,7 @@ val showAlg: Algebra[AST, ShowResult] = [x] => node => node match {
   case AST.InstAbs(constraint, body) => s"λ[${showConstraint(constraint)}]. $body"
   case AST.Let(v, types, value, body) => s"let ${v.name}: $types = $value in $body"
   case AST.LetRec(bindings, body)  => s"${showRecBindings(bindings)} in $body"
+  case AST.LetPattern(pattern, types, value, body) => s"let ${showPattern(pattern)}: $types = $value in $body"
   case AST.TypeLet(v, params, alias, body) =>
     val suffix = params.map(showKindedParam).mkString
     val head = s"${v.name}$suffix"
@@ -148,6 +149,8 @@ val showAlg: Algebra[AST, ShowResult] = [x] => node => node match {
       case ContextStep.Bind(name, annotation, value) => s"${name.name}: $annotation = $value;"
       case ContextStep.Let(name, annotation, value) => s"let ${name.name}: $annotation = $value;"
       case ContextStep.Rec(bindings) => s"${showRecBindings(bindings)};"
+      case ContextStep.BindPattern(pattern, annotation, value) => s"${showPattern(pattern)}: $annotation = $value;"
+      case ContextStep.LetPattern(pattern, annotation, value) => s"let ${showPattern(pattern)}: $annotation = $value;"
     }
     s"context[$monad] { ${(bindingText :+ result.toString).mkString(" ")} }"
   case AST.Bool(v)                 => s"$v"

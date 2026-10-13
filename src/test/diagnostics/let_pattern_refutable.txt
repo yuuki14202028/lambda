@@ -1,0 +1,8 @@
+error: this pattern does not match every value
+ --> let_pattern_refutable.lam:4:7
+  |
+4 |   let Some(x): Option[i32] = o in x
+  |       ^^^^^^^ `None` is not matched
+  |
+  = note: a pattern in a binding must always succeed, because there is no other case to fall back to
+  = help: use `match` to handle the other cases

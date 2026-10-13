@@ -6,7 +6,7 @@ class DefaultMethodSuite extends munit.FunSuite {
     ParserAST.programParser.parseAll(src).left.map(e => s"Parse error: $e").flatMap(p => TAnalyser.validate(p).left.map(_.render))
 
   private def encode(src: String): Either[String, TypeRec[AST.Program.type]] =
-    validate(src).map(p => ChurchEncoder.encode(TraitEncoder.encode(ContextDesugar.desugar(Deriver.desugar(PatternDesugar.desugar(ModuleDesugar.desugar(p)))))))
+    validate(src).map(p => Compiler.desugar(p))
 
   private def assertRight(result: Either[String, ?]): Unit = result match {
     case Right(_) => ()

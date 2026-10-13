@@ -1,0 +1,6 @@
+data Option[a] = { None, Some(a) }
+
+let get(o: Option[i32]): i32 =
+  let Some(x): Option[i32] = o in x
+
+let main(): i32 = 0

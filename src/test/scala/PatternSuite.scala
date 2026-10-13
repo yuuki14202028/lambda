@@ -6,10 +6,10 @@ class PatternSuite extends munit.FunSuite {
     ParserAST.programParser.parseAll(src).left.map(e => s"Parse error: $e").flatMap(p => TAnalyser.validate(p).left.map(_.render))
 
   private def lowered(src: String): Either[String, TypeRec[AST.Program.type]] =
-    validate(src).map(p => PatternDesugar.desugar(ModuleDesugar.desugar(p)))
+    validate(src).map(p => PatternDesugar.desugar(ContextDesugar.desugar(ModuleDesugar.desugar(p))))
 
   private def encode(src: String): Either[String, TypeRec[AST.Program.type]] =
-    lowered(src).map(p => ChurchEncoder.encode(TraitEncoder.encode(ContextDesugar.desugar(Deriver.desugar(p)))))
+    validate(src).map(Compiler.desugar)
 
   private def assertRight(result: Either[String, ?]): Unit = result match {
     case Right(_) => ()
@@ -195,6 +195,71 @@ class PatternSuite extends munit.FunSuite {
     val line = shown.linesIterator.find(_.startsWith("let f:")).getOrElse(fail(shown))
     // 後続の分岐の本体（外側の x を返す）は、パターンの x を束縛する let の外に置かれる
     assert(line.contains("(x)[i32]") && line.indexOf("(x)[i32]") < line.indexOf("let x: i32"), clue(line))
+  }
+
+  // ---- 束縛でのパターン ----
+
+  test("let パターン: 値を分解して束縛する") {
+    assertRight(encode(program("let sum(p: Pair[i32][i32]): i32 = let MkPair(a)(b): Pair[i32][i32] = p in a")))
+    assertRight(encode(program("let deep(p: Pair[Pair[i32][bool]][i32]): bool = let MkPair(MkPair(_)(flag))(_): Pair[Pair[i32][bool]][i32] = p in flag")))
+    assertRight(encode(program("let ignore(n: i32): i32 = let _: i32 = n in 0")))
+  }
+
+  test("let パターン: 脱糖の後は match になる") {
+    val shown = lowered(program("let first(p: Pair[i32][i32]): i32 = let MkPair(a)(_): Pair[i32][i32] = p in a")).fold(fail(_), _.show)
+    assert(shown.linesIterator.exists(l => l.startsWith("let first:") && l.contains("match")), clue(shown))
+  }
+
+  test("let パターン: すべての値に当たらないパターンは拒否") {
+    assertLeftContains(
+      validate(program("let get(o: Option[i32]): i32 = let Some(x): Option[i32] = o in x")),
+      "A binding pattern must match every value: None is not matched"
+    )
+    assertLeftContains(
+      validate(program("let get(p: Pair[Option[i32]][i32]): i32 = let MkPair(Some(x))(_): Pair[Option[i32]][i32] = p in x")),
+      "MkPair(None)(_) is not matched"
+    )
+  }
+
+  test("let パターン: 注釈は値全体の型で、値とパターンの両方に合わなければならない") {
+    assertLeftContains(validate(program("let f(p: Pair[i32][i32]): i32 = let MkPair(a)(b): Pair[i32][bool] = p in a")), "Type mismatch")
+    assertLeftContains(validate(program("let f(o: Option[i32]): i32 = let MkPair(a)(b): Option[i32] = o in a")), "does not belong")
+  }
+
+  test("let の引数のない名前は、構成子と同じ名前でも変数の束縛のまま") {
+    assertRight(encode(program("let f(o: Option[i32]): Option[i32] = let None: Option[i32] = o in None")))
+  }
+
+  test("関数の定義（let f(x: T): U）は、これまでどおり読める") {
+    assertRight(encode(program("let g(n: i32): i32 = let double(m: i32): i32 = m in double(n)")))
+  }
+
+  private val optionMonad =
+    """trait Functor[f: * → *] { def map[a][b](g: a → b)(x: f[a]): f[b] }
+      |trait Applicative[f: * → *] with Functor[f] { def pure[a](x: a): f[a] }
+      |trait Monad[m: * → *] with Applicative[m] { def flatMap[a][b](x: m[a])(g: a → m[b]): m[b] }
+      |impl Functor[Option] { def map = Λa. Λb. λg: a → b. λx: Option[a]. match x { None => None[b]  Some(v) => Some[b](g(v)) } }
+      |impl Applicative[Option] { def pure = Λa. λx: a. Some[a](x) }
+      |impl Monad[Option] { def flatMap = Λa. Λb. λx: Option[a]. λg: a → Option[b]. match x { None => None[b]  Some(v) => g(v) } }
+      |""".stripMargin
+
+  test("context の中のパターン: モナドの束縛と let の両方で分解できる") {
+    val src = optionMonad +
+      """let f(o: Option[Pair[i32][bool]]): Option[i32] = context[Option] {
+        |  MkPair(n)(flag): Pair[i32][bool] = o;
+        |  let MkPair(a)(b): Pair[i32][i32] = MkPair[i32][i32](n)(n);
+        |  if flag then a else b
+        |}""".stripMargin
+    assertRight(encode(program(src)))
+  }
+
+  test("context の中のパターンも、すべての値に当たらなければ拒否") {
+    val src = optionMonad +
+      """let f(o: Option[Option[i32]]): Option[i32] = context[Option] {
+        |  Some(n): Option[i32] = o;
+        |  n
+        |}""".stripMargin
+    assertLeftContains(validate(program(src)), "None is not matched")
   }
 
   // ---- パーサ ----
