@@ -61,7 +61,7 @@ class InfixSuite extends munit.FunSuite {
   }
 
   test("キーワードは infix にならない: fold-as-with") {
-    parseExpr("fold e as i32 with Just(x) => x").unfix match {
+    parseExpr("fold e as i32 { Just(x) => x }").unfix match {
       case AST.Fold(_, _, _) => ()
       case other => fail(s"not Fold: $other")
     }

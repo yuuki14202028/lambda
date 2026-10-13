@@ -7,7 +7,7 @@ Scala 3 で実装した、小さな型付きラムダ計算系言語（System F�
 
 - **System Fω**: 値のラムダ `λx: T. e`、型抽象 `ΛA. e`、型適用 `f[T]`、型レベルラムダとカインド（`*`, `* → *`）。型注釈と型適用はすべて明示で、HM 型推論は行いません
 - **再帰**: 再帰は `rec` を付けた宣言に限ります。`rec let f(n: i32): i32 = …`、`rec data List[a] = …`、`rec impl[a] Show[List[a]] with Show[a] { … }`。相互再帰は、同じ種類の宣言を `rec { … }` で囲みます（`rec { let isEven …  let isOdd … }`、`rec { data Tree …  data Forest … }`、`rec { impl …  impl … }`）。`derive` は `impl` と同じ組に入れられ、相互再帰のデータ型には `rec { derive Functor[Tree]  derive Functor[Forest] }` と書きます。式の中（`rec let … in e`、`rec { … } in e`）と context ブロックの中（`rec { … };`）でも同じに書けます。`rec` を使った所の停止性は保証しません
-- **代数的データ型**: `data` / 再帰型は `rec data`。`match` は全コンストラクタの網羅が必須、`fold` で再帰型を畳み込みます。バックエンドでは Church encoding に変換されます
+- **代数的データ型**: `data` / 再帰型は `rec data`。`match e { C(x) => … }` は全コンストラクタの網羅が必須、`fold e as T { C(x)(acc) => … }` で再帰型を畳み込みます（再帰位置の束縛子は畳み込み済みの結果）。バックエンドでは Church encoding に変換されます
 - **trait**: `trait` / `impl` による型クラス。高階カインドの trait（`Monad[m: * → *]` など）、`with C[a]` 節（宣言末尾）による制約・スーパークラスに対応。メソッド自身の型変数にも制約を付けられます（`def traverse[g: * → *][a][b](f: a → g[b])(xs: t[a]): g[t[b]] with Applicative[g]`。impl 側のメソッドにも同じ `with` 節を書きます）。型適用が明示なので辞書解決は決定的で、型検査の中で行われ、辞書渡しコードへ脱糖されます。インスタンスは値や関数と同じく、宣言してから使います。メソッド本体から自身のインスタンスを使う再帰的なインスタンスは `rec impl[a] Show[List[a]] with Show[a] { ... }` と明示します
 - **derive**: `derive Functor[Option]` / `derive Foldable[List]` で、データ型の構造から `map` / `foldRight` / `foldLeft` のインスタンスを自動導出します。導出対象は構造から一意に決まる trait（正準シグネチャと α 同値なもの）に限り、負の位置の出現や畳み込めないフィールドはコンパイルエラーになります
 - **context 記法**: do 記法相当。`context[M] { x: T = e; ...; result }` を `Monad` trait の `pure` / `flatMap` 呼び出しへ脱糖します
@@ -34,7 +34,6 @@ foreign.C.String  foreign.C.VoidPtr  foreign.C.Ptr[T]
 
 ```bash
 ./run.sh          # main.lam をコンパイル → clang でリンク → 実行（終了コードを表示）
-./calculator.sh   # デモ: 対話式電卓（calculator.lam）
 
 sbt "run <src.lam> <out.s>"                              # 任意のソースをアセンブリへ
 clang -arch arm64 build/out.s runtime/ffi.c -o build/out # 手動リンク
@@ -76,5 +75,4 @@ stdlib/           標準ライブラリ（import "std/..." で解決）
 runtime/ffi.c     foreign で参照する C 関数の実装
 benchmarks/       フィボナッチによる他言語比較
 main.lam          サンプルプログラム（trait / context / 文字列埋め込み）
-calculator.lam    サンプルプログラム（再帰データ型と fold による電卓）
 ```

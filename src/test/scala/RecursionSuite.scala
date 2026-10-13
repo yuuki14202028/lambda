@@ -225,11 +225,28 @@ class RecursionSuite extends munit.FunSuite {
 
   test("rec { data }: fold は自身の型の出現だけを畳み込む") {
     val src = forest +
-      """let count[a](f: Forest[a]): i32 = (fold f as i32 with
+      """let count[a](f: Forest[a]): i32 = fold f as i32 {
         |  Empty => 0
-        |  Trees(t)(rest) => rest)
+        |  Trees(t)(rest) => rest
+        |}
         |""".stripMargin
     assertRight(encode(src + main))
+  }
+
+  test("fold の後に続けて宣言を書ける") {
+    val src =
+      """rec data List = { Nil, Cons(i32)(List) }
+        |let length(xs: List): i32 = fold xs as i32 {
+        |  Nil => 0
+        |  Cons(x)(acc) => acc
+        |}
+        |let after: i32 = length(Nil)
+        |""".stripMargin
+    assertRight(encode(src + main))
+  }
+
+  test("古い fold の書き方（with）は構文エラー") {
+    assert(ParserAST.expr.parseAll("fold xs as i32 with Nil => 0").isLeft)
   }
 
   test("rec { impl }: 組のインスタンスは互いのメソッド本体から見える") {

@@ -367,7 +367,7 @@ object ParserAST {
   lazy val foldP: Parser[IndexedRec[Expr]] = {
     val scrutinee = "fold" -+> expr
     val resultType = sp.with1 *> ("as" -+> typeP)
-    val cases = sp.with1 *> ("with" -+> matchCaseP.repSep(gap))
+    val cases = sp.with1 *> ('{' -*> matchCaseP.repSep(gap.backtrack) <*- '}')
     (scrutinee ~ resultType ~ cases).map { case ((scrutinee, resultType), cases) =>
       AST.Fold(scrutinee, resultType, cases.toList)
     }.indexed
