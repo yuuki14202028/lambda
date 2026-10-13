@@ -357,10 +357,18 @@ object ParserAST {
     }
   }
 
-  // パターン: _ / 名前 / C(p)(q) / リテラル（負の数は書けない）
-  private lazy val patternP: Parser[Pattern[IndexedRec]] = {
-    val number: Parser[Pattern[IndexedRec]] = numP.map(_.project).collect {
-      case AST.Num(value, typeName) => Pattern.Literal[IndexedRec](LiteralValue.Num(value, typeName), None)
+  // パターン: _ / 名前 / C(p)(q) / リテラル / p | q
+  private lazy val patternP: Parser[Pattern[IndexedRec]] =
+    simplePatternP.repSep(spaced('|').backtrack).map { alternatives =>
+      if (alternatives.tail.isEmpty) alternatives.head else Pattern.Or[IndexedRec](alternatives.toList)
+    }
+
+  private lazy val simplePatternP: Parser[Pattern[IndexedRec]] = {
+    val number: Parser[Pattern[IndexedRec]] = (Parser.char('-').?.with1 ~ numP.map(_.project)).collect {
+      case (sign, AST.Num(value, typeName)) => Pattern.Literal[IndexedRec](LiteralValue.Num(sign.fold(value)(_ => s"-$value"), typeName), None)
+    }
+    val string: Parser[Pattern[IndexedRec]] = stringP.map(_.project).collect {
+      case AST.StringLit(value) => Pattern.Literal[IndexedRec](LiteralValue.Str(value), None)
     }
     val char: Parser[Pattern[IndexedRec]] = ('\'' *> alpha <* '\'').map(c => Pattern.Literal[IndexedRec](LiteralValue.Char(c), None))
     val bool: Parser[Pattern[IndexedRec]] =
@@ -369,12 +377,18 @@ object ParserAST {
       case ("_", Nil) => Pattern.Wildcard[IndexedRec]()
       case (name, args) => Pattern.Constructor[IndexedRec](Variable(name), args, Nil)
     }
-    number | char | bool | named
+    number | string | char | bool | named
   }
+
+  // `if 条件`: 分岐の条件
+  private lazy val guardP: Parser0[Option[IndexedRec[Expr]]] =
+    (sp.with1.soft *> (Parser.string("if") *> gap).backtrack *> Parser.defer(expr)).?
 
   lazy val matchP: Parser[IndexedRec[Expr]] = {
     val scrutinee = "match" -+> expr
-    val patternCase = (patternP ~ (spaced("=>") *> Parser.defer(expr))).map { case (pattern, body) => PatternCase[IndexedRec](pattern, body) }
+    val patternCase = (patternP ~ guardP ~ (spaced("=>") *> Parser.defer(expr))).map { case ((pattern, guard), body) =>
+      PatternCase[IndexedRec](pattern, guard, body)
+    }
     val cases = sp.with1 *> ('{' -*> patternCase.repSep(gap.backtrack) <*- '}')
     (scrutinee ~ cases).map { case (scrutinee, cases) =>
       AST.PatternMatch(scrutinee, cases.toList)
@@ -409,7 +423,9 @@ object ParserAST {
     "<=".as(BinOps.Leq) | "<".as(BinOps.Lt) |
     ">=".as(BinOps.Geq) | ">".as(BinOps.Gt)
 
-  private val addOp: Parser[BinOps] = '+'.as(BinOps.Add) | '-'.as(BinOps.Sub)
+  // 次の分岐の先頭の負のリテラル（-1 => …）を引き算と読まない
+  private val addOp: Parser[BinOps] =
+    '+'.as(BinOps.Add) | (Parser.not(Parser.defer(caseStartLookahead).backtrack).with1 *> '-').backtrack.as(BinOps.Sub)
 
   private val mulOp: Parser[BinOps] = '*'.as(BinOps.Mul) | '/'.as(BinOps.Div) | '%'.as(BinOps.Mod)
 
@@ -417,7 +433,7 @@ object ParserAST {
     ('&' <* Parser.not(Parser.char('&'))).backtrack.as(BinOps.And)
 
   private lazy val caseStartLookahead: Parser[Unit] =
-    Parser.defer(patternP *> spaced("=>")).void
+    Parser.defer(patternP *> guardP *> spaced("=>")).void
 
   private val bitOrOp: Parser[BinOps] =
     (Parser.not(caseStartLookahead.backtrack).with1 *> '|' <* Parser.not(Parser.char('|'))).backtrack.as(BinOps.Or)

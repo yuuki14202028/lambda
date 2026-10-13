@@ -52,6 +52,7 @@ private def showPattern(p: Pattern[ShowResult]): String = p match {
   case Pattern.Bind(name) => name.name
   case Pattern.Constructor(name, args, _) => s"${name.name}${args.map(a => s"(${showPattern(a)})").mkString}"
   case Pattern.Literal(value, _) => value.shown
+  case Pattern.Or(alternatives) => alternatives.map(showPattern).mkString(" | ")
 }
 
 val showAlg: Algebra[AST, ShowResult] = [x] => node => node match {
@@ -103,7 +104,7 @@ val showAlg: Algebra[AST, ShowResult] = [x] => node => node match {
   case AST.DataLetRec(datas, body) =>
     s"rec { ${datas.map(d => showData(d.variable, d.params, d.constructors)).mkString("; ")} } in $body"
   case AST.PatternMatch(scrutinee, cases) =>
-    s"match $scrutinee { ${cases.map(c => s"${showPattern(c.pattern)} => ${c.body}").mkString("; ")} }"
+    s"match $scrutinee { ${cases.map(c => s"${showPattern(c.pattern)}${c.guard.fold("")(g => s" if $g")} => ${c.body}").mkString("; ")} }"
   case AST.Match(scrutinee, cases) =>
     val caseText = cases.map { c =>
       val binders = c.binders.map(binder => s"(${binder.name})").mkString

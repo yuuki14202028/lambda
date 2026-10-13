@@ -53,6 +53,7 @@ private def traversePattern[G[_]: Applicative, R[_], S[_]](p: Pattern[R])(f: [x]
     val siblingsG = siblings.traverse(s => s.fields.traverse(field => f(field)).map(ConstructorShape[S](s.name, _)))
     (args.traverse(traversePattern(_)(f)), siblingsG).mapN(Pattern.Constructor[S](name, _, _))
   case Pattern.Literal(value, equals) => equals.traverse(e => f(e)).map(Pattern.Literal[S](value, _))
+  case Pattern.Or(alternatives) => alternatives.traverse(traversePattern(_)(f)).map(Pattern.Or[S](_))
 }
 
 extension [R[_]](self: Evidence[R]) {
@@ -121,7 +122,7 @@ given HTraverse[AST] with {
       }
       (datasG, f(body)).mapN(AST.DataLetRec(_, _))
     case AST.PatternMatch(scrut, cases) =>
-      val casesG = cases.traverse(c => (traversePattern(c.pattern)(f), f(c.body)).mapN(PatternCase[S](_, _)))
+      val casesG = cases.traverse(c => (traversePattern(c.pattern)(f), c.guard.traverse(g => f(g)), f(c.body)).mapN(PatternCase[S](_, _, _)))
       (f(scrut), casesG).mapN(AST.PatternMatch(_, _))
     case AST.Match(scrut, cases) =>
       val casesG = cases.traverse { c =>

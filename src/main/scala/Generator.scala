@@ -176,6 +176,10 @@ object Generator {
   }
 
   private def loadNum(value: String, typeName: String): Code = typeName match {
+    // 負の数は match のパターンのリテラルから来る
+    case _ if value.startsWith("-") && !Set("f32", "f64")(typeName) =>
+      if (Set("i64", "u64", "isize", "usize")(typeName)) loadImm64(java.lang.Long.parseLong(value))
+      else loadImm32(java.lang.Integer.parseInt(value))
     case "i64" | "u64" | "isize" | "usize" => loadImm64(java.lang.Long.parseUnsignedLong(value))
     case "f32" => loadImm32(java.lang.Float.floatToRawIntBits(value.toFloat))
     case "f64" => loadImm64(java.lang.Double.doubleToRawLongBits(value.toDouble))

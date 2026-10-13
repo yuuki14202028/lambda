@@ -88,7 +88,8 @@ enum Pattern[R[_]] {
   case Wildcard()                                                                            // _
   case Bind(name: Variable)                                                                  // x
   case Constructor(name: Variable, args: Seq[Pattern[R]], siblings: Seq[ConstructorShape[R]]) // C(p)(q)。siblings は型検査が埋める
-  case Literal(value: LiteralValue, equals: Option[R[Expr]])                                 // 1 / 'a' / true。equals は型検査が解決した ==
+  case Literal(value: LiteralValue, equals: Option[R[Expr]])                                 // 1 / 'a' / true / "s"。equals は型検査が解決した ==
+  case Or(alternatives: Seq[Pattern[R]])                                                     // p | q。どの選択肢も同じ変数を同じ型で束縛する
 }
 
 // スクルーティニーのデータ型の構成子と、型引数を適用したフィールドの型（脱糖が Env なしで分岐を組み立てるため）
@@ -98,19 +99,23 @@ enum LiteralValue {
   case Num(value: String, typeName: String)
   case Char(value: scala.Char)
   case Bool(value: Boolean)
+  case Str(value: String)
 
   def shown: String = this match {
     case Num(value, _) => value
     case Char(value) => s"'$value'"
     case Bool(value) => value.toString
+    case Str(value) => "\"" + value + "\""
   }
 }
 
-case class PatternCase[R[_]](pattern: Pattern[R], body: R[Expr])
+// guard は `パターン if 条件 => 本体` の条件。偽なら後続の分岐を試す
+case class PatternCase[R[_]](pattern: Pattern[R], guard: Option[R[Expr]], body: R[Expr])
 
 def patternVariables[R[_]](pattern: Pattern[R]): Seq[Variable] = pattern match {
   case Pattern.Bind(name) => Seq(name)
   case Pattern.Constructor(_, args, _) => args.flatMap(patternVariables)
+  case Pattern.Or(alternatives) => alternatives.headOption.toSeq.flatMap(patternVariables)
   case Pattern.Wildcard() | Pattern.Literal(_, _) => Seq.empty
 }
 // rec data / rec { data …  data … } のデータ型。フィールドからは組の全員が見える
@@ -496,10 +501,11 @@ def freeVars(expr: Rec[Expr]): Set[Variable] = {
       def inPattern(p: Pattern[ConstI[Set[Variable]]]): Set[Variable] = p match {
         case Pattern.Constructor(_, args, _) => args.flatMap(inPattern).toSet
         case Pattern.Literal(_, equals) => equals.getOrElse(Set.empty)
+        case Pattern.Or(alternatives) => alternatives.flatMap(inPattern).toSet
         case Pattern.Wildcard() | Pattern.Bind(_) => Set.empty
       }
       scrutinee ++ cases.foldLeft(Set.empty[Variable]) { (acc, c) =>
-        acc ++ inPattern(c.pattern) ++ (c.body -- patternVariables(c.pattern))
+        acc ++ inPattern(c.pattern) ++ ((c.body ++ c.guard.getOrElse(Set.empty)) -- patternVariables(c.pattern))
       }
     case AST.Match(scrutinee, cases) =>
       scrutinee ++ cases.foldLeft(Set.empty[Variable]) { (acc, c) =>

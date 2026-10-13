@@ -50,6 +50,35 @@ let whole(o: Option[i32]): i32 = match o {
   }
 }
 
+let sign(n: i32): i32 = match n {
+  -1 => 10
+  0 => 20
+  m if m < 0 => 30
+  _ => 40
+}
+
+let greeting(s: foreign.C.String): i32 = match s {
+  "hello" => 1
+  "bye" | "goodbye" => 2
+  _ => 0
+}
+
+let small(o: Option[i32]): i32 = match o {
+  Some(1 | 2 | 3) => 1
+  Some(n) if n > 100 => 2
+  Some(_) | None => 3
+}
+
+let pick(p: Pair[Option[i32]][i32]): i32 = match p {
+  MkPair(Some(x))(_) | MkPair(None)(x) => x
+}
+
+let classify(xs: List[i32])(x: i32): i32 = match xs {
+  Cons(h)(_) if h == x => 1
+  Cons(_)(Cons(h)(_)) if h == x => 2
+  _ => x
+}
+
 let list(a: i32)(b: i32)(c: i32): List[i32] = Cons[i32](a)(Cons[i32](b)(Cons[i32](c)(Nil[i32])))
 
 let main(): i32 = {
@@ -69,5 +98,21 @@ let main(): i32 = {
   printInt(letter('b'));
   printInt(letter('z'));
   printInt(whole(None[i32]));
+  printInt(sign(0 - 1));
+  printInt(sign(0));
+  printInt(sign(0 - 5));
+  printInt(sign(5));
+  printInt(greeting("hello"));
+  printInt(greeting("goodbye"));
+  printInt(greeting("what"));
+  printInt(small(Some[i32](2)));
+  printInt(small(Some[i32](500)));
+  printInt(small(Some[i32](50)));
+  printInt(small(None[i32]));
+  printInt(pick(MkPair[Option[i32]][i32](Some[i32](7))(8)));
+  printInt(pick(MkPair[Option[i32]][i32](None[i32])(8)));
+  printInt(classify(list(1)(2)(3))(1));
+  printInt(classify(list(1)(2)(3))(2));
+  printInt(classify(list(1)(2)(3))(3));
   0
 }

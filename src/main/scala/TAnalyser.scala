@@ -477,18 +477,36 @@ object TAnalyser {
     case Pattern.Wildcard() => Check.pure((Pattern.Wildcard[TypeRec](), Seq.empty))
     case Pattern.Bind(name) => Check.pure((Pattern.Bind[TypeRec](name), Seq(name -> expected)))
 
+    // p | q: どの選択肢も、同じ変数を同じ型で束縛する
+    case Pattern.Or(alternatives) => for {
+      checked <- alternatives.traverse(checkPattern(_, expected))
+      first = checked.head._2
+      _ <- checked.tail.traverse_ { case (_, bindings) =>
+        guard(
+          bindings.map(_._1).toSet == first.map(_._1).toSet && bindings.length == first.length &&
+            first.forall { case (name, t) => bindings.exists { case (n, u) => n == name && Equivalence.alpha(t, u) } },
+          CompileError.OrPatternBindingMismatch(first.map(_._1), bindings.map(_._1))
+        )
+      }
+    } yield (Pattern.Or[TypeRec](checked.map(_._1)), first)
+
     case Pattern.Literal(value, _) =>
       val (literalType, typeName) = value match {
         case LiteralValue.Num(_, name) => (primitiveT(name), name)
         case LiteralValue.Char(_) => (charTypeT, "char")
         case LiteralValue.Bool(_) => (boolTypeT, "bool")
+        case LiteralValue.Str(_) => (stringTypeT, BuiltinTypes.CString)
       }
+      // 文字列はランタイムの C 関数 string_equal で比べる（文字列埋め込みの concat と同じ扱い）
+      val stringEquals = arrowT(stringTypeT, arrowT(stringTypeT, boolTypeT))
       for {
         env <- ask
-        _ <- guard(BuiltinTypes.equatableTypes.contains(typeName), CompileError.NumericLiteralUnknown(typeName))
+        _ <- guard(typeName == BuiltinTypes.CString || BuiltinTypes.equatableTypes.contains(typeName), CompileError.NumericLiteralUnknown(typeName))
         _ <- expect(expected, literalType)
         // bool は if で分岐するので == は要らない
-        equals <- if (typeName == "bool") Check.pure(Option.empty[TypeRec[Expr]]) else {
+        equals <- if (typeName == "bool") Check.pure(Option.empty[TypeRec[Expr]])
+        else if (typeName == BuiltinTypes.CString) Check.pure(Option(foreignT(Variable("string_equal"), stringEquals, stringEquals)))
+        else {
           val operator = StandardLibrary.binaryOperatorName(BinOps.Eq, typeName)
           for {
             found <- lift(env.lookupValue(operator).toRight(CompileError.OperatorUndefined(BinOps.Eq, literalType, operator)))
@@ -630,15 +648,17 @@ object TAnalyser {
           (pattern, bindings) = checked
           names = bindings.map(_._1)
           _ <- guard(names.distinct.length == names.length, CompileError.AlreadyDefined(NameKind.VariableName, names.diff(names.distinct).head.name))
+          typedGuard <- c.guard.traverse(_.local((e: Env) => e.withValues(bindings)))
+          _ <- typedGuard.traverse_(g => expect(boolTypeT, typeOf(g)))
           typedBody <- c.body.local((e: Env) => e.withValues(bindings))
-        } yield PatternCase[TypeRec](pattern, typedBody)
+        } yield PatternCase[TypeRec](pattern, typedGuard, typedBody)
       }
       resultType <- typedCases.headOption match {
         case Some(first) => typedCases.tail.traverse(c => expect(typeOf(first.body), typeOf(c.body))).as(typeOf(first.body))
         case None => fail(CompileError.EmptyMatch)
       }
       // ノードは保持したまま、網羅性と到達不能な分岐は脱糖と同じ決定木で調べる
-      _ <- lift(PatternDesugar.check(typeOf(typedScrutinee), typedCases.map(_.pattern)))
+      _ <- lift(PatternDesugar.check(typeOf(typedScrutinee), typedCases))
     } yield patternMatchT(resultType, typedScrutinee, typedCases)
 
     case AST.Match(scrutinee, cases) => for {

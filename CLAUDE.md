@@ -67,7 +67,7 @@ trait `C` は辞書のデータ型でもあり（`Env.dataTypes` に登録）、
 ### match のパターン
 
 `match` は `PatternMatch(scrutinee, cases)` としてパースされ、パターン（`Pattern`: `_`・変数・構成子（入れ子可）・リテラル）を持つ。引数のない名前は、型検査がスコープ中の構成子でなければ変数の束縛（`Bind`）と決める。型検査はノードを保ち、構成子パターンにそのデータ型の全構成子と型引数適用済みのフィールド型（`siblings`）、リテラルに解決済みの `==` を記録する。
-PatternDesugar は行列から決定木を作り、構成子 1 段の `Match`（ChurchEncoder が符号化する形）と `if` / `let` に展開する。複数の葉から使われる本体は関数として一度だけ置く。網羅性と到達不能な分岐は、型検査が同じ決定木で調べる（`PatternDesugar.check`）。`fold` の分岐は従来どおり構成子 1 段と束縛子だけ（`MatchCase`）。
+PatternDesugar は行列から決定木を作り、構成子 1 段の `Match`（ChurchEncoder が符号化する形）と `if` / `let` に展開する。複数の葉から使われる本体は関数として一度だけ置く。網羅性と到達不能な分岐は、型検査が同じ決定木で調べる（`PatternDesugar.check`）。選択肢 `p | q`（`Pattern.Or`）は脱糖の入口で選択肢ごとの行に展開し（同じ分岐を指すので本体は共有される）、条件付きの分岐（`PatternCase.guard`）は「条件が偽なら後続の行へ進む」節点になり、網羅には数えない。文字列のリテラルはランタイムの `string_equal` で比べる。`fold` の分岐は従来どおり構成子 1 段と束縛子だけ（`MatchCase`）。
 
 エラー処理は 3 層に分かれる（Effects.scala / CompileError.scala）:
 

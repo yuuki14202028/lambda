@@ -129,6 +129,74 @@ class PatternSuite extends munit.FunSuite {
     assertLeftContains(validate(src), "Operator == is not defined")
   }
 
+  // ---- 負の数・文字列・選択肢・条件 ----
+
+  private val less = "let __lt_i32(a: i32)(b: i32): bool = intrinsic[lt_i32](a)(b)\n"
+
+  test("負の数のリテラル（直前の本体と引き算にならない）") {
+    assertRight(encode(program("let f(n: i32): i32 = match n {\n  0 => n\n  -1 => 1\n  _ => 2\n}")))
+  }
+
+  test("文字列のリテラルは std/operators なしで使える") {
+    val src = "let f(s: foreign.C.String): i32 = match s { \"a\" => 1  \"b\" => 2  _ => 0 }\n" + main
+    val shown = encode(src).fold(fail(_), _.show)
+    assert(shown.contains("string_equal"), clue(shown))
+    assertLeftContains(validate("let f(s: foreign.C.String): i32 = match s { \"a\" => 1 }\n" + main), "no case matches _")
+  }
+
+  test("p | q: 複数のパターンを 1 つの本体にまとめる") {
+    assertRight(encode(program("let f(n: i32): i32 = match n { 0 | 1 | 2 => 1  _ => 0 }")))
+    assertRight(encode(program("let f(o: Option[i32]): i32 = match o { Some(0 | 1) => 1  Some(_) | None => 0 }")))
+    assertRight(encode(program("let f(p: Pair[Option[i32]][i32]): i32 = match p { MkPair(Some(x))(_) | MkPair(None)(x) => x }")))
+  }
+
+  test("p | q: 本体は複製されない") {
+    val shown = lowered(program("let f(n: i32): i32 = match n { 0 | 1 | 2 => 12345  _ => 0 }")).fold(fail(_), _.show)
+    assertEquals("12345".r.findAllIn(shown).length, 1, clue(shown))
+  }
+
+  test("p | q: どの選択肢も同じ変数を同じ型で束縛する") {
+    assertLeftContains(validate(program("let f(o: Option[i32]): i32 = match o { Some(x) | None => 0 }")), "must bind the same variables")
+    assertLeftContains(
+      validate(program("let f(p: Pair[i32][bool]): i32 = match p { MkPair(x)(_) | MkPair(_)(x) => 0 }")),
+      "must bind the same variables"
+    )
+  }
+
+  test("p | q: 網羅性は選択肢を合わせて調べる") {
+    assertLeftContains(validate(program("let f(b: Pair[bool][bool]): i32 = match b { MkPair(true)(_) | MkPair(_)(true) => 1 }")),
+      "no case matches MkPair(false)(false)")
+  }
+
+  test("条件付きの分岐: 条件が偽なら後続の分岐を試す") {
+    assertRight(encode(less + program("let f(o: Option[i32]): i32 = match o { Some(n) if n < 0 => 0  Some(n) => n  None => 1 }")))
+  }
+
+  test("条件付きの分岐は網羅に数えない") {
+    assertLeftContains(
+      validate(less + program("let f(o: Option[i32]): i32 = match o { Some(n) if n < 0 => 0  None => 1 }")),
+      "no case matches Some(_)"
+    )
+    assertLeftContains(validate(less + program("let f(n: i32): i32 = match n { m if m < 0 => 0 }")), "no case matches _")
+  }
+
+  test("条件は bool でなければならず、パターンの変数を使える") {
+    assertLeftContains(validate(program("let f(o: Option[i32]): i32 = match o { Some(n) if n => 0  _ => 1 }")), "Type mismatch")
+    assertLeftContains(validate(program("let f(o: Option[i32]): i32 = match o { Some(n) if m => 0  _ => 1 }")), "Variable m is not defined")
+  }
+
+  test("条件付きの分岐の後でも、同じパターンの分岐は到達可能") {
+    assertRight(encode(less + program("let f(n: i32): i32 = match n { m if m < 0 => 0  m => m }")))
+    assertLeftContains(validate(less + program("let f(n: i32): i32 = match n { m => m  k if k < 0 => 0 }")), "case 2 is unreachable")
+  }
+
+  test("後続の分岐の本体は、条件付きの分岐のパターン変数を捕まえない") {
+    val shown = lowered(less + program("let x: i32 = 7\nlet f(o: Option[i32]): i32 = match o { Some(x) if x < 0 => 0  _ => x }")).fold(fail(_), _.show)
+    val line = shown.linesIterator.find(_.startsWith("let f:")).getOrElse(fail(shown))
+    // 後続の分岐の本体（外側の x を返す）は、パターンの x を束縛する let の外に置かれる
+    assert(line.contains("(x)[i32]") && line.indexOf("(x)[i32]") < line.indexOf("let x: i32"), clue(line))
+  }
+
   // ---- パーサ ----
 
   test("キーワードで始まる識別子（letter / database / iffy / matcher / typed）を使える") {

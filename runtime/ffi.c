@@ -49,6 +49,10 @@ int put_char(int value) {
     return value;
 }
 
+int string_equal(const char *left, const char *right) {
+    return strcmp(left, right) == 0;
+}
+
 char *concat(const char *left, const char *right) {
     if (left == NULL) left = "";
     if (right == NULL) right = "";

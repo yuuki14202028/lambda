@@ -13,11 +13,13 @@ object PatternDesugar {
   // 検査の対象になる値（それを束縛した変数と型）
   private type Occurrence = (Variable, TypeRec[Type])
 
-  private final case class Row(patterns: List[Pattern[TypeRec]], bindings: Seq[(Variable, Occurrence)], index: Int)
+  private final case class Row(patterns: List[Pattern[TypeRec]], bindings: Seq[(Variable, Occurrence)], index: Int, guarded: Boolean)
 
   private enum Tree {
     case Fail
     case Leaf(row: Int, bindings: Seq[(Variable, Occurrence)])
+    // 条件付きの分岐: 条件が偽なら otherwise（後続の行）へ進む
+    case Guard(row: Int, bindings: Seq[(Variable, Occurrence)], otherwise: Tree)
     case Switch(on: Occurrence, branches: Seq[(ConstructorShape[TypeRec], Seq[Occurrence], Tree)])
     // default が None なのは、リテラルだけですべての値を尽くしている場合（bool の true / false）
     case Test(on: Occurrence, literals: Seq[(LiteralValue, Option[TypeRec[Expr]], Tree)], default: Option[Tree])
@@ -47,8 +49,10 @@ object PatternDesugar {
 
     def compile(occurrences: List[Occurrence], rows: List[Row]): Tree = rows match {
       case Nil => Tree.Fail
-      case first :: _ => first.patterns.indexWhere(p => !irrefutable(p)) match {
-        case -1 => Tree.Leaf(first.index, first.bindings ++ first.patterns.zip(occurrences).flatMap { case (p, on) => bound(p, on) })
+      case first :: later => first.patterns.indexWhere(p => !irrefutable(p)) match {
+        case -1 =>
+          val bindings = first.bindings ++ first.patterns.zip(occurrences).flatMap { case (p, on) => bound(p, on) }
+          if (first.guarded) Tree.Guard(first.index, bindings, compile(occurrences, later)) else Tree.Leaf(first.index, bindings)
         case column =>
           val on = occurrences(column)
           first.patterns(column) match {
@@ -59,6 +63,7 @@ object PatternDesugar {
                   row.patterns(column) match {
                     case Pattern.Constructor(name, args, _) => Option.when(name == shape.name)(refine(row, column, on, args.toList))
                     case Pattern.Literal(_, _) => invariant("a literal pattern cannot be matched against a data type")
+                    case Pattern.Or(_) => invariant("or-patterns must be expanded before compilation")
                     case _ => Some(refine(row, column, on, fields.map(_ => Pattern.Wildcard[TypeRec]())))
                   }
                 }
@@ -71,6 +76,7 @@ object PatternDesugar {
                 row.patterns(column) match {
                   case Pattern.Literal(v, _) => Option.when(value.contains(v))(refine(row, column, on, Nil))
                   case Pattern.Constructor(_, _, _) => invariant("a constructor pattern cannot be matched against a literal type")
+                  case Pattern.Or(_) => invariant("or-patterns must be expanded before compilation")
                   case _ => Some(refine(row, column, on, Nil))
                 }
               }
@@ -89,6 +95,7 @@ object PatternDesugar {
   private def leaves(tree: Tree): Seq[Int] = tree match {
     case Tree.Fail => Seq.empty
     case Tree.Leaf(row, _) => Seq(row)
+    case Tree.Guard(row, _, otherwise) => row +: leaves(otherwise)
     case Tree.Switch(_, branches) => branches.flatMap { case (_, _, sub) => leaves(sub) }
     case Tree.Test(_, literals, default) => literals.flatMap { case (_, _, sub) => leaves(sub) } ++ default.toSeq.flatMap(leaves)
   }
@@ -97,6 +104,8 @@ object PatternDesugar {
   private def unmatched(tree: Tree): Option[Map[Variable, String]] = tree match {
     case Tree.Fail => Some(Map.empty)
     case Tree.Leaf(_, _) => None
+    // 条件は偽になりうるので、条件付きの分岐は網羅に数えない
+    case Tree.Guard(_, _, otherwise) => unmatched(otherwise)
     case Tree.Switch(on, branches) =>
       branches.iterator.flatMap { case (shape, fields, sub) =>
         unmatched(sub).map { shapes =>
@@ -111,17 +120,29 @@ object PatternDesugar {
         .orElse(literals.iterator.flatMap { case (value, _, sub) => unmatched(sub).map(_ + (on._1 -> value.shown)) }.nextOption())
   }
 
-  private def treeOf(compiler: Compiler, scrutinee: Occurrence, patterns: Seq[Pattern[TypeRec]]): Tree =
-    compiler.compile(List(scrutinee), patterns.zipWithIndex.map { case (p, index) => Row(List(p), Seq.empty, index) }.toList)
+  // p | q を、選択肢ごとの（| のない）パターンに展開する。展開した行は同じ分岐（index）を指す
+  private def alternatives(pattern: Pattern[TypeRec]): List[Pattern[TypeRec]] = pattern match {
+    case Pattern.Or(options) => options.toList.flatMap(alternatives)
+    case Pattern.Constructor(name, args, siblings) =>
+      args.foldRight(List(List.empty[Pattern[TypeRec]])) { (arg, rest) =>
+        for { head <- alternatives(arg); tail <- rest } yield head :: tail
+      }.map(Pattern.Constructor[TypeRec](name, _, siblings))
+    case other => List(other)
+  }
+
+  private def treeOf(compiler: Compiler, scrutinee: Occurrence, cases: Seq[PatternCase[TypeRec]]): Tree =
+    compiler.compile(List(scrutinee), cases.zipWithIndex.toList.flatMap { case (c, index) =>
+      alternatives(c.pattern).map(p => Row(List(p), Seq.empty, index, c.guard.nonEmpty))
+    })
 
   // 型検査から呼ばれる: すべての値がどれかの分岐に当たり、どの分岐にも当たる値があること
-  def check(scrutineeType: TypeRec[Type], patterns: Seq[Pattern[TypeRec]]): EitherS[Unit] = {
+  def check(scrutineeType: TypeRec[Type], cases: Seq[PatternCase[TypeRec]]): EitherS[Unit] = {
     val root = Variable("$scrutinee")
-    val tree = treeOf(new Compiler, root -> scrutineeType, patterns)
+    val tree = treeOf(new Compiler, root -> scrutineeType, cases)
     val reached = leaves(tree).toSet
     unmatched(tree) match {
       case Some(shapes) => Left(CompileError.NonExhaustivePatterns(shapes.getOrElse(root, "_")))
-      case None => patterns.indices.find(!reached(_)).map(index => CompileError.UnreachableCase(index + 1)).toLeft(())
+      case None => cases.indices.find(!reached(_)).map(index => CompileError.UnreachableCase(index + 1)).toLeft(())
     }
   }
 
@@ -136,7 +157,7 @@ object PatternDesugar {
 
   private def lower(compiler: Compiler, resultType: TypeRec[Type], scrutinee: TypeRec[Expr], cases: Seq[PatternCase[TypeRec]]): TypeRec[Expr] = {
     val root = compiler.fresh("m") -> typeOf(scrutinee)
-    val tree = treeOf(compiler, root, cases.map(_.pattern))
+    val tree = treeOf(compiler, root, cases)
     val uses = leaves(tree).groupBy(identity).view.mapValues(_.length).toMap
 
     // 複数の葉から使われる本体は、束縛される変数を引数に取る関数として一度だけ置く
@@ -149,17 +170,27 @@ object PatternDesugar {
     def sharedType(index: Int, bound: Seq[(Variable, Occurrence)]): TypeRec[Type] =
       if (bound.isEmpty) arrowT(unitTypeT, resultType) else bound.map(_._2._2).foldRight(resultType)(arrowT)
 
+    // パターンの変数を、検査した値に束縛する
+    def binding(bound: Seq[(Variable, Occurrence)], body: TypeRec[Expr]): TypeRec[Expr] =
+      bound.foldRight(body) { case ((name, on), acc) => letT(name, typeOf(acc), on._2, ref(on), acc) }
+
+    def leaf(index: Int, bindings: Seq[(Variable, Occurrence)]): TypeRec[Expr] = {
+      val bound = binders(index, bindings)
+      shared.get(index) match {
+        case Some(function) =>
+          val functionRef = varrType(function, sharedType(index, bound))
+          if (bound.isEmpty) mkApp(functionRef, unitLitT(unitTypeT)) else bound.map { case (_, on) => ref(on) }.foldLeft(functionRef)(mkApp)
+        case None => binding(bound, cases(index).body)
+      }
+    }
+
     def generate(tree: Tree): TypeRec[Expr] = tree match {
       case Tree.Fail => invariant("a non-exhaustive match must be rejected by the type checker")
-      case Tree.Leaf(index, bindings) =>
-        val bound = binders(index, bindings)
-        shared.get(index) match {
-          case Some(function) =>
-            val functionRef = varrType(function, sharedType(index, bound))
-            if (bound.isEmpty) mkApp(functionRef, unitLitT(unitTypeT)) else bound.map { case (_, on) => ref(on) }.foldLeft(functionRef)(mkApp)
-          case None =>
-            bound.foldRight(cases(index).body) { case ((name, on), body) => letT(name, resultType, on._2, ref(on), body) }
-        }
+      case Tree.Leaf(index, bindings) => leaf(index, bindings)
+      // 条件と本体は別々に束縛する（後続の分岐がパターンの変数を捕まえないように）
+      case Tree.Guard(index, bindings, otherwise) =>
+        val condition = cases(index).guard.getOrElse(invariant("a guarded row must have a guard"))
+        ifT(resultType, binding(binders(index, bindings), condition), leaf(index, bindings), generate(otherwise))
       case Tree.Switch(on, branches) =>
         matchExprT(resultType, ref(on), branches.map { case (shape, fields, sub) => MatchCase[TypeRec](shape.name, fields.map(_._1), generate(sub)) })
       case Tree.Test(on, literals, default) =>
@@ -173,6 +204,7 @@ object PatternDesugar {
             val literal = value match {
               case LiteralValue.Num(text, typeName) => numT(text, typeName, on._2)
               case LiteralValue.Char(c) => charT(c, on._2)
+              case LiteralValue.Str(text) => stringLitT(text, on._2)
               case LiteralValue.Bool(_) => invariant("bool literals are tested with if")
             }
             val equality = equals.getOrElse(invariant("the equality of a literal pattern must be resolved by the type checker"))
@@ -186,6 +218,7 @@ object PatternDesugar {
       def collect(tree: Tree): Seq[(Int, Seq[(Variable, Occurrence)])] = tree match {
         case Tree.Fail => Seq.empty
         case Tree.Leaf(index, bindings) => Seq(index -> binders(index, bindings))
+        case Tree.Guard(index, bindings, otherwise) => (index -> binders(index, bindings)) +: collect(otherwise)
         case Tree.Switch(_, branches) => branches.flatMap { case (_, _, sub) => collect(sub) }
         case Tree.Test(_, literals, default) => literals.flatMap { case (_, _, sub) => collect(sub) } ++ default.toSeq.flatMap(collect)
       }
