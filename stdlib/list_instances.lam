@@ -14,7 +14,7 @@ derive Foldable[List]
 derive Traversable[List]
 
 impl[t] Semigroup[List[t]] {
-  def append(xs: List[t])(ys: List[t]): List[t] = appendList[t](xs)(ys)
+  def append(xs: List[t])(ys: List[t]): List[t] = List.append[t](xs)(ys)
 }
 
 impl[t] Monoid[List[t]] {

@@ -29,34 +29,19 @@ module Ordering {
     lt[a](with first)(x)(y) || (!lt[a](with first)(y)(x) && lt[a](with second)(x)(y)))
 }
 
-// ---- 整列 ----
-
-module Sorting {
-  // 整列済みのリストに 1 つ挿入する
-  private rec let insert[a](x: a)(sorted: List[a]): List[a] with Ord[a] = match sorted {
-    Nil => Cons[a](x)(Nil[a])
-    Cons(y)(rest) if lt[a](x)(y) => Cons[a](x)(sorted)
-    Cons(y)(rest) => Cons[a](y)(insert[a](x)(rest))
-  }
-
-  let sort[a](xs: List[a]): List[a] with Ord[a] = foldRight[List][a][List[a]](insert[a])(Nil[a])(xs)
-
-  // いちばん前に来るもの
-  let first[a](xs: List[a]): Option[a] with Ord[a] = head[a](sort[a](xs))
-}
-
 // ---- 成績 ----
 
 module Grades {
-  data Student = { MkStudent(String)(i32)(i32) }
+  // 名前を付けたフィールドは、s.name のように読める（Student の module の関数になる）
+  data Student = { MkStudent(name: String)(math: i32)(english: i32) }
 
-  let name(s: Student): String = match s { MkStudent(n)(_)(_) => n }
-  let math(s: Student): i32 = match s { MkStudent(_)(m)(_) => m }
-  let english(s: Student): i32 = match s { MkStudent(_)(_)(e) => e }
-  let total(s: Student): i32 = math(s) + english(s)
+  // 型の module に関数を足すと、同じ書き方で呼べる
+  module Student {
+    let total(s: Student): i32 = s.math + s.english
+  }
 
   impl Show[Student] {
-    def show = λs: Student. `{name(s)} ({math(s)}, {english(s)})`
+    def show = λs: Student. `{s.name} ({s.math}, {s.english})`
   }
 
   // 点数は 0 から 100 まで
@@ -74,12 +59,11 @@ module Grades {
       def show = λs: Scored[a]. match s { MkScored(label)(value) => `{label}: {value}` }
     }
 
-    let of(s: Student): Scored[i32] = MkScored[i32](name(s))(total(s))
+    let of(s: Student): Scored[i32] = MkScored[i32](s.name)(s.total)
   }
 }
 
 open Ordering
-open Sorting
 open Grades
 
 let students: List[Student] =
@@ -88,32 +72,33 @@ let students: List[Student] =
   Cons[Student](MkStudent("dave")(85)(60))(
   Cons[Student](MkStudent("bob")(50)(95))(Nil[Student]))))
 
-let byName: Ord[Student] = by[Student][String](name)
-let byMath: Ord[Student] = by[Student][i32](math)
-let byTotal: Ord[Student] = by[Student][i32](total)
+// フィールドを読む関数は普通の関数なので、そのまま渡せる
+let byName: Ord[Student] = by[Student][String](Student.name)
+let byMath: Ord[Student] = by[Student][i32](Student.math)
+let byTotal: Ord[Student] = by[Student][i32](Student.total)
 
 let main(): i32 = {
-  // 解決に任せる: 数の昇順
-  display[List[i32]](sort[i32](map[List][Student][i32](total)(students)));
+  // 解決に任せる: 数の昇順（xs.sorted は List.sorted[i32](xs)）
+  display[List[i32]](students.map[i32](Student.total).sorted);
   // 辞書を渡す: 数の降順
-  display[List[i32]](sort[i32](with reversed[i32](summon[Ord[i32]]))(map[List][Student][i32](total)(students)));
+  display[List[i32]](List.sorted[i32](with reversed[i32](summon[Ord[i32]]))(students.map[i32](Student.total)));
 
   // Student にはインスタンスがないので、順序はその場で決める
   println("by name:");
-  display[List[Student]](sort[Student](with byName)(students));
+  display[List[Student]](List.sorted[Student](with byName)(students));
   println("by total, highest first:");
-  display[List[Student]](using reversed[Student](byTotal) in sort[Student](students));
+  display[List[Student]](using reversed[Student](byTotal) in students.sorted);
   println("by math (highest first), then by name:");
-  display[List[Student]](using thenBy[Student](reversed[Student](byMath))(byName) in sort[Student](students));
+  display[List[Student]](using thenBy[Student](reversed[Student](byMath))(byName) in students.sorted);
   println("best in english:");
-  display[Option[Student]](first[Student](with reversed[Student](by[Student][i32](english)))(students));
+  display[Option[Student]](using reversed[Student](by[Student][i32](Student.english)) in students.sorted.head);
 
   // 入れ子の module の型と、導出したインスタンス
   println("totals:");
-  display[List[Summary.Scored[i32]]](map[List][Student][Summary.Scored[i32]](Summary.of)(students));
+  display[List[Summary.Scored[i32]]](students.map[Summary.Scored[i32]](Summary.of));
   display[Summary.Scored[bool]](map[Summary.Scored][i32][bool](λt: i32. t >= 150)(Summary.of(MkStudent("erin")(80)(80))));
   // 点数の検査: 1 つでも範囲の外なら全体が None
-  display[Option[List[i32]]](traverse[List][Option][i32][i32](valid)(map[List][Student][i32](math)(students)));
+  display[Option[List[i32]]](traverse[List][Option][i32][i32](valid)(students.map[i32](Student.math)));
   display[Option[Summary.Scored[i32]]](traverse[Summary.Scored][Option][i32][i32](valid)(Summary.of(MkStudent("frank")(90)(90))));
   0
 }

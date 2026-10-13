@@ -71,7 +71,7 @@ trait `C` は辞書のデータ型でもあり（`Env.dataTypes` に登録）、
 ### ドット記法（x.f）
 
 `x.f[T]` は「`x` の型の module にある関数 `f`」の呼び出し（Lean 4 の一般化フィールド記法と同じ考え方）。型の module は型と同じ完全な名前の module で（`moduleOfType`。組み込みの型はその名前、`foreign.C.String` は `String`。型変数・関数の型にはない）、メンバーは `Env.moduleMember` で引く。関数の型 `∀ā. [制約]* → P → …` の `P` を受け手の型と見比べて（`matchType`。形を上から比べるだけで推論はしない）`P` に現れる型引数を決め、それが `ā` の先頭に並んでいることを確かめる。残りの型引数は名前の直後に書かれたもの（`Select.typeArgs`）で、数が合わなければエラー。全部を適用して制約を解決した関数を `Select.resolved` に記録し、SelectDesugar が受け手への適用に展開する。
-パーサは、式の続きの `.f[T]` を `Select` に、`.` を含む名前 `a.b.c[T]` を `Path` に読む。`Path` は型検査が「値を指すいちばん短い前半」を値として読み、残りを `Select` にする（`checkPath`。値は同名の module を隠す。前半のどれも値でなければ、全体を修飾された名前として扱う）。型検査後の AST に `Path` は残らない。
+パーサは、式の続きの `.f[T]` を `Select` に、`.` を含む名前 `a.b.c[T]` を `Path` に読む。`Path` は型検査が「値を指すいちばん長い前半」を値として読み、残りを `Select` にする（`checkPath`。全体が修飾された名前として読めるならそれが優先される。前半のどれも値でなければ、全体を修飾された名前として扱う）。型検査後の AST に `Path` は残らない。
 
 ### 名前付きフィールド
 
@@ -124,7 +124,7 @@ PatternDesugar は行列から決定木を作り、構成子 1 段の `Match`（
 
 ### その他
 
-- `stdlib/*.lam` — `import std/...` で解決される標準ライブラリ。`StandardLibrary.scala` が `intrinsic[add_i32]` などの名前を組み込み演算へ対応付ける。文字と文字列の関数は `std/char`（module `Char`）と `std/string`（module `Str`）にある
+- `stdlib/*.lam` — `import std/...` で解決される標準ライブラリ。`StandardLibrary.scala` が `intrinsic[add_i32]` などの名前を組み込み演算へ対応付ける。型ごとの関数は、その型の module に、値を最初の引数に取る形で置く（ドット記法で呼べるように）: `List` / `Option` / `Pair` / `char` / `String` / `i32`
 - `runtime/ffi.c` — `foreign` で参照する C 関数の実装。関数値はコードポインタ + 環境ポインタのクロージャ
 - Generator: 束縛はすべてヒープの環境フレームに置き、`[x29, -16]` が現在のフレームを指す。関数本体の末尾位置の呼び出し（`Env.tail`）はフレームを畳んでジャンプにするので、末尾再帰はスタックを消費しない。メモリは `malloc` するだけで解放しない
 - `src/test/lam/*.lam` — EndToEndSuite が実行するプログラム（期待する出力はスイート側に書く）

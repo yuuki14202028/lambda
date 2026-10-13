@@ -84,34 +84,34 @@ let testApply(): bool =
   some && none && left && right
 
 let testChar(): bool =
-  Char.isDigit('7') && !Char.isDigit('a') && Char.isLetter('Q') && !Char.isLetter('1') &&
-    Char.isSpace(' ') && Char.isSpace('\n') && !Char.isSpace('_') &&
-    Char.toUpper('a') == 'A' && Char.toLower('Z') == 'z' && Char.toUpper('1') == '1' &&
-    Char.code('A') == 65 && Char.fromCode(48) == '0' &&
+  '7'.isDigit && !'a'.isDigit && 'Q'.isLetter && !'1'.isLetter &&
+    ' '.isSpace && '\n'.isSpace && !'_'.isSpace &&
+    'a'.toUpper == 'A' && 'Z'.toLower == 'z' && '1'.toUpper == '1' &&
+    'A'.code == 65 && char.fromCode(48) == '0' &&
     'a' < 'b' && 'b' >= 'b' && lt[char]('a')('b') && geq[char]('z')('a') &&
-    (match Char.digit('7') {
+    (match '7'.digit {
       Some(7) => true
       _ => false
     }) &&
-    (match Char.digit('x') {
+    (match 'x'.digit {
       None => true
       _ => false
     })
 
 let testString(): bool =
-  Str.length("hello") == 5 && "ab" + "cd" == "abcd" && "abc" < "abd" && "b" > "a" && "x" != "y" &&
-    Str.slice("hello")(1)(3) == "ell" && Str.slice("hello")(3)(10) == "lo" &&
-    Str.fromInt(42) == "42" && Str.toInt("17") == 17 &&
-    Str.fromList(Str.toList("round")) == "round" &&
-    Str.startsWith("he")("hello") && !Str.startsWith("lo")("hello") &&
-    Str.isEmpty("") && !Str.isEmpty(" ") &&
+  "hello".length == 5 && "ab" + "cd" == "abcd" && "abc" < "abd" && "b" > "a" && "x" != "y" &&
+    "hello".slice(1)(3) == "ell" && "hello".slice(3)(10) == "lo" &&
+    String.fromInt(42) == "42" && "17".toInt == 17 &&
+    String.fromList("round".toList) == "round" &&
+    "hello".startsWith("he") && !"hello".startsWith("lo") &&
+    "".isEmpty && !" ".isEmpty &&
     eq[String]("a")("a") && neq[String]("a")("b") && leq[String]("a")("a") &&
     append[String]("a")("b") == "ab" && append[String](empty[String])("z") == "z" &&
-    (match Str.charAt("abc")(1) {
+    (match "abc".charAt(1) {
       Some('b') => true
       _ => false
     }) &&
-    (match Str.charAt("abc")(3) {
+    (match "abc".charAt(3) {
       None => true
       _ => false
     })
@@ -142,20 +142,29 @@ let testContainerOrder(): bool =
     eq[List[Option[i32]]](Cons[Option[i32]](None[i32])(Nil[Option[i32]]))(Cons[Option[i32]](None[i32])(Nil[Option[i32]]))
 
 let testListFunctions(): bool =
-  let xs: List[i32] = range(1)(6) in
-  show[List[i32]](xs) == "[1, 2, 3, 4, 5]" && show[List[i32]](range(3)(3)) == "[]" &&
-    !isEmpty[i32](xs) && isEmpty[i32](Nil[i32]) &&
-    show[Option[i32]](last[i32](xs)) == "Some(5)" && show[Option[i32]](last[i32](Nil[i32])) == "None" &&
-    show[Option[i32]](nth[i32](2)(xs)) == "Some(3)" && show[Option[i32]](nth[i32](9)(xs)) == "None" &&
-    show[List[i32]](take[i32](2)(xs)) == "[1, 2]" && show[List[i32]](take[i32](9)(xs)) == "[1, 2, 3, 4, 5]" && show[List[i32]](take[i32](0)(xs)) == "[]" &&
-    show[List[i32]](drop[i32](3)(xs)) == "[4, 5]" && show[List[i32]](drop[i32](9)(xs)) == "[]" &&
-    show[Option[i32]](find[i32](λx: i32. x > 3)(xs)) == "Some(4)" && show[Option[i32]](find[i32](λx: i32. x > 9)(xs)) == "None" &&
-    any[i32](λx: i32. x == 5)(xs) && !any[i32](λx: i32. x == 6)(xs) &&
-    all[i32](λx: i32. x > 0)(xs) && !all[i32](λx: i32. x > 1)(xs) &&
-    contains[i32](3)(xs) && !contains[i32](7)(xs) &&
-    show[List[Pair[i32][bool]]](zip[i32][bool](xs)(Cons[bool](true)(Cons[bool](false)(Nil[bool])))) == "[(1, true), (2, false)]" &&
-    show[List[i32]](zipWith[i32][i32][i32](λa: i32. λb: i32. a * b)(xs)(xs)) == "[1, 4, 9, 16, 25]" &&
-    show[List[i32]](flatten[i32](Cons[List[i32]](range(1)(3))(Cons[List[i32]](Nil[i32])(Cons[List[i32]](range(7)(9))(Nil[List[i32]]))))) == "[1, 2, 7, 8]"
+  let xs: List[i32] = List.range(1)(6) in
+  show[List[i32]](xs) == "[1, 2, 3, 4, 5]" && show[List[i32]](List.range(3)(3)) == "[]" &&
+    !xs.isEmpty && Nil[i32].isEmpty && xs.length == 5 &&
+    show[Option[i32]](xs.last) == "Some(5)" && show[Option[i32]](Nil[i32].last) == "None" &&
+    show[Option[i32]](xs.head) == "Some(1)" && xs.head.getOrElse(0) == 1 && Nil[i32].head.getOrElse(7) == 7 &&
+    show[Option[i32]](xs.nth(2)) == "Some(3)" && show[Option[i32]](xs.nth(9)) == "None" &&
+    show[List[i32]](xs.take(2)) == "[1, 2]" && show[List[i32]](xs.take(9)) == "[1, 2, 3, 4, 5]" && show[List[i32]](xs.take(0)) == "[]" &&
+    show[List[i32]](xs.drop(3)) == "[4, 5]" && show[List[i32]](xs.drop(9)) == "[]" &&
+    show[Option[i32]](xs.find(λx: i32. x > 3)) == "Some(4)" && show[Option[i32]](xs.find(λx: i32. x > 9)) == "None" &&
+    xs.any(λx: i32. x == 5) && !xs.any(λx: i32. x == 6) &&
+    xs.all(λx: i32. x > 0) && !xs.all(λx: i32. x > 1) &&
+    xs.contains(3) && !xs.contains(7) &&
+    show[List[Pair[i32][bool]]](xs.zip[bool](Cons[bool](true)(Cons[bool](false)(Nil[bool])))) == "[(1, true), (2, false)]" &&
+    show[List[i32]](xs.zipWith[i32][i32](xs)(λa: i32. λb: i32. a * b)) == "[1, 4, 9, 16, 25]" &&
+    show[List[i32]](Cons[List[i32]](List.range(1)(3))(Cons[List[i32]](Nil[i32])(Cons[List[i32]](List.range(7)(9))(Nil[List[i32]]))).flatten) == "[1, 2, 7, 8]" &&
+    show[List[i32]](xs.map[i32](λx: i32. x * 2).filter(λx: i32. x > 4).reverse) == "[10, 8, 6]" &&
+    xs.foldLeft[i32](0)(λacc: i32. λx: i32. acc * 10 + x) == 12345 && xs.foldRight[i32](0)(λx: i32. λacc: i32. acc * 10 + x) == 54321 &&
+    show[List[i32]](xs.flatMap[i32](λx: i32. Cons[i32](x)(Cons[i32](x)(Nil[i32]))).take(4)) == "[1, 1, 2, 2]" &&
+    show[List[i32]](Cons[i32](3)(Cons[i32](1)(Cons[i32](2)(Nil[i32]))).sorted) == "[1, 2, 3]" &&
+    show[List[String]](Cons[String]("b")(Cons[String]("a")(Nil[String])).sorted.append(Nil[String])) == "[a, b]" &&
+    Pair[i32][bool](1)(true).first == 1 && Pair[i32][bool](1)(true).swap.first &&
+    Some[i32](1).isSome && None[i32].isNone && Some[i32](2).map[i32](λx: i32. x + 1).getOrElse(0) == 3 &&
+    42.toString == "42" && 'x'.toString == "x"
 
 let main(): i32 =
   if testOption() then

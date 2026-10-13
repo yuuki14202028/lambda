@@ -276,11 +276,11 @@ object TAnalyser {
     _ <- guard(Equivalence.alpha(param, receiverType), notApplicable)
   } yield selectT(resultType, receiver, member, typeArgs, resolved)
 
-  // . を含む名前 a.b.c: 値を指すいちばん短い前半（a か a.b か …）を値として読み、残りをドット記法として読む。
-  // 値は同じ名前の module を隠す。前半のどれも値でなければ、全体を修飾された名前として報告する
+  // . を含む名前 a.b.c: 値を指すいちばん長い前半（a.b.c か a.b か a）を値として読み、残りをドット記法として読む。
+  // 全体が修飾された名前（M.x）として読めるなら、それが優先される。前半のどれも値でなければ、全体を修飾された名前として報告する
   private def checkPath(name: Variable, typeArgs: Seq[TypeRec[Type]]): Check[TypeRec[Expr]] = ask.flatMap { env =>
     val segments = name.name.split('.').toSeq
-    val prefix = (1 to segments.length).find(n => env.lookupValue(Variable(segments.take(n).mkString("."))).nonEmpty)
+    val prefix = (segments.length to 1 by -1).find(n => env.lookupValue(Variable(segments.take(n).mkString("."))).nonEmpty)
     def variable(written: Variable): Check[TypeRec[Expr]] = for {
       found <- lift(env.lookupValue(written).toRight(CompileError.UndefinedVariable(written)))
       resolved <- discharge(varrType(found._1, found._2))

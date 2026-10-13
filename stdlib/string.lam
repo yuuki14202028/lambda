@@ -1,4 +1,4 @@
-// 文字列。関数は module Str にまとめてある（Str.length(s) のように使う）。
+// 文字列。関数は module String にあり、s.length や s.startsWith("ab") のように書ける。
 // Eq / Ord / Add（連結）/ Semigroup / Monoid のインスタンスがあるので、文字列どうしは ==・<・+ で扱える。
 
 import "std/operators"
@@ -12,7 +12,7 @@ import "std/monoid"
 
 type String = foreign.C.String
 
-module Str {
+module String {
   let length: String → i32 = foreign[String → i32] string_length
   let append: String → String → String = foreign[String → String → String] concat
   let equal: String → String → bool = foreign[String → String → bool] string_equal
@@ -42,25 +42,35 @@ module Str {
     Cons(c)(rest) => append(fromChar(c))(fromList(rest))
   }
 
-  let startsWith(prefix: String)(s: String): bool = equal(slice(s)(0)(length(prefix)))(prefix)
+  let startsWith(s: String)(prefix: String): bool = equal(slice(s)(0)(length(prefix)))(prefix)
 }
+
+// 数と文字を文字列にする
+module i32 {
+  let toString(n: i32): String = String.fromInt(n)
+}
+
+module char {
+  let toString(c: char): String = String.fromChar(c)
+}
+
 
 
 impl Eq[String] {
-  def eq(x: String)(y: String): bool = Str.equal(x)(y)
+  def eq(x: String)(y: String): bool = String.equal(x)(y)
 }
 
 impl Ord[String] {
-  def lt(x: String)(y: String): bool = Str.compare(x)(y) < 0
+  def lt(x: String)(y: String): bool = String.compare(x)(y) < 0
 }
 
 // + は連結
 impl Add[String] {
-  def add(x: String)(y: String): String = Str.append(x)(y)
+  def add(x: String)(y: String): String = String.append(x)(y)
 }
 
 impl Semigroup[String] {
-  def append(x: String)(y: String): String = Str.append(x)(y)
+  def append(x: String)(y: String): String = String.append(x)(y)
 }
 
 impl Monoid[String] {

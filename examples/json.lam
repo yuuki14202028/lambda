@@ -23,32 +23,32 @@ module Reading {
   private let done[a](value: a)(next: i32): Step[a] = Some[Pair[a][i32]](Pair[a][i32](value)(next))
 
   // 空白を読み飛ばした位置
-  private rec let skip(text: String)(at: i32): i32 = match Str.charAt(text)(at) {
-    Some(c) if Char.isSpace(c) => skip(text)(at + 1)
+  private rec let skip(text: String)(at: i32): i32 = match text.charAt(at) {
+    Some(c) if c.isSpace => skip(text)(at + 1)
     _ => at
   }
 
   // 決まった 1 文字（前の空白は読み飛ばす）
-  private let expect(c: char)(text: String)(at: i32): Step[unit] = match Str.charAt(text)(skip(text)(at)) {
+  private let expect(c: char)(text: String)(at: i32): Step[unit] = match text.charAt(skip(text)(at)) {
     Some(found) if found == c => done[unit](())(skip(text)(at) + 1)
     _ => None[Pair[unit][i32]]
   }
 
   // 条件を満たす文字が続くかぎり読む
   private let span(test: char → bool)(text: String)(start: i32): Pair[String][i32] =
-    rec let stop(at: i32): i32 = match Str.charAt(text)(at) {
+    rec let stop(at: i32): i32 = match text.charAt(at) {
       Some(c) if test(c) => stop(at + 1)
       _ => at
-    } in Pair[String][i32](Str.slice(text)(start)(stop(start) - start))(stop(start))
+    } in Pair[String][i32](text.slice(start)(stop(start) - start))(stop(start))
 
-  private let word(text: String)(at: i32): Step[String] = match span(Char.isLetter)(text)(skip(text)(at)) {
+  private let word(text: String)(at: i32): Step[String] = match span(char.isLetter)(text)(skip(text)(at)) {
     Pair("")(_) => None[Pair[String][i32]]
     Pair(found)(next) => done[String](found)(next)
   }
 
-  private let number(text: String)(at: i32): Step[i32] = match span(Char.isDigit)(text)(skip(text)(at)) {
+  private let number(text: String)(at: i32): Step[i32] = match span(char.isDigit)(text)(skip(text)(at)) {
     Pair("")(_) => None[Pair[i32][i32]]
-    Pair(digits)(next) => done[i32](Str.toInt(digits))(next)
+    Pair(digits)(next) => done[i32](digits.toInt)(next)
   }
 
   // "…"（エスケープは扱わない）
@@ -60,14 +60,14 @@ module Reading {
   }
 
   rec {
-    let value(text: String)(at: i32): Step[Json] = match Str.charAt(text)(skip(text)(at)) {
+    let value(text: String)(at: i32): Step[Json] = match text.charAt(skip(text)(at)) {
       Some('[') => items(text)(skip(text)(at) + 1)
       Some('{') => members(text)(skip(text)(at) + 1)
       Some('"') => context[Option] {
         Pair(s)(next): Pair[String][i32] = quoted(text)(at);
         Pair[Json][i32](JString(s))(next)
       }
-      Some(c) if Char.isDigit(c) => context[Option] {
+      Some(c) if c.isDigit => context[Option] {
         Pair(n)(next): Pair[i32][i32] = number(text)(at);
         Pair[Json][i32](JNumber(n))(next)
       }
@@ -125,7 +125,7 @@ module Reading {
 
   // 文字列全体が 1 つの値であること
   let read(text: String): Option[Json] = match value(text)(0) {
-    Some(Pair(json)(next)) if skip(text)(next) == Str.length(text) => Some[Json](json)
+    Some(Pair(json)(next)) if skip(text)(next) == text.length => Some[Json](json)
     _ => None[Json]
   }
 }

@@ -1,5 +1,5 @@
 // 文字。char と文字コード（i32）の変換、分類、大文字・小文字。
-// 関数は module Char にまとめてある（Char.isDigit(c) のように使う）。
+// 関数は char の module にあり、c.isDigit のように書ける（char.isDigit(c) とも書ける）。
 
 import "std/operators"
 import "std/option"
@@ -7,7 +7,7 @@ import "std/eq"
 import "std/eq_instances"
 import "std/ord"
 
-module Char {
+module char {
   let code: char → i32 = foreign[char → i32] char_code
   let fromCode: i32 → char = foreign[i32 → char] char_from_code
 
@@ -31,5 +31,5 @@ module Char {
 }
 
 impl Ord[char] {
-  def lt(x: char)(y: char): bool = Char.code(x) < Char.code(y)
+  def lt(x: char)(y: char): bool = x.code < y.code
 }

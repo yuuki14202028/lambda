@@ -121,13 +121,26 @@ class SelectSuite extends FunSuite {
 
   // ---- 名前の読み方 ----
 
-  test("値は同じ名前の module を隠す: a.b の a が値なら、ドット記法") {
+  test("a.b が修飾された名前（M.x）として読めるなら、それが優先される") {
     val src =
       """module M {
         |  let isEmpty: i32 = 0
+        |  let other: i32 = 0
         |}
-        |let viaModule: i32 = M.isEmpty
-        |let f(M: List[i32]): bool = M.isEmpty
+        |let f(M: List[i32]): i32 = M.isEmpty
+        |let g(M: List[i32]): bool = M.prepend(1).isEmpty
+        |""".stripMargin
+    assertRight(encode(program(src)))
+  }
+
+  test("構成子と同じ名前の module のメンバーを、修飾して呼べる") {
+    val src =
+      """data Box[a] = { Box(a) }
+        |module Box {
+        |  let content[a](b: Box[a]): a = match b { Box(x) => x }
+        |}
+        |let n: i32 = Box.content[i32](Box[i32](1))
+        |let m: i32 = Box[i32](1).content
         |""".stripMargin
     assertRight(encode(program(src)))
   }

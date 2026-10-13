@@ -1,105 +1,153 @@
+// リスト。関数は module List にあり、どれもリストを最初の引数に取るので、xs.length や xs.map[b](f) のように書ける。
+
 import "std/operators"
 import "std/option"
 import "std/pair"
 import "std/eq"
+import "std/ord"
 
 rec data List[a] = { Nil, Cons(a)(List[a]) }
 
-rec let appendList[a](xs: List[a])(ys: List[a]): List[a] = match xs {
-  Nil => ys
-  Cons(x)(rest) => Cons[a](x)(appendList[a](rest)(ys))
-}
+module List {
+  rec let append[a](xs: List[a])(ys: List[a]): List[a] = match xs {
+    Nil => ys
+    Cons(x)(rest) => Cons[a](x)(append[a](rest)(ys))
+  }
 
-rec let length[a](xs: List[a]): usize = match xs {
-  Nil => 0usize
-  Cons(_)(rest) => length[a](rest) + 1usize
-}
+  rec let length[a](xs: List[a]): i32 = match xs {
+    Nil => 0
+    Cons(_)(rest) => length[a](rest) + 1
+  }
 
-let reverse[a](xs: List[a]): List[a] =
-  rec let go(acc: List[a])(l: List[a]): List[a] = match l {
-    Nil => acc
-    Cons(x)(rest) => go(Cons[a](x)(acc))(rest)
-  } in go(Nil[a])(xs)
+  let isEmpty[a](xs: List[a]): bool = match xs {
+    Nil => true
+    _ => false
+  }
 
-rec let filter[a](p: a → bool)(xs: List[a]): List[a] = match xs {
-  Nil => Nil[a]
-  Cons(x)(rest) => if p(x) then Cons[a](x)(filter[a](p)(rest)) else filter[a](p)(rest)
-}
+  let reverse[a](xs: List[a]): List[a] =
+    rec let go(acc: List[a])(l: List[a]): List[a] = match l {
+      Nil => acc
+      Cons(x)(rest) => go(Cons[a](x)(acc))(rest)
+    } in go(Nil[a])(xs)
 
-let head[a](xs: List[a]): Option[a] = match xs {
-  Nil => None[a]
-  Cons(x)(_) => Some[a](x)
-}
+  // ---- 要素ごとの変換と畳み込み ----
 
-let tail[a](xs: List[a]): Option[List[a]] = match xs {
-  Nil => None[List[a]]
-  Cons(_)(rest) => Some[List[a]](rest)
-}
+  rec let map[a][b](xs: List[a])(f: a → b): List[b] = match xs {
+    Nil => Nil[b]
+    Cons(x)(rest) => Cons[b](f(x))(map[a][b](rest)(f))
+  }
 
-let isEmpty[a](xs: List[a]): bool = match xs {
-  Nil => true
-  _ => false
-}
+  rec let flatMap[a][b](xs: List[a])(f: a → List[b]): List[b] = match xs {
+    Nil => Nil[b]
+    Cons(x)(rest) => append[b](f(x))(flatMap[a][b](rest)(f))
+  }
 
-rec let last[a](xs: List[a]): Option[a] = match xs {
-  Nil => None[a]
-  Cons(x)(Nil) => Some[a](x)
-  Cons(_)(rest) => last[a](rest)
-}
+  rec let filter[a](xs: List[a])(test: a → bool): List[a] = match xs {
+    Nil => Nil[a]
+    Cons(x)(rest) => if test(x) then Cons[a](x)(filter[a](rest)(test)) else filter[a](rest)(test)
+  }
 
-// index 番目（0 から数える）。範囲の外は None
-rec let nth[a](index: i32)(xs: List[a]): Option[a] = match xs {
-  Nil => None[a]
-  Cons(x)(rest) => if index == 0 then Some[a](x) else nth[a](index - 1)(rest)
-}
+  // 左から畳み込む: f(…f(f(start)(x1))(x2)…)(xn)
+  rec let foldLeft[a][b](xs: List[a])(start: b)(f: b → a → b): b = match xs {
+    Nil => start
+    Cons(x)(rest) => foldLeft[a][b](rest)(f(start)(x))(f)
+  }
 
-// 先頭の count 個
-rec let take[a](count: i32)(xs: List[a]): List[a] = match xs {
-  Cons(x)(rest) if count > 0 => Cons[a](x)(take[a](count - 1)(rest))
-  _ => Nil[a]
-}
+  // 右から畳み込む: f(x1)(f(x2)(…f(xn)(start)…))
+  rec let foldRight[a][b](xs: List[a])(start: b)(f: a → b → b): b = match xs {
+    Nil => start
+    Cons(x)(rest) => f(x)(foldRight[a][b](rest)(start)(f))
+  }
 
-// 先頭の count 個を除いた残り
-rec let drop[a](count: i32)(xs: List[a]): List[a] = match xs {
-  Cons(_)(rest) if count > 0 => drop[a](count - 1)(rest)
-  _ => xs
-}
+  // ---- 取り出す ----
 
-// 条件を満たす最初の要素
-rec let find[a](test: a → bool)(xs: List[a]): Option[a] = match xs {
-  Nil => None[a]
-  Cons(x)(_) if test(x) => Some[a](x)
-  Cons(_)(rest) => find[a](test)(rest)
-}
+  let head[a](xs: List[a]): Option[a] = match xs {
+    Nil => None[a]
+    Cons(x)(_) => Some[a](x)
+  }
 
-rec let any[a](test: a → bool)(xs: List[a]): bool = match xs {
-  Nil => false
-  Cons(x)(rest) => test(x) || any[a](test)(rest)
-}
+  let tail[a](xs: List[a]): Option[List[a]] = match xs {
+    Nil => None[List[a]]
+    Cons(_)(rest) => Some[List[a]](rest)
+  }
 
-rec let all[a](test: a → bool)(xs: List[a]): bool = match xs {
-  Nil => true
-  Cons(x)(rest) => test(x) && all[a](test)(rest)
-}
+  rec let last[a](xs: List[a]): Option[a] = match xs {
+    Nil => None[a]
+    Cons(x)(Nil) => Some[a](x)
+    Cons(_)(rest) => last[a](rest)
+  }
 
-let contains[a](x: a)(xs: List[a]): bool with Eq[a] = any[a](λy: a. eq[a](x)(y))(xs)
+  // index 番目（0 から数える）。範囲の外は None
+  rec let nth[a](xs: List[a])(index: i32): Option[a] = match xs {
+    Nil => None[a]
+    Cons(x)(rest) => if index == 0 then Some[a](x) else nth[a](rest)(index - 1)
+  }
 
-// 2 つのリストの要素を順に組にする。長さは短いほうに合わせる
-rec let zipWith[a][b][c](f: a → b → c)(xs: List[a])(ys: List[b]): List[c] = match Pair[List[a]][List[b]](xs)(ys) {
-  Pair(Cons(x)(xt))(Cons(y)(yt)) => Cons[c](f(x)(y))(zipWith[a][b][c](f)(xt)(yt))
-  _ => Nil[c]
-}
+  // 先頭の count 個
+  rec let take[a](xs: List[a])(count: i32): List[a] = match xs {
+    Cons(x)(rest) if count > 0 => Cons[a](x)(take[a](rest)(count - 1))
+    _ => Nil[a]
+  }
 
-let zip[a][b](xs: List[a])(ys: List[b]): List[Pair[a][b]] =
-  zipWith[a][b][Pair[a][b]](λx: a. λy: b. Pair[a][b](x)(y))(xs)(ys)
+  // 先頭の count 個を除いた残り
+  rec let drop[a](xs: List[a])(count: i32): List[a] = match xs {
+    Cons(_)(rest) if count > 0 => drop[a](rest)(count - 1)
+    _ => xs
+  }
 
-// low 以上 high 未満の整数
-let range(low: i32)(high: i32): List[i32] =
-  rec let from(n: i32)(acc: List[i32]): List[i32] = if n < low then acc else from(n - 1)(Cons[i32](n)(acc)) in
-  from(high - 1)(Nil[i32])
+  // ---- 探す ----
 
-// リストのリストを 1 つにつなぐ
-rec let flatten[a](xss: List[List[a]]): List[a] = match xss {
-  Nil => Nil[a]
-  Cons(xs)(rest) => appendList[a](xs)(flatten[a](rest))
+  // 条件を満たす最初の要素
+  rec let find[a](xs: List[a])(test: a → bool): Option[a] = match xs {
+    Nil => None[a]
+    Cons(x)(_) if test(x) => Some[a](x)
+    Cons(_)(rest) => find[a](rest)(test)
+  }
+
+  rec let any[a](xs: List[a])(test: a → bool): bool = match xs {
+    Nil => false
+    Cons(x)(rest) => test(x) || any[a](rest)(test)
+  }
+
+  rec let all[a](xs: List[a])(test: a → bool): bool = match xs {
+    Nil => true
+    Cons(x)(rest) => test(x) && all[a](rest)(test)
+  }
+
+  let contains[a](xs: List[a])(x: a): bool with Eq[a] = any[a](xs)(λy: a. x == y)
+
+  // ---- 組み合わせる ----
+
+  // 2 つのリストの要素を順に組にする。長さは短いほうに合わせる
+  rec let zipWith[a][b][c](xs: List[a])(ys: List[b])(f: a → b → c): List[c] = match Pair[List[a]][List[b]](xs)(ys) {
+    Pair(Cons(x)(xt))(Cons(y)(yt)) => Cons[c](f(x)(y))(zipWith[a][b][c](xt)(yt)(f))
+    _ => Nil[c]
+  }
+
+  let zip[a][b](xs: List[a])(ys: List[b]): List[Pair[a][b]] =
+    zipWith[a][b][Pair[a][b]](xs)(ys)(λx: a. λy: b. Pair[a][b](x)(y))
+
+  // リストのリストを 1 つにつなぐ
+  rec let flatten[a](xss: List[List[a]]): List[a] = match xss {
+    Nil => Nil[a]
+    Cons(xs)(rest) => append[a](xs)(flatten[a](rest))
+  }
+
+  // ---- 整列 ----
+
+  // 整列済みのリストに 1 つ挿入する
+  private rec let insert[a](sorted: List[a])(x: a): List[a] with Ord[a] = match sorted {
+    Nil => Cons[a](x)(Nil[a])
+    Cons(y)(rest) => if x < y then Cons[a](x)(sorted) else Cons[a](y)(insert[a](rest)(x))
+  }
+
+  // 小さい順に並べる（同じ値の順は保つ）
+  let sorted[a](xs: List[a]): List[a] with Ord[a] = foldRight[a][List[a]](xs)(Nil[a])(λx: a. λacc: List[a]. insert[a](acc)(x))
+
+  // ---- 作る ----
+
+  // low 以上 high 未満の整数
+  let range(low: i32)(high: i32): List[i32] =
+    rec let from(n: i32)(acc: List[i32]): List[i32] = if n < low then acc else from(n - 1)(Cons[i32](n)(acc)) in
+    from(high - 1)(Nil[i32])
 }

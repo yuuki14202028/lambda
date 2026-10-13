@@ -1,1 +1,7 @@
-data Pair[a][b] = { Pair(a)(b) }
+// 2 つの値の組。p.first / p.second で読める。
+
+data Pair[a][b] = { Pair(first: a)(second: b) }
+
+module Pair {
+  let swap[a][b](p: Pair[a][b]): Pair[b][a] = Pair[b][a](p.second)(p.first)
+}

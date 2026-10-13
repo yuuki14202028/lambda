@@ -71,7 +71,7 @@ impl Describe.Weight[Shape.Shape] {
 module Library {
   import "std/list"
 
-  let firstOr(xs: List[i32])(fallback: i32): i32 = match Library.head[i32](xs) {
+  let firstOr(xs: List[i32])(fallback: i32): i32 = match Library.List.head[i32](xs) {
     Some(x) => x
     Library.None => fallback
   }

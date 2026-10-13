@@ -1,1 +1,37 @@
+// あるかもしれない値。関数は module Option にあり、o.getOrElse(0) のように書ける。
+
 data Option[a] = { Some(a), None }
+
+module Option {
+  let isSome[a](o: Option[a]): bool = match o {
+    Some(_) => true
+    None => false
+  }
+
+  let isNone[a](o: Option[a]): bool = match o {
+    Some(_) => false
+    None => true
+  }
+
+  // 値があればそれを、なければ fallback を返す
+  let getOrElse[a](o: Option[a])(fallback: a): a = match o {
+    Some(x) => x
+    None => fallback
+  }
+
+  // 値がなければ other を使う
+  let orElse[a](o: Option[a])(other: Option[a]): Option[a] = match o {
+    Some(_) => o
+    None => other
+  }
+
+  let map[a][b](o: Option[a])(f: a → b): Option[b] = match o {
+    Some(x) => Some[b](f(x))
+    None => None[b]
+  }
+
+  let flatMap[a][b](o: Option[a])(f: a → Option[b]): Option[b] = match o {
+    Some(x) => f(x)
+    None => None[b]
+  }
+}

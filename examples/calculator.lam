@@ -33,7 +33,7 @@ module Parsing {
 
   // 条件を満たす 1 文字を読む
   let satisfy(expected: String)(test: char → bool): Parser[char] = MkParser[char](λinput: Input. match input {
-    MkInput(text)(at) => match Str.charAt(text)(at) {
+    MkInput(text)(at) => match text.charAt(at) {
       Some(c) if test(c) => Parsed[char](c)(MkInput(text)(at + 1))
       _ => Failed[char](at)(expected)
     }
@@ -45,7 +45,7 @@ module Parsing {
 
   // 入力の終わり
   let end: Parser[unit] = MkParser[unit](λinput: Input. match input {
-    MkInput(text)(at) => if at == Str.length(text) then Parsed[unit](())(input) else Failed[unit](at)("the end of the input")
+    MkInput(text)(at) => if at == text.length then Parsed[unit](())(input) else Failed[unit](at)("the end of the input")
   })
 
   // p を試し、何も読まずに失敗したら q を試す
@@ -104,7 +104,7 @@ open Parsing
 
 // ---- 字句 ----
 
-let spaces: Parser[List[char]] = many[char](satisfy("a space")(Char.isSpace))
+let spaces: Parser[List[char]] = many[char](satisfy("a space")(char.isSpace))
 
 // p を読み、後ろの空白を読み飛ばす
 let token[a](p: Parser[a]): Parser[a] = context[Parser] {
@@ -113,13 +113,13 @@ let token[a](p: Parser[a]): Parser[a] = context[Parser] {
   x
 }
 
-let symbol(c: char): Parser[char] = token[char](satisfy(`\`{Str.fromChar(c)}\``)(λfound: char. found == c))
+let symbol(c: char): Parser[char] = token[char](satisfy(`\`{String.fromChar(c)}\``)(λfound: char. found == c))
 
 let number: Parser[i32] = token[i32](
-  map[Parser][List[char]][i32](λdigits: List[char]. Str.toInt(Str.fromList(digits)))(some[char](satisfy("a number")(Char.isDigit)))
+  map[Parser][List[char]][i32](λdigits: List[char]. String.toInt(String.fromList(digits)))(some[char](satisfy("a number")(char.isDigit)))
 )
 
-let word: Parser[Name] = token[Name](map[Parser][List[char]][Name](Str.fromList)(some[char](satisfy("a name")(Char.isLower))))
+let word: Parser[Name] = token[Name](map[Parser][List[char]][Name](String.fromList)(some[char](satisfy("a name")(char.isLower))))
 
 // 決まった単語。別の単語だったら、読まなかったことにする
 let keyword(text: String): Parser[Name] = attempt[Name](context[Parser] {

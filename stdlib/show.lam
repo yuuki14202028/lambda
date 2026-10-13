@@ -13,7 +13,7 @@ trait Show[a] {
 }
 
 impl Show[i32] {
-  def show = Str.fromInt
+  def show = String.fromInt
 }
 
 impl Show[i64] {
@@ -29,7 +29,7 @@ impl Show[bool] {
 }
 
 impl Show[char] {
-  def show = Str.fromChar
+  def show = String.fromChar
 }
 
 impl Show[String] {

@@ -14,7 +14,7 @@ infixr 5 :: = cons
 
 // 左結合: xs ++ ys ++ zs
 trait Append[a] { def append(x: a)(y: a): a }
-impl[a] Append[List[a]] { def append = appendList[a] }
+impl[a] Append[List[a]] { def append = List.append[a] }
 infixr 5 ++ = append
 
 // 関数に値を渡す。いちばん弱い

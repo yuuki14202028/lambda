@@ -17,7 +17,7 @@ module List {
   }
 
   // 残りの型引数（b）は、名前の後に書く
-  let mapped[a][b](xs: List[a])(f: a → b): List[b] = map[List][a][b](f)(xs)
+  let mapped[a][b](xs: List[a])(f: a → b): List[b] = map[a][b](xs)(f)
 
   rec let total(xs: List[i32]): i32 = match xs {
     Nil => 0
@@ -26,15 +26,15 @@ module List {
 }
 
 module List {
-  private rec let insert[a](x: a)(sorted: List[a]): List[a] with Ord[a] = match sorted {
+  private rec let place[a](x: a)(sorted: List[a]): List[a] with Ord[a] = match sorted {
     Nil => Cons[a](x)(Nil[a])
-    Cons(y)(rest) => if x < y then Cons[a](x)(sorted) else Cons[a](y)(insert[a](x)(rest))
+    Cons(y)(rest) => if x < y then Cons[a](x)(sorted) else Cons[a](y)(place[a](x)(rest))
   }
 
   // 制約は、受け手の型から読んだ型引数で解決される
-  rec let sorted[a](xs: List[a]): List[a] with Ord[a] = match xs {
+  rec let ordered[a](xs: List[a]): List[a] with Ord[a] = match xs {
     Nil => Nil[a]
-    Cons(x)(rest) => insert[a](x)(sorted[a](rest))
+    Cons(x)(rest) => place[a](x)(ordered[a](rest))
   }
 
   // 前のブロックのメンバーは、そのまま見える
@@ -45,7 +45,7 @@ module List {
 }
 
 module Option {
-  let orElse[a](o: Option[a])(fallback: a): a = match o {
+  let valueOr[a](o: Option[a])(fallback: a): a = match o {
     Some(x) => x
     None => fallback
   }
@@ -75,15 +75,15 @@ let numbers: List[i32] = Cons[i32](3)(Cons[i32](1)(Cons[i32](2)(Nil[i32])))
 
 let main(): i32 = {
   printInt(numbers.size);
-  printInt(numbers.sorted.first(0));
+  printInt(numbers.ordered.first(0));
   printInt(numbers.mapped[i32](λn: i32. n * 10).total);
   // 式の続きにも書ける。行を変えてもよい
   printInt(Cons[i32](5)(numbers)
-    .sorted
+    .ordered
     .mapped[bool](λn: i32. n.isEven)
     .mapped[i32](λb: bool. b.toInt)
     .total);
-  printInt(head[i32](numbers).orElse(0).double);
+  printInt(numbers.head.valueOr(0).double);
   printInt((1 + 2).double);
   // 修飾された名前の後にも続けられる
   printInt(Shape.unit.scale(3).area);

@@ -3,31 +3,25 @@
 
 import "std/prelude"
 
-// ---- 自分の型に演算子を定義する ----
+// ---- 自分の型と演算子 ----
+//
+// 構成子の引数に名前を付けると、v.x のように読める（Vec の module の関数 Vec.x ができる）。
 //
 // a + b は「+ に宣言された関数 add に、a の型を渡したもの」の呼び出し。
 // std/operators が operator + = add と宣言しているので、Add を実装すれば + が使える。
 
-data Vec = { MkVec(i32)(i32) }
+data Vec = { MkVec(x: i32)(y: i32) }
 
 impl Add[Vec] {
-  def add(v: Vec)(w: Vec): Vec = match v {
-    MkVec(x1)(y1) => match w {
-      MkVec(x2)(y2) => MkVec(x1 + x2)(y1 + y2)
-    }
-  }
+  def add(v: Vec)(w: Vec): Vec = MkVec(v.x + w.x)(v.y + w.y)
 }
 
 impl Eq[Vec] {
-  def eq(v: Vec)(w: Vec): bool = match Pair[Vec][Vec](v)(w) {
-    Pair(MkVec(x1)(y1))(MkVec(x2)(y2)) => x1 == x2 && y1 == y2
-  }
+  def eq(v: Vec)(w: Vec): bool = v.x == w.x && v.y == w.y
 }
 
 impl Show[Vec] {
-  def show = λv: Vec. match v {
-    MkVec(x)(y) => `<{x}, {y}>`
-  }
+  def show = λv: Vec. `<{v.x}, {v.y}>`
 }
 
 // 制約があれば、型変数にも演算子を使える
@@ -60,15 +54,15 @@ rec let sumPairs(xs: List[Pair[i32][i32]]): i32 = match xs {
 
 let main(): i32 = {
   let v: Vec = MkVec(1)(2) in
-  let numbers: List[i32] = range(1)(5) in
-  let squares: List[i32] = map[List][i32][i32](λn: i32. n * n)(numbers) in {
+  let numbers: List[i32] = List.range(1)(5) in
+  let squares: List[i32] = numbers.map[i32](λn: i32. n * n) in {
     println(`v + v = {v + v}`);
     println(`double = {double[Vec](v)}, {double[i32](21)}, {double[String]("ab")}`);
     println(`equal = {v + v == double[Vec](v)}`);
     println(`compute = {compute(5)}, {compute(0)}`);
-    println(`classify = {map[List][i32][String](classify)(Cons[i32](0)(Cons[i32](-4)(Cons[i32](2)(Cons[i32](9)(Nil[i32])))))}`);
-    println(`squares = {squares}, sum = {foldLeft[List][i32][i32](λacc: i32. λn: i32. acc + n)(0)(squares)}`);
-    println(`dot = {sumPairs(zip[i32][i32](numbers)(squares))}`);
+    println(`classify = {Cons[i32](0)(Cons[i32](-4)(Cons[i32](2)(Cons[i32](9)(Nil[i32])))).map[String](classify)}`);
+    println(`squares = {squares}, sum = {squares.foldLeft[i32](0)(λacc: i32. λn: i32. acc + n)}`);
+    println(`dot = {sumPairs(numbers.zip[i32](squares))}`);
     0
   }
 }

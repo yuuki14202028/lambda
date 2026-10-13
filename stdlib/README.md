@@ -6,10 +6,10 @@
 
 ### 基本データ型
 
-- **option.lam** - `Option[a]` 型（`Some(a)` または `None`）
+- **option.lam** - `Option[a]` 型（`Some(a)` または `None`）と module `Option`（`o.getOrElse(d)` / `o.map[b](f)` / `o.isSome` など）
 - **either.lam** - `Either[a][b]` 型（`Left(a)` または `Right(b)`）
-- **pair.lam** - `Pair[a][b]` 型（2つの値の組）
-- **list.lam** - `List[a]` 型（連結リスト）と `appendList` / `length` / `reverse` / `filter` / `head` / `tail`
+- **pair.lam** - `Pair[a][b]` 型（2つの値の組。`p.first` / `p.second` / `p.swap`）
+- **list.lam** - `List[a]` 型（連結リスト）と module `List`（`xs.length` / `xs.map[b](f)` / `xs.filter(p)` / `xs.sorted` / `xs.head` など。どの関数もリストを最初の引数に取る）
 - **id.lam** - `Id[a]` 型（恒等ファンクター、`Functor` は derive）
 
 ### 型クラス (Traits)

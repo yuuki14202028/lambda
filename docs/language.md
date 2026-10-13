@@ -601,7 +601,7 @@ let result: bool = numbers
 
 - 探すのは、型の名前と同じ名前の module だけです。`List[i32]` なら `List`、module の中の型 `Shape.T` なら `Shape.T`、組み込みの型はその名前（`i32`、`bool`、`char`。文字列は `String`）です。型変数や関数の型には module がないので、ドットでは呼べません。
 - 関数の型 `∀ā. … → P → …` の最初の引数の型 `P` を `x` の型と見比べて、`P` に現れる型引数を決めます。それらは関数の型引数の先頭に並んでいなければなりません。残りの型引数は `x.f[T]` と名前の後に書きます。制約（`with`）は、その時点で解決されます。
-- `a.b` の `a` が値なら、ドット記法です。値でなければ module の修飾（`M.x`）です。値は同じ名前の module を隠します。
+- `a.b` が module の修飾（`M.x`）として読めるなら、そう読みます。読めなければ、`a` を値として `b` をドット記法で呼びます。
 
 推論はありません。`x` の型は既に決まっていて、そこから読むだけです。
 
@@ -646,15 +646,33 @@ let printNumber: i32 → i32 = foreign[i32 → i32] print_int
 
 `import "std/prelude"` で全部が入ります。個別に `import "std/list"` のようにも取り込めます。
 
+型ごとの関数は、その型の module にあり、どれも値を最初の引数に取ります。そのためドット記法でつなげて書けます。
+
+```lam
+let scores: List[i32] = Cons[i32](70)(Cons[i32](95)(Cons[i32](82)(Nil[i32])))
+
+let best: i32 = scores.sorted.last.getOrElse(0)
+
+let report: String = scores
+  .filter(λs: i32. s >= 80)
+  .map[String](λs: i32. s.toString)
+  .foldLeft[String]("")(λacc: String. λs: String. if acc.isEmpty then s else acc + ", " + s)
+
+// 関数として渡すときは、module の名前で修飾する
+let lengths: List[i32] = Cons[String]("ab")(Cons[String]("cde")(Nil[String])).map[i32](String.length)
+```
+
 | ファイル | 内容 |
 | --- | --- |
 | `operators` | 組み込みの型の演算子 |
-| `option` `either` `pair` `list` `id` | `Option`（`Some` / `None`）、`Either`（`Left` / `Right`）、`Pair`、`List`（`Nil` / `Cons`）、`Id`。リストの関数は `length`、`reverse`、`filter`、`head`、`tail`、`last`、`nth`、`take`、`drop`、`find`、`any`、`all`、`contains`、`zip`、`zipWith`、`range`、`flatten`、`appendList` |
+| `option` | `Option`（`Some` / `None`）。module `Option`: `isSome`、`isNone`、`getOrElse`、`orElse`、`map`、`flatMap` |
+| `pair` `either` `id` | `Pair`（`p.first` / `p.second`、`swap`）、`Either`（`Left` / `Right`）、`Id` |
+| `list` | `List`（`Nil` / `Cons`）。module `List`: `length`、`isEmpty`、`append`、`reverse`、`map`、`flatMap`、`filter`、`foldLeft`、`foldRight`、`head`、`tail`、`last`、`nth`、`take`、`drop`、`find`、`any`、`all`、`contains`、`zip`、`zipWith`、`flatten`、`sorted`、`range` |
 | `eq` `ord` | `Eq`（`eq` / `neq`）、`Ord`（`lt` / `leq` / `gt` / `geq`）。基本の型と、`Option` / `Either` / `Pair` / `List`（辞書順）のインスタンス |
 | `semigroup` `monoid` | `append`、`empty` |
 | `functor` `foldable` `traversable` `applicative` `monad` | `map`、`foldRight` / `foldLeft`、`traverse`、`pure` / `apply`、`flatMap` |
-| `char` | module `Char`: `isDigit`、`isLetter`、`isSpace`、`toUpper`、`code` など |
-| `string` | 型 `String` と module `Str`: `length`、`charAt`、`slice`、`toList`、`toInt` など。文字列の `==`・`<`・`+` |
+| `char` | module `char`: `isDigit`、`isLetter`、`isSpace`、`toUpper`、`code`、`toString` など |
+| `string` | 型 `String` と module `String`: `length`、`charAt`、`slice`、`startsWith`、`toList`、`toInt`、`fromInt` など。文字列の `==`・`<`・`+`。`n.toString`（`i32`） |
 | `show` | `Show`（`show`）と、基本の型・コンテナのインスタンス |
 | `io` | `print`、`println`、`display`、`readLine` |
 | `function` | `id`、`const`、`compose`、`flip`、`curry`、`uncurry` |
