@@ -1,5 +1,7 @@
 import "std/operators"
 import "std/option"
+import "std/pair"
+import "std/eq"
 
 rec data List[a] = { Nil, Cons(a)(List[a]) }
 
@@ -32,4 +34,72 @@ let head[a](xs: List[a]): Option[a] = match xs {
 let tail[a](xs: List[a]): Option[List[a]] = match xs {
   Nil => None[List[a]]
   Cons(_)(rest) => Some[List[a]](rest)
+}
+
+let isEmpty[a](xs: List[a]): bool = match xs {
+  Nil => true
+  _ => false
+}
+
+rec let last[a](xs: List[a]): Option[a] = match xs {
+  Nil => None[a]
+  Cons(x)(Nil) => Some[a](x)
+  Cons(_)(rest) => last[a](rest)
+}
+
+// index 番目（0 から数える）。範囲の外は None
+rec let nth[a](index: i32)(xs: List[a]): Option[a] = match xs {
+  Nil => None[a]
+  Cons(x)(rest) => if index == 0 then Some[a](x) else nth[a](index - 1)(rest)
+}
+
+// 先頭の count 個
+rec let take[a](count: i32)(xs: List[a]): List[a] = match xs {
+  Cons(x)(rest) if count > 0 => Cons[a](x)(take[a](count - 1)(rest))
+  _ => Nil[a]
+}
+
+// 先頭の count 個を除いた残り
+rec let drop[a](count: i32)(xs: List[a]): List[a] = match xs {
+  Cons(_)(rest) if count > 0 => drop[a](count - 1)(rest)
+  _ => xs
+}
+
+// 条件を満たす最初の要素
+rec let find[a](test: a → bool)(xs: List[a]): Option[a] = match xs {
+  Nil => None[a]
+  Cons(x)(_) if test(x) => Some[a](x)
+  Cons(_)(rest) => find[a](test)(rest)
+}
+
+rec let any[a](test: a → bool)(xs: List[a]): bool = match xs {
+  Nil => false
+  Cons(x)(rest) => test(x) || any[a](test)(rest)
+}
+
+rec let all[a](test: a → bool)(xs: List[a]): bool = match xs {
+  Nil => true
+  Cons(x)(rest) => test(x) && all[a](test)(rest)
+}
+
+let contains[a](x: a)(xs: List[a]): bool with Eq[a] = any[a](λy: a. eq[a](x)(y))(xs)
+
+// 2 つのリストの要素を順に組にする。長さは短いほうに合わせる
+rec let zipWith[a][b][c](f: a → b → c)(xs: List[a])(ys: List[b]): List[c] = match Pair[List[a]][List[b]](xs)(ys) {
+  Pair(Cons(x)(xt))(Cons(y)(yt)) => Cons[c](f(x)(y))(zipWith[a][b][c](f)(xt)(yt))
+  _ => Nil[c]
+}
+
+let zip[a][b](xs: List[a])(ys: List[b]): List[Pair[a][b]] =
+  zipWith[a][b][Pair[a][b]](λx: a. λy: b. Pair[a][b](x)(y))(xs)(ys)
+
+// low 以上 high 未満の整数
+let range(low: i32)(high: i32): List[i32] =
+  rec let from(n: i32)(acc: List[i32]): List[i32] = if n < low then acc else from(n - 1)(Cons[i32](n)(acc)) in
+  from(high - 1)(Nil[i32])
+
+// リストのリストを 1 つにつなぐ
+rec let flatten[a](xss: List[List[a]]): List[a] = match xss {
+  Nil => Nil[a]
+  Cons(xs)(rest) => appendList[a](xs)(flatten[a](rest))
 }
