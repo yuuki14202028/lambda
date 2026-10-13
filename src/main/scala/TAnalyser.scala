@@ -601,6 +601,14 @@ object TAnalyser {
 
     case AST.InstApp(_, _) => invariant("InstApp with resolved evidence is inserted by the type checker and cannot appear in its input")
 
+    // using d in e: d の型（辞書の型）が表す制約を、e の中でスコープに入れる
+    case AST.Using(dictionary, body) => for {
+      env <- ask
+      typedDictionary <- dictionary
+      constraint <- lift(constraintOfDictionary(typeOf(typedDictionary), env.traits).toRight(CompileError.NotADictionary(typeOf(typedDictionary))))
+      typedBody <- body.local((e: Env) => e.withGivens(Seq(constraint)))
+    } yield usingT(typeOf(typedBody), typedDictionary, typedBody)
+
     case AST.Summon(constraint, _) => for {
       typed <- typedConstraint(constraint)
       expanded <- expandConstraint(typed, None)

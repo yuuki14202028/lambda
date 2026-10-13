@@ -38,6 +38,8 @@ enum AST[R[_], I] {
   case App(function: R[Expr], argument: R[Expr]) extends AST[R, Expr]
   case TyApp(function: R[Expr], argument: R[Type]) extends AST[R, Expr]
   case InstApp(function: R[Expr], evidence: Evidence[R]) extends AST[R, Expr]
+  // using d in e: e の中では、辞書の値 d をその型の制約のインスタンスとして解決に使う
+  case Using(dictionary: R[Expr], body: R[Expr]) extends AST[R, Expr]
   // summon[C[τ̄]]: 制約を解決して得た辞書そのもの（型は C[τ̄]）。evidence は型検査が埋める
   case Summon(constraint: Constraint[R], evidence: Option[Evidence[R]]) extends AST[R, Expr]
   case Foreign(value: Variable, types: R[Type]) extends AST[R, Expr]
@@ -388,6 +390,8 @@ def tyAppT(t: TypeRec[Type], function: TypeRec[Expr], argument: TypeRec[Type]): 
   HCofree(ExprAnn(t), AST.TyApp(function, argument))
 def instAppT(t: TypeRec[Type], function: TypeRec[Expr], evidence: Evidence[TypeRec]): TypeRec[Expr] =
   HCofree(ExprAnn(t), AST.InstApp(function, evidence))
+def usingT(t: TypeRec[Type], dictionary: TypeRec[Expr], body: TypeRec[Expr]): TypeRec[Expr] =
+  HCofree(ExprAnn(t), AST.Using(dictionary, body))
 def summonT(t: TypeRec[Type], constraint: Constraint[TypeRec], evidence: Evidence[TypeRec]): TypeRec[Expr] =
   HCofree(ExprAnn(t), AST.Summon(constraint, Some(evidence)))
 def foreignT(variable: Variable, t: TypeRec[Type], types: TypeRec[Type]): TypeRec[Expr] = HCofree(ExprAnn(t), AST.Foreign(variable, types))
@@ -492,6 +496,7 @@ def freeVars(expr: Rec[Expr]): Set[Variable] = {
     case AST.InstAbs(_, body) => body
     case AST.InstApp(function, evidence) => function ++ inEvidence(evidence)
     case AST.Summon(_, evidence) => evidence.fold(Set.empty[Variable])(inEvidence)
+    case AST.Using(dictionary, body) => dictionary ++ body
     case AST.Let(variable, _, value, body) => value ++ (body - variable)
     case AST.LetRec(bindings, body) => bindings.foldLeft(body)(_ ++ _.value) -- bindings.map(_.variable)
     case AST.TypeLet(_, _, _, body) => body

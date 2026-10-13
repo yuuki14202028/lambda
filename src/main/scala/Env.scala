@@ -46,6 +46,23 @@ def dictionaryType(constraint: TypeConstraint): TypeRec[Type] = {
 }
 
 // module の中の trait M.C の辞書コンストラクタは M.MkC（修飾は最後の名前に付ける）
+// dictionaryType の逆: 辞書の型から、それが表す制約を読み取る（辞書の型でなければ None）
+def constraintOfDictionary(t: TypeRec[Type], traits: Map[TypeVariable, TraitDef]): Option[TypeConstraint] = t.project match {
+  case AST.ForAll(variable, kind, body) =>
+    constraintOfDictionary(body, traits).map(c => c.copy(params = (variable, kind) +: c.params))
+  case AST.Arrow(from, to) => for {
+    premise <- constraintOfDictionary(from, traits)
+    rest <- constraintOfDictionary(to, traits)
+    if rest.params.isEmpty
+  } yield rest.copy(premises = premise +: rest.premises)
+  case _ =>
+    val (head, args) = collectTypeApps(t)
+    head.project match {
+      case AST.TypeVar(name) if traits.get(name).exists(_.param.length == args.length) => Some(TypeConstraint(name, args))
+      case _ => None
+    }
+}
+
 def dictionaryConstructor(traitName: TypeVariable): Variable = {
   val (path, short) = traitName.name.splitAt(traitName.name.lastIndexOf('.') + 1)
   Variable(s"${path}Mk$short")
@@ -112,7 +129,8 @@ case class Env(
   def withTypeVar(variable: TypeVariable, kind: Kind): Env = withTypeVars(Seq(variable -> kind))
   def withTypeVars(params: Iterable[(TypeVariable, Kind)]): Env =
     copy(typeVars = typeVars ++ params, scope = scope.copy(types = scope.types -- params.map(_._1.name)))
-  def withGivens(constraints: Seq[TypeConstraint]): Env = copy(givens = givens ++ constraints)
+  // 内側で入った制約を先に調べる（同じ制約があれば内側が優先される）
+  def withGivens(constraints: Seq[TypeConstraint]): Env = copy(givens = constraints ++ givens)
   def withAlias(variable: TypeVariable, alias: TypeAlias): Env =
     copy(typeAliases = typeAliases + (variable -> alias), scope = scope.copy(types = scope.types - variable.name))
   def withData(variable: TypeVariable, dataDef: DataDef): Env =

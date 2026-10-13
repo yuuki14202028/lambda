@@ -59,6 +59,6 @@ class EndToEndSuite extends munit.FunSuite {
   program("src/test/lam/patterns.lam", "100\n101\n42\n2\n0\n12\n5\n-1\n32\n1000\n9\n-1\n-2\n2\n0\n7\n" +
     "10\n20\n30\n40\n1\n2\n0\n1\n2\n3\n3\n7\n8\n1\n2\n3\n")
   program("src/test/lam/default_methods.lam", "1\n0\n0\n1\n0\n1\n9\n1\n")
-  program("src/test/lam/explicit_instances.lam", "1\n2\n1\n2\n3\n9\n0\n2\n")
+  program("src/test/lam/explicit_instances.lam", "1\n2\n1\n2\n3\n9\n0\n2\n9\n2\n")
   program("src/test/lam/modules.lam", "2\n10\n1\n2\n70\n7\n204\n9\n")
 }

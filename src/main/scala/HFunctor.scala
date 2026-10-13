@@ -140,6 +140,8 @@ given HTraverse[AST] with {
       (f(func), f(arg)).mapN(AST.TyApp(_, _))
     case AST.InstApp(func, evidence) =>
       (f(func), traverseEvidence(evidence)(f)).mapN(AST.InstApp(_, _))
+    case AST.Using(dictionary, body) =>
+      (f(dictionary), f(body)).mapN(AST.Using(_, _))
     case AST.Summon(constraint, evidence) =>
       (traverseConstraint(constraint)(f), evidence.traverse(traverseEvidence(_)(f))).mapN(AST.Summon(_, _))
     case AST.Foreign(v, types) =>

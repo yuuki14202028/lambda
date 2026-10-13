@@ -76,7 +76,7 @@ object ParserAST {
   }
 
   lazy val expr: Parser[IndexedRec[Expr]] =
-    Parser.defer(recExprP | dataLetP | foldP.backtrack | matchP | typeLetP | tyAbsP | absP | contextP.backtrack | letExprP | ifP | logicalOr)
+    Parser.defer(recExprP | usingP | dataLetP | foldP.backtrack | matchP | typeLetP | tyAbsP | absP | contextP.backtrack | letExprP | ifP | logicalOr)
 
 
   lazy val tyAbsP: Parser[IndexedRec[Expr]] = binderP('Λ', expr)(AST.TyAbs.apply)
@@ -445,7 +445,7 @@ object ParserAST {
     "in", "then", "else", "with", "as", "context",
     "let", "rec", "if", "match", "fold", "data", "type",
     "import", "trait", "impl", "def", "derive", "true", "false",
-    "foreign", "intrinsic", "module", "open", "private", "opaque", "summon"
+    "foreign", "intrinsic", "module", "open", "private", "opaque", "summon", "using"
   )
 
   private val infixIdentOp: Parser[(IndexedRec[Expr], IndexedRec[Expr]) => IndexedRec[Expr]] =
@@ -491,6 +491,10 @@ object ParserAST {
 
   lazy val atom: Parser[IndexedRec[Expr]] =
     Parser.defer(blockP | unitP.backtrack | numP | charP | stringP | interpStringP | boolP | foreignP | intrinsicP | summonP | varP | Parser.defer(expr).parens)
+
+  // using d in e: e の中では、辞書 d をインスタンスとして解決に使う
+  lazy val usingP: Parser[IndexedRec[Expr]] =
+    (("using" -+> Parser.defer(expr)) ~ inBody).map { case (dictionary, body) => AST.Using(dictionary, body) }.indexed
 
   // summon[C[τ̄]]: 解決されたインスタンスの辞書
   lazy val summonP: Parser[IndexedRec[Expr]] =

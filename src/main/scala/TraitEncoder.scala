@@ -49,7 +49,17 @@ object TraitEncoder {
       val (assumed, _) = destructInstArrow(t).getOrElse(invariant(s"InstAbs must have an instance-implicit type, got ${t.show}"))
       val dictVar = Variable(s"$$with_${scope.length}")
       val dictType = encodeType(dictionaryType(assumed), env)
-      mkAbs(dictVar, dictType, body(scope :+ (assumed -> varrType(dictVar, dictType))))
+      // 内側で入った制約を先に調べる（型検査の Env.withGivens と同じ順）
+      mkAbs(dictVar, dictType, body((assumed -> varrType(dictVar, dictType)) +: scope))
+
+    // using d in e  ↦  let $with_n = d in e（e の中では $with_n がその制約の辞書）
+    case (ExprAnn(_), AST.Using(dictionary, body)) =>
+      val encodedDictionary = dictionary(scope)
+      val assumed = constraintOfDictionary(typeOf(encodedDictionary), env.traits)
+        .getOrElse(invariant(s"using must be given a dictionary, got ${typeOf(encodedDictionary).show}"))
+      val dictVar = Variable(s"$$with_${scope.length}")
+      val encodedBody = body((assumed -> varrType(dictVar, typeOf(encodedDictionary))) +: scope)
+      letT(dictVar, typeOf(encodedBody), typeOf(encodedDictionary), encodedDictionary, encodedBody)
 
     case (ExprAnn(_), AST.Summon(_, evidence)) =>
       val resolved = evidence.getOrElse(invariant("summon reached TraitEncoder without evidence"))
@@ -89,7 +99,7 @@ object TraitEncoder {
       val premises = constraint.premises.zipWithIndex.map { case (premise, index) =>
         (premise, Variable(s"$$with_${scope.length + index}"), encodeType(dictionaryType(premise), env))
       }
-      val inner = dictionary(body, scope ++ premises.map { case (premise, dictVar, dictType) => premise -> varrType(dictVar, dictType) }, env)
+      val inner = dictionary(body, premises.map { case (premise, dictVar, dictType) => premise -> varrType(dictVar, dictType) } ++ scope, env)
       val withPremises = premises.foldRight(inner) { case ((_, dictVar, dictType), acc) => mkAbs(dictVar, dictType, acc) }
       constraint.params.foldRight(withPremises) { case ((p, k), acc) => mkTyAbs(p, k, acc) }
 

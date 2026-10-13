@@ -47,7 +47,7 @@ TAnalyser が検査して InstanceDef を Env に登録し、Deriver が手書�
 
 trait のメソッドはデフォルトの本体を持てる（`MethodSig.body`、`TraitDef.defaults`）。本体は、必須メソッド（デフォルトを持たないメソッド）を trait の型パラメータでの普通の値として、スーパークラスの制約を givens としてスコープに入れて検査する。自身のインスタンスも他のデフォルトも見えないので、辞書は自分自身を参照しない（`rec` 不要）。TraitEncoder はデフォルトを `$default_C_m: ∀p̄. スーパークラスの辞書… → 必須メソッド… → シグネチャ` に落とし、impl で省略されたメソッドをその適用で埋める（そのときだけ、定義されたメソッドを `$method_i` に束縛する）。
 
-インスタンスは明示的にも扱える。`summon[C[τ̄]]`（`Summon` ノード）は解決した辞書そのもので、型は辞書の型 `C[τ̄]`。`f(with d)` はパーサが `InstApp(f, Evidence.Explicit(d))` として読み、型検査は `f` の位置だけ制約を解決せずに残して（`Env.keepConstraints`。`indexedAlg` が子ごとに切り替える）、先頭の制約を `d` で満たす。残った制約は従来どおり解決する。
+インスタンスは明示的にも扱える。`summon[C[τ̄]]`（`Summon` ノード）は解決した辞書そのもので、型は辞書の型 `C[τ̄]`。`f(with d)` はパーサが `InstApp(f, Evidence.Explicit(d))` として読み、型検査は `f` の位置だけ制約を解決せずに残して（`Env.keepConstraints`。`indexedAlg` が子ごとに切り替える）、先頭の制約を `d` で満たす。残った制約は従来どおり解決する。`using d in e`（`Using` ノード）は `d` の型（辞書の型）から制約を読み取り（`constraintOfDictionary`）、`e` の中でスコープに入れる。スコープ中の制約は内側が優先される（`Env.withGivens` と TraitEncoder のスコープはどちらも内側を先頭に置く）。
 
 解決は型検査の一部で、その時点までに宣言されたインスタンスとスコープ中の制約だけを見る（インスタンスも「宣言してから使う」。impl 自身のメソッド本体からそのインスタンスはまだ見えない）。
 再帰は `rec` の印がある所に限る。`rec` は宣言の前に付ける修飾子で、宣言 1 つ（`rec let` / `rec data` / `rec impl`）か、同じ種類の宣言を囲んだ組（`rec { let …  let … }`）に付ける。組の全員が互いに、また自身から見える（相互再帰）。`derive` はインスタンス宣言なので `impl` と同じ組に入れられる（相互再帰のデータ型への `derive` は `rec { derive …  derive … }`）。AST では宣言を包む `TopRec(decls)`、式の中では `LetRec(bindings, body)` / `DataLetRec(datas, body)`、context ブロックの中では `ContextStep.Rec(bindings)`。

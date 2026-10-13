@@ -37,6 +37,10 @@ let heavier[a](x: a)(y: a): i32 with Named[a] = weight[a](first[a](y)(x))
 
 let numbers: List[i32] = Cons[i32](3)(Cons[i32](9)(Cons[i32](5)(Nil[i32])))
 
+let bestDescending(xs: List[i32]): i32 = using descending in best[i32](xs)(first[i32](4)(0))
+
+let flipped[a](x: a)(y: a): a with Order[a] = using reversed[a](summon[Order[a]]) in first[a](x)(y)
+
 let main(): i32 = {
   printInt(first[i32](1)(2));
   printInt(first[i32](with descending)(1)(2));
@@ -46,5 +50,7 @@ let main(): i32 = {
   printInt(best[i32](with descending)(numbers)(4));
   printInt(if before[i32](with descending)(1)(2) then 1 else 0);
   printInt(heavier[i32](2)(7));
+  printInt(bestDescending(numbers));
+  printInt(flipped[i32](1)(2));
   0
 }

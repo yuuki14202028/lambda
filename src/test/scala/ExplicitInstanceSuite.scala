@@ -118,4 +118,46 @@ class ExplicitInstanceSuite extends munit.FunSuite {
         |""".stripMargin
     assertRight(encode(src + main))
   }
+
+  // ---- using ----
+
+  test("using d in e: e の中では d がインスタンスとして解決に使われる") {
+    val shown = encode(prelude + "let n: i32 = using other in first[i32](1)(first[i32](2)(3))\n" + main).fold(fail(_), _.show)
+    val line = shown.linesIterator.find(_.startsWith("let n:")).getOrElse(fail(shown))
+    assert(!line.contains("$inst_Order_i32"), clue(line))
+  }
+
+  test("using の外では、従来どおりインスタンスが使われる") {
+    val shown = encode(prelude + "let n: i32 = first[i32](using other in 1)(2)\n" + main).fold(fail(_), _.show)
+    val line = shown.linesIterator.find(_.startsWith("let n:")).getOrElse(fail(shown))
+    assert(line.contains("$inst_Order_i32"), clue(line))
+  }
+
+  test("using はインスタンスのない型にも使える") {
+    assertRight(encode(prelude + "let b: bool = using MkOrder[bool](λx: bool. λy: bool. true) in first[bool](true)(false)\n" + main))
+    assertLeftContains(validate(prelude + "let b: bool = first[bool](true)(false)\n" + main), "No instance")
+  }
+
+  test("using は外側の同じ制約より優先される") {
+    val src = prelude +
+      """let flip[a](order: Order[a]): Order[a] = MkOrder[a](λx: a. λy: a. before[a](with order)(y)(x))
+        |let flipped[a](x: a)(y: a): a with Order[a] = using flip[a](summon[Order[a]]) in first[a](x)(y)
+        |""".stripMargin
+    val shown = validate(src + main).fold(fail(_), _.show)
+    assertRight(encode(src + main))
+    assert(shown.contains("using"), clue(shown))
+  }
+
+  test("using には量化された制約の辞書（多相関数）も渡せる") {
+    val src = prelude +
+      """data Box[a] = { MkBox(a) }
+        |let boxed: ∀a. Order[a] → Order[Box[a]] = Λa. λinner: Order[a]. MkOrder[Box[a]](λx: Box[a]. λy: Box[a]. true)
+        |let b: Box[i32] = using boxed in first[Box[i32]](MkBox[i32](1))(MkBox[i32](2))
+        |""".stripMargin
+    assertRight(encode(src + main))
+  }
+
+  test("using に辞書でない値は渡せない") {
+    assertLeftContains(validate(prelude + "let n: i32 = using 1 in 2\n" + main), "using expects a dictionary")
+  }
 }
