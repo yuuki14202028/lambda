@@ -20,8 +20,15 @@ object TypeConstraint {
 }
 
 // methods のシグネチャは trait パラメータを自由変数とする型（制約 C[p̄] を含まない）
-case class TraitDef(param: Seq[(TypeVariable, Kind)], methods: Seq[(Variable, TypeRec[Type])], supers: Seq[TypeConstraint]) {
+// defaults はデフォルトの本体を持つメソッド。それ以外（required）は impl が必ず定義する
+case class TraitDef(
+    param: Seq[(TypeVariable, Kind)],
+    methods: Seq[(Variable, TypeRec[Type])],
+    supers: Seq[TypeConstraint],
+    defaults: Set[Variable] = Set.empty
+) {
   def paramVars: Seq[TypeVariable] = param.map(_._1)
+  def required: Seq[(Variable, TypeRec[Type])] = methods.filterNot { case (name, _) => defaults(name) }
 }
 case class InstanceDef(name: TypeVariable, targets: Seq[TypeRec[Type]], context: Seq[TypeConstraint], dictName: Variable, params: Seq[(TypeVariable, Kind)])
 
@@ -46,6 +53,10 @@ def dictionaryConstructor(traitName: TypeVariable): Variable = {
 
 def instanceDictionaryName(traitName: TypeVariable, heads: Seq[String]): Variable =
   Variable(s"$$inst_${traitName.name}_${heads.mkString("_")}")
+
+// trait C のメソッド m のデフォルト: ∀p̄. スーパークラスの辞書… → 必須メソッド… → m のシグネチャ
+def defaultMethodName(traitName: TypeVariable, method: Variable): Variable =
+  Variable(s"$$default_${traitName.name}_${method.name.substring(method.name.lastIndexOf('.') + 1)}")
 
 def superDictionaryName(traitName: TypeVariable, index: Int): Variable =
   Variable(s"$$super_${traitName.name}_$index")

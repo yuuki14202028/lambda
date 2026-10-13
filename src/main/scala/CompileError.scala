@@ -96,6 +96,7 @@ enum CompileError {
   case ModifierOutsideModule(modifier: Modifier)
   case MixedRecursiveGroup
   case QuantifiedSuperclassUnsupported(traitName: TypeVariable)
+  case DefaultMethodTypeMismatch(traitName: TypeVariable, method: Variable, expected: TypeRec[Type], actual: TypeRec[Type])
   case QuantifiedParamUnused(traitName: TypeVariable, param: TypeVariable)
   case AlreadyDefined(kind: NameKind, name: String)
   case ParamAlreadyDefined(owner: DeclRef)
@@ -146,7 +147,6 @@ enum CompileError {
 
   // ---- trait / impl / with ----
   case TraitNeedsParameter(name: TypeVariable)
-  case DefaultMethodsUnsupported(name: TypeVariable)
   case ConstraintArityMismatch(site: Option[DeclRef], name: TypeVariable, expected: Int, actual: Int)
   case ConstraintKindMismatch(site: Option[DeclRef], name: TypeVariable, arg: TypeRec[Type], actual: Kind, expected: Kind)
   case ImplTargetArity(traitName: TypeVariable, expected: Int, actual: Int)
@@ -211,6 +211,8 @@ enum CompileError {
     case UndefinedTrait(name, site) =>
       site.fold(s"Trait ${name.name} is not defined")(s => s"${s.shown}: trait ${name.name} is not defined")
     case UndefinedModule(path) => s"Module ${path.mkString(".")} is not defined"
+    case DefaultMethodTypeMismatch(traitName, method, expected, actual) =>
+      s"Trait ${traitName.name}: the default of method ${method.name} has type ${actual.show}, expected ${expected.show}"
     case QuantifiedSuperclassUnsupported(traitName) => s"Trait ${traitName.name}: a superclass cannot be a quantified constraint"
     case QuantifiedParamUnused(traitName, param) =>
       s"Quantified constraint on ${traitName.name}: type variable ${param.name} does not appear in the constraint's arguments"
@@ -276,7 +278,6 @@ enum CompileError {
       s"Constructor ${constructor.name} does not belong to type ${scrutinee.show}"
 
     case TraitNeedsParameter(name) => s"Trait ${name.name} must have at least one parameter"
-    case DefaultMethodsUnsupported(name) => s"Trait ${name.name}: default method implementations are not supported yet"
     case ConstraintArityMismatch(site, name, expected, actual) =>
       s"${siteShown(site)}constraint ${name.name} expects $expected type arguments, got $actual"
     case ConstraintKindMismatch(site, name, arg, actual, expected) =>

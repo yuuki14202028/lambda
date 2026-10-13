@@ -408,26 +408,29 @@ object TAnalyser {
     } yield (typed, defineData(variable, dataDef))
   }
 
-  // trait C[p̄] は辞書のデータ型 C[p̄] = MkC(スーパークラスの辞書…)(メソッド…) でもある
+  // trait の型付きの宣言から TraitDef を作る（スーパークラスとシグネチャを展開する）
   private def traitOf(
       variable: TypeVariable,
       params: Seq[(TypeVariable, Kind)],
       supers: Seq[Constraint[TypeRec]],
-      sigs: Seq[(Variable, TypeRec[Type])]
-  ): Check[Env => Env] = {
+      methods: Seq[MethodSig[TypeRec]]
+  ): Check[TraitDef] = {
     val scope = (e: Env) => e.withTypeVars(params)
     for {
       expandedSupers <- supers.traverse(expandConstraint(_, Some(DeclRef.TraitDecl(variable)))).local(scope)
-      expandedSigs <- sigs.traverse { case (name, sig) => expandChecked(sig).local(scope).map(name -> _) }
-    } yield {
-      val ctorName = dictionaryConstructor(variable)
-      val fields = expandedSupers.map(dictionaryType) ++ expandedSigs.map(_._2)
-      val ctorDef = ConstructorDef(ctorName, variable, fields, 0)
-      (e: Env) => e
-        .withData(variable, DataDef(params, Seq(ctorDef)))
-        .withValues(expandedSigs.map { case (name, sig) => name -> methodType(variable, params, sig) } :+ (ctorName -> constructorType(variable, params, fields)))
-        .copy(constructors = e.constructors + (ctorName -> ctorDef), traits = e.traits + (variable -> TraitDef(params, expandedSigs, expandedSupers)))
-    }
+      expandedSigs <- methods.traverse(m => expandChecked(m.sig).local(scope).map(m.name -> _))
+    } yield TraitDef(params, expandedSigs, expandedSupers, methods.filter(_.body.nonEmpty).map(_.name).toSet)
+  }
+
+  // trait C[p̄] は辞書のデータ型 C[p̄] = MkC(スーパークラスの辞書…)(メソッド…) でもある
+  private def defineTrait(variable: TypeVariable, traitDef: TraitDef)(e: Env): Env = {
+    val params = traitDef.param
+    val ctorName = dictionaryConstructor(variable)
+    val fields = traitDef.supers.map(dictionaryType) ++ traitDef.methods.map(_._2)
+    val ctorDef = ConstructorDef(ctorName, variable, fields, 0)
+    e.withData(variable, DataDef(params, Seq(ctorDef)))
+      .withValues(traitDef.methods.map { case (name, sig) => name -> methodType(variable, params, sig) } :+ (ctorName -> constructorType(variable, params, fields)))
+      .copy(constructors = e.constructors + (ctorName -> ctorDef), traits = e.traits + (variable -> traitDef))
   }
 
   // match / fold: 網羅性と束縛子を検査し、各分岐の本体を型付けする。
@@ -835,14 +838,27 @@ object TAnalyser {
           !env.values.contains(ctorName) && !env.constructors.contains(ctorName),
           CompileError.DictionaryCtorAlreadyDefined(name, ctorName)
         )
-        _ <- guard(methods.forall(_.body.isEmpty), CompileError.DefaultMethodsUnsupported(name))
         typedSupers <- supers.traverse(typedConstraint).local(scope)
         _ <- guard(!typedSupers.exists(_.quantified), CompileError.QuantifiedSuperclassUnsupported(name))
         typedSigs <- methods.zip(methodNames).traverse { case (m, method) => m.sig.local(scope).map(method -> _) }
-        define <- traitOf(name, params, typedSupers, typedSigs)
-        typed = topTraitT(name, params, typedSupers, typedSigs.map { case (method, sig) => MethodSig[TypeRec](method, sig, None) })
+        signature <- traitOf(name, params, typedSupers, methods.zip(typedSigs).map { case (m, (method, sig)) =>
+          // 本体の有無だけを伝える（本体そのものは下で検査する）
+          MethodSig[TypeRec](method, sig, m.body.map(_ => unitLitT(unitTypeT)))
+        })
+        /* デフォルトの本体からは、必須メソッドが（この trait の型パラメータでの）普通の関数として見え、
+         * スーパークラスの制約がスコープに入る。自身のインスタンスは見えないので、辞書は自分自身を参照しない */
+        requiredShorts = methods.filter(_.body.isEmpty).map(_.name)
+        defaultScope = (e: Env) => requiredShorts.foldLeft(scope(e).withValues(signature.required).withGivens(signature.supers))(_.exportValue(_))
+        typedMethods <- methods.zip(signature.methods).traverse { case (m, (method, sig)) =>
+          m.body.traverse { body =>
+            body.local(defaultScope).flatMap { typedBody =>
+              guard(Equivalence.alpha(sig, typeOf(typedBody)), CompileError.DefaultMethodTypeMismatch(name, method, sig, typeOf(typedBody))).as(typedBody)
+            }
+          }.map(typedBody => MethodSig[TypeRec](method, typedSigs.find(_._1 == method).get._2, typedBody))
+        }
+        typed = topTraitT(name, params, typedSupers, typedMethods)
         result <- extending(typed) { e =>
-          (methods.map(_.name) :+ Variable(shortName(ctorName.name))).foldLeft(define(e).exportType(variable))((acc, short) => acc.exportValue(short))
+          (methods.map(_.name) :+ Variable(shortName(ctorName.name))).foldLeft(defineTrait(name, signature)(e).exportType(variable))((acc, short) => acc.exportValue(short))
         }
       } yield result
 
@@ -964,7 +980,8 @@ object TAnalyser {
     val sigScope = (e: Env) => implScope(e).withTypeVars(sigParams.map(_._1))
     for {
       _ <- guard(implMethodNames.distinct.length == implMethodNames.length, CompileError.DuplicateMembers(implRef, MemberKind.MethodMember))
-      missing = traitMethodNames.filterNot(implMethodNames.contains)
+      // デフォルトを持つメソッドは省略できる（TraitEncoder がデフォルトで埋める）
+      missing = traitDef.required.map(_._1).filterNot(implMethodNames.contains)
       _ <- guard(missing.isEmpty, CompileError.MissingMethods(implRef, missing))
       extra = implMethodNames.filterNot(traitMethodNames.contains)
       _ <- guard(extra.isEmpty, CompileError.ExtraMethods(implRef, extra))
@@ -1098,7 +1115,7 @@ object TAnalyser {
         }
       }
     case AST.TopTrait(variable, params, supers, methods) =>
-      (traitOf(variable, params, supers, methods.map(m => m.name -> m.sig)), ask).mapN((define, env) => define(env))
+      (traitOf(variable, params, supers, methods), ask).mapN((traitDef, env) => defineTrait(variable, traitDef)(env))
     case AST.TopModule(_, decls) => sealDecls(decls)
     case AST.TopModified(Modifier.Opaque, inner) => inner.project match {
       case AST.TopType(variable, _, _) => ask.map { env =>

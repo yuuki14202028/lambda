@@ -72,7 +72,7 @@ val showAlg: Algebra[AST, ShowResult] = [x] => node => node match {
   case AST.TopTrait(v, params, supers, methods) =>
     val suffix = params.map(showKindedParam).mkString
     val superText = showConstraints(supers)
-    val methodText = methods.map(m => s"  def ${m.name.name}: ${m.sig}").mkString("\n")
+    val methodText = methods.map(m => s"  def ${m.name.name}: ${m.sig}${m.body.fold("")(b => s" = $b")}").mkString("\n")
     s"trait ${v.name}$suffix$superText {\n$methodText\n}"
   case AST.TopImpl(v, params, targets, context, methods, _) =>
     val suffix = params.map(showKindedParam).mkString

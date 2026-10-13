@@ -237,10 +237,12 @@ object ParserAST {
     val typeParams = sp *> typeParamP.rep0
     val params = sp *> functionParamsP
     val supers = withClauseP
-    val method = ((("def" -+> identifier.map(Variable.apply)) ~ typeParams ~ params ~ typeAnnP ~ withClauseP).map {
-      case ((((name, typeParams), params), returnType), constraints) =>
+    // `= 本体` を書いたメソッドはデフォルトを持つ
+    val default = ((sp.with1.soft *> Parser.char('=')) *> sp *> Parser.defer(expr)).?
+    val method = ((("def" -+> identifier.map(Variable.apply)) ~ typeParams ~ params ~ typeAnnP ~ withClauseP ~ default).map {
+      case (((((name, typeParams), params), returnType), constraints), default) =>
         val sig = polymorphicType(typeParams, constrainedType(constraints, functionType(params, returnType)))
-        MethodSig(name, sig, None)
+        MethodSig(name, sig, default.map(value => polymorphicValue(typeParams, constrainedValue(constraints, functionValue(params, value)))))
     } <* sp).rep
     val body = sp.with1 *> ('{' -*> method <*- '}')
     (head ~ typeParams ~ supers ~ body).map {

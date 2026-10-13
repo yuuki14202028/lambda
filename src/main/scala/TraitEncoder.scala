@@ -29,7 +29,7 @@ object TraitEncoder {
   }
 
   private def encodeDecl(decl: TypeRec[Decl], env: Env): Seq[TypeRec[Decl]] = decl.project match {
-    case AST.TopTrait(name, params, _, _) => encodeTrait(name, params, env)
+    case AST.TopTrait(name, params, _, methods) => encodeTrait(name, params, methods, env)
     case AST.TopImpl(name, _, targets, _, methods, superEvidence) => Seq(encodeImpl(name, targets, methods, superEvidence, env))
     // rec impl のメソッド本体は組の辞書 $inst_C_h̄ を参照するので、辞書も rec の組にする
     case AST.TopRec(decls) => Seq(topRecT(decls.flatMap(encodeDecl(_, env))))
@@ -113,7 +113,7 @@ object TraitEncoder {
    * let $super_C_j : ∀p̄. C[p̄] → Sⱼ = Λp̄. λ$dict: C[p̄]. match $dict with | MkC(x̄) -> xⱼ
    * let mᵢ : ∀p̄. C[p̄] → τᵢ = Λp̄. λ$dict: C[p̄]. match $dict with | MkC(x̄) -> x₍ₛ₊ᵢ₎
    */
-  private def encodeTrait(name: TypeVariable, params: Seq[(TypeVariable, Kind)], env: Env): Seq[TypeRec[Decl]] = {
+  private def encodeTrait(name: TypeVariable, params: Seq[(TypeVariable, Kind)], methods: Seq[MethodSig[TypeRec]], env: Env): Seq[TypeRec[Decl]] = {
     val traitDef = traitOf(name, env)
     val ctorName = dictionaryConstructor(name)
     val fields = dictionaryFields(traitDef, env)
@@ -131,12 +131,42 @@ object TraitEncoder {
     val methodProjections = traitDef.methods.zipWithIndex.map { case ((methodName, _), index) =>
       projection(methodName, traitDef.supers.length + index)
     }
-    (dictDecl +: superProjections) ++ methodProjections
+    val defaults = methods.flatMap(m => m.body.map(body => defaultMethod(name, traitDef, m.name, body, env)))
+    (dictDecl +: superProjections) ++ methodProjections ++ defaults
+  }
+
+  // デフォルトが受け取るもの: スーパークラスの辞書と、必須メソッドの実装
+  private def defaultParams(traitDef: TraitDef, env: Env): (Seq[(TypeConstraint, Variable, TypeRec[Type])], Seq[(Variable, TypeRec[Type])]) = (
+    traitDef.supers.zipWithIndex.map { case (constraint, i) => (constraint, Variable(s"$$with_$i"), encodeType(dictionaryType(constraint), env)) },
+    traitDef.required.map { case (method, sig) => method -> encodeType(sig, env) }
+  )
+
+  /** def m: τ = e  （デフォルト。e の中では必須メソッド rⱼ が普通の関数として見える）
+   * let $default_C_m : ∀p̄. S₁ → … → ρ₁ → … → τ = Λp̄. λ$with_i: Sᵢ. … λrⱼ: ρⱼ. … e
+   */
+  private def defaultMethod(name: TypeVariable, traitDef: TraitDef, method: Variable, body: TypeRec[Expr], env: Env): TypeRec[Decl] = {
+    val (supers, required) = defaultParams(traitDef, env)
+    val scope: Scope = supers.map { case (constraint, dictVar, dictType) => constraint -> varrType(dictVar, dictType) }
+    val withRequired = required.foldRight(encodeIn(body, scope, env)) { case ((required, sig), acc) => mkAbs(required, sig, acc) }
+    val withSupers = supers.foldRight(withRequired) { case ((_, dictVar, dictType), acc) => mkAbs(dictVar, dictType, acc) }
+    val value = traitDef.param.foldRight(withSupers) { case ((p, k), acc) => mkTyAbs(p, k, acc) }
+    topLetT(defaultMethodName(name, method), typeOf(value), value)
+  }
+
+  private def defaultMethodType(traitDef: TraitDef, method: Variable, env: Env): TypeRec[Type] = {
+    val (supers, required) = defaultParams(traitDef, env)
+    val sig = traitDef.methods.collectFirst { case (name, sig) if name == method => encodeType(sig, env) }
+      .getOrElse(invariant(s"method ${method.name} is missing from its trait"))
+    val function = (supers.map(_._3) ++ required.map(_._2)).foldRight(sig)(arrowT)
+    traitDef.param.foldRight(function) { case ((p, k), acc) => forallTypeT(p, k, acc) }
   }
 
   /** impl[ā] C[T̄] with D₁, …, Dₖ { def mᵢ = eᵢ }
    * let $inst_C_h̄ : ∀ā. D₁ → … → Dₖ → C[T̄] =
    *   Λā. λ$ctx_1: D₁. … MkC[T̄](スーパークラスの辞書…)(e₁)…(eₙ)   (eᵢ は trait の宣言順)
+   *
+   * 省略されたメソッドはデフォルトで埋める。そのときは定義されたメソッドを一度だけ束縛して、デフォルトに渡す:
+   *   let $method_j = eⱼ in … MkC[T̄](スーパークラスの辞書…)($method_j | $default_C_m[T̄](スーパークラスの辞書…)(必須メソッド…))…
    */
   private def encodeImpl(
       traitName: TypeVariable,
@@ -152,14 +182,29 @@ object TraitEncoder {
     val context = inst.context.zipWithIndex.map { case (constraint, i) => (constraint, Variable(s"$$ctx_$i"), encodeType(dictionaryType(constraint), env)) }
     val scope: Scope = context.map { case (constraint, dictVar, dictType) => constraint -> varrType(dictVar, dictType) }
     val superDicts = superEvidence.map(dictionary(_, scope, env))
+    val defined = traitDef.methods.flatMap { case (methodName, _) =>
+      methods.collectFirst { case m if m.name == methodName => methodName -> encodeIn(m.body, scope, env) }
+    }
+    val usesDefaults = defined.length < traitDef.methods.length
+    // デフォルトを使うときだけ、定義されたメソッドを局所変数に束縛する
+    val locals = if (usesDefaults) defined.zipWithIndex.map { case ((methodName, body), i) => (methodName, Variable(s"$$method_$i"), body) } else Seq.empty
+    def definedMethod(methodName: Variable): Option[TypeRec[Expr]] =
+      locals.collectFirst { case (name, local, body) if name == methodName => varrType(local, typeOf(body)) }
+        .orElse(defined.collectFirst { case (name, body) if name == methodName => body })
     val bodies = traitDef.methods.map { case (methodName, _) =>
-      val body = methods.collectFirst { case m if m.name == methodName => m.body }
-        .getOrElse(invariant(s"impl $shown is missing method ${methodName.name}"))
-      encodeIn(body, scope, env)
+      definedMethod(methodName).getOrElse {
+        if (!traitDef.defaults(methodName)) invariant(s"impl $shown is missing method ${methodName.name}")
+        val default = varrType(defaultMethodName(traitName, methodName), defaultMethodType(traitDef, methodName, env))
+        val required = traitDef.required.map { case (name, _) =>
+          definedMethod(name).getOrElse(invariant(s"impl $shown is missing required method ${name.name}"))
+        }
+        (superDicts ++ required).foldLeft(inst.targets.foldLeft(default)(mkTyApp))(mkApp)
+      }
     }
     val dictType = applyTypeConstructor(traitName, traitDef.paramVars.map(typeVarT))
     val ctorType = traitDef.param.foldRight(dictionaryFields(traitDef, env).foldRight(dictType)(arrowT)) { case ((p, k), acc) => forallTypeT(p, k, acc) }
-    val constructed = (superDicts ++ bodies).foldLeft(inst.targets.foldLeft(varrType(dictionaryConstructor(traitName), ctorType))(mkTyApp))(mkApp)
+    val dictionaryValue = (superDicts ++ bodies).foldLeft(inst.targets.foldLeft(varrType(dictionaryConstructor(traitName), ctorType))(mkTyApp))(mkApp)
+    val constructed = locals.foldRight(dictionaryValue) { case ((_, local, body), acc) => letT(local, typeOf(acc), typeOf(body), body, acc) }
     val withContext = context.foldRight(constructed) { case ((_, dictVar, dictType), acc) => mkAbs(dictVar, dictType, acc) }
     val value = inst.params.foldRight(withContext) { case ((p, k), acc) => mkTyAbs(p, k, acc) }
     topLetT(inst.dictName, typeOf(value), value)

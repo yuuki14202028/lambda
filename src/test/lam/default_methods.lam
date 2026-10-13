@@ -1,0 +1,54 @@
+import "std/operators"
+
+let printInt: i32 → i32 = foreign[i32 → i32] print_int
+
+let asInt(b: bool): i32 = if b then 1 else 0
+
+trait Equal[a] {
+  def same(x: a)(y: a): bool
+  def differ(x: a)(y: a): bool = !same(x)(y)
+}
+
+impl Equal[i32] {
+  def same = λx: i32. λy: i32. x == y
+}
+
+impl Equal[bool] {
+  def same = λx: bool. λy: bool. x == y
+  def differ = λx: bool. λy: bool. false
+}
+
+trait Compare[a] with Equal[a] {
+  def less(x: a)(y: a): bool
+  def lessOrSame(x: a)(y: a): bool = less(x)(y) || same[a](x)(y)
+  def greater(x: a)(y: a): bool = less(y)(x)
+  def largest[f: * → *](pick: f[a] → a)(xs: f[a])(fallback: a): a = if less(fallback)(pick(xs)) then pick(xs) else fallback
+}
+
+impl Compare[i32] {
+  def less = λx: i32. λy: i32. x < y
+}
+
+data Box[a] = { MkBox(a) }
+
+impl[a] Equal[Box[a]] with Equal[a] {
+  def same = λx: Box[a]. λy: Box[a]. match x {
+    MkBox(l) => match y {
+      MkBox(r) => same[a](l)(r)
+    }
+  }
+}
+
+let unbox(b: Box[i32]): i32 = match b { MkBox(x) => x }
+
+let main(): i32 = {
+  printInt(asInt(differ[i32](1)(2)));
+  printInt(asInt(differ[i32](3)(3)));
+  printInt(asInt(differ[bool](true)(false)));
+  printInt(asInt(lessOrSame[i32](2)(2)));
+  printInt(asInt(lessOrSame[i32](3)(2)));
+  printInt(asInt(greater[i32](3)(2)));
+  printInt(largest[i32][Box](unbox)(MkBox[i32](9))(4));
+  printInt(asInt(differ[Box[i32]](MkBox[i32](1))(MkBox[i32](2))));
+  0
+}
