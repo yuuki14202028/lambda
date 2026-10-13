@@ -1,0 +1,3 @@
+let both[a](x: a)(y: a): a = x
+infixl 3 && = both
+let main(): i32 = 0

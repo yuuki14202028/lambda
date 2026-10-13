@@ -525,7 +525,7 @@ object Generator {
 
     case AST.UnaryOp(_, _, _) => pure(sys.error("operators must be desugared by OperatorDesugar before code generation"))
 
-    case AST.BinOp(_, _, _, _) => pure(sys.error("operators must be desugared by OperatorDesugar before code generation"))
+    case AST.BinOp(_, _, _, _) | AST.OpSeq(_, _) => pure(sys.error("operators must be desugared by OperatorDesugar before code generation"))
 
     case AST.Intrinsic(IntrinsicOps.BinOp(op, _), Seq(l, rExpr)) => for {
       lc <- nonTail(l.result)
@@ -646,7 +646,7 @@ object Generator {
     case AST.TopTrait(_, _, _, _) => pure(sys.error("TopTrait must be desugared before code generation"))
     case AST.TopImpl(_, _, _, _, _, _) => pure(sys.error("TopImpl must be desugared before code generation"))
     case AST.TopDerive(_, _) => pure(sys.error("TopDerive must be desugared before code generation"))
-    case AST.TopModule(_, _) | AST.TopOpen(_) | AST.TopOperator(_, _) | AST.TopModified(_, _) => pure(sys.error("modules must be desugared before code generation"))
+    case AST.TopModule(_, _) | AST.TopOpen(_) | AST.TopOperator(_, _, _) | AST.TopModified(_, _) => pure(sys.error("modules must be desugared before code generation"))
 
     case AST.Primitive(_) => pure(Code.empty)
     case AST.TypeVar(_) => pure(Code.empty)
@@ -739,7 +739,7 @@ object Generator {
     case AST.TopTrait(_, _, _, _) => sys.error("TopTrait must be desugared before code generation")
     case AST.TopImpl(_, _, _, _, _, _) => sys.error("TopImpl must be desugared before code generation")
     case AST.TopDerive(_, _) => sys.error("TopDerive must be desugared before code generation")
-    case AST.TopModule(_, _) | AST.TopOpen(_) | AST.TopOperator(_, _) | AST.TopModified(_, _) => sys.error("modules must be desugared before code generation")
+    case AST.TopModule(_, _) | AST.TopOpen(_) | AST.TopOperator(_, _, _) | AST.TopModified(_, _) => sys.error("modules must be desugared before code generation")
   }
 
   // top-level の rec の組: 全員のセルを先に確保してから、順に値を入れる

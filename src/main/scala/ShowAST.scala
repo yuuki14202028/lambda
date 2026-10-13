@@ -92,7 +92,8 @@ val showAlg: Algebra[AST, ShowResult] = [x] => node => node match {
   case AST.TopDerive(traitName, target) => s"derive ${traitName.name}[${target.name}]"
   case AST.TopModule(name, decls)  => s"module $name {\n${decls.mkString("\n")}\n}"
   case AST.TopOpen(path)           => s"open ${path.mkString(".")}"
-  case AST.TopOperator(op, function) => s"operator ${operatorKey(op)} = ${function.name}".replace("operator prefix", "prefix operator")
+  case AST.TopOperator(op, Some(fixity), function) => s"${fixity.assoc.keyword} ${fixity.level} $op = ${function.name}"
+  case AST.TopOperator(op, None, function) => s"prefix $op = ${function.name}"
   case AST.TopModified(modifier, decl) => s"${modifier.keyword} $decl"
   case AST.Abs(v, types, body)     => s"λ${v.name}: $types. $body"
   case AST.TyAbs(v, Kind.Star, body) => s"Λ${v.name}. $body"
@@ -160,6 +161,7 @@ val showAlg: Algebra[AST, ShowResult] = [x] => node => node match {
     val body = (discarded.map(_.toString + ";") ++ result.toSeq.map(_.toString)).mkString(" ")
     s"{ $body }"
   case AST.BinOp(op, l, r, _)      => s"($l $op $r)"
+  case AST.OpSeq(first, rest)      => (first +: rest.map(step => s"${step.op} ${step.operand}")).mkString("(", " ", ")")
   case AST.Intrinsic(op, args)     => s"intrinsic[$op](${args.mkString(", ")})"
   case AST.UnaryOp(op, t, _)       => s"$op $t"
   case AST.If(c, t, e)             => s"if $c then $t else $e"

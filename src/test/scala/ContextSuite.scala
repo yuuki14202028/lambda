@@ -78,9 +78,9 @@ class ContextSuite extends munit.FunSuite {
   // ---- 型検査+脱糖 ----
 
   private val monadMaybe =
-    """trait Add[a] { def add(x: a)(y: a): a }; operator + = add; impl Add[i32] { def add(x: i32)(y: i32): i32 = intrinsic[add_i32](x)(y) }
-      |trait Div[a] { def div(x: a)(y: a): a }; operator / = div; impl Div[i32] { def div(x: i32)(y: i32): i32 = intrinsic[div_i32](x)(y) }
-      |trait Eq[a] { def eq(x: a)(y: a): bool }; operator == = eq; impl Eq[i32] { def eq(x: i32)(y: i32): bool = intrinsic[eq_i32](x)(y) }
+    """trait Add[a] { def add(x: a)(y: a): a }; infixl 6 + = add; impl Add[i32] { def add(x: i32)(y: i32): i32 = intrinsic[add_i32](x)(y) }
+      |trait Div[a] { def div(x: a)(y: a): a }; infixl 7 / = div; impl Div[i32] { def div(x: i32)(y: i32): i32 = intrinsic[div_i32](x)(y) }
+      |trait Eq[a] { def eq(x: a)(y: a): bool }; infix 4 == = eq; impl Eq[i32] { def eq(x: i32)(y: i32): bool = intrinsic[eq_i32](x)(y) }
       |
       |data Maybe[a] = { Nothing, Just(a) }
       |

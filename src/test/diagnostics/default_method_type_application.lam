@@ -1,4 +1,4 @@
-trait Not[a] { def not(x: a): a }; prefix operator ! = not; impl Not[bool] { def not(a: bool): bool = intrinsic[not_bool](a) }
+trait Not[a] { def not(x: a): a }; prefix ! = not; impl Not[bool] { def not(a: bool): bool = intrinsic[not_bool](a) }
 trait Eq[a] {
   def eq(x: a)(y: a): bool
   def neq(x: a)(y: a): bool = !eq[a](x)(y)

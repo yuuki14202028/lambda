@@ -26,8 +26,8 @@ char bool unit
 foreign.C.String  foreign.C.VoidPtr  foreign.C.Ptr[T]
 ```
 
-`+` や `==` などの演算子は、`operator + = add` のように宣言された関数の呼び出しです（`a + b` は `add[T](a)(b)`、`T` は `a` の型）。
-`stdlib/operators.lam` が演算子ごとの trait（`Add` / `Eq` / `Ord` など）と組み込みの型のインスタンスを宣言しているので、演算子を使うには `import "std/operators"` が必要です。自分の型では、その trait を実装します。`&&` と `||` だけは `bool` 専用の組み込みです。
+`+` や `==` などの演算子は、`infixl 6 + = add` のように宣言された関数の呼び出しです（`a + b` は `add[T](a)(b)`、`T` は `a` の型）。
+`stdlib/operators.lam` が演算子ごとの trait（`Add` / `Eq` / `Ord` など）と組み込みの型のインスタンスを宣言しているので、演算子を使うには `import "std/operators"` が必要です。自分の型では、その trait を実装します。記号・優先順位・結合性は宣言で決まるので、`infixr 5 :: = cons` のように独自の演算子も作れます。`&&` と `||` だけは `bool` 専用の組み込みです。
 
 ## 使い方
 

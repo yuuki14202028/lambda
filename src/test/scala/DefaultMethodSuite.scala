@@ -18,7 +18,7 @@ class DefaultMethodSuite extends munit.FunSuite {
     case Right(_) => fail(s"expected failure containing: $expected")
   }
 
-  private val not = "trait Not[a] { def not(x: a): a }; prefix operator ! = not; impl Not[bool] { def not(a: bool): bool = intrinsic[not_bool](a) }\n"
+  private val not = "trait Not[a] { def not(x: a): a }; prefix ! = not; impl Not[bool] { def not(a: bool): bool = intrinsic[not_bool](a) }\n"
 
   private val equal = not +
     """trait Equal[a] {

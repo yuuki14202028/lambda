@@ -1,0 +1,9 @@
+error: the operator `+-` is not declared
+ --> operator_custom_not_declared.lam:3:32
+  |
+3 | let f(a: i32)(b: i32): i32 = a +- b
+  |                                ^^ used here
+  |
+  = note: an operator calls the function it is declared for, with the type of its left operand: after `infixl 6 + = add`, `a + b` means `add[T](a)(b)`
+  = note: a run of symbols is read as one operator, so `+-` is not `+` followed by the prefix `-`
+  = help: put a space between them: `+ -`

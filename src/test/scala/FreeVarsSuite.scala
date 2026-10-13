@@ -110,12 +110,12 @@ class FreeVarsSuite extends munit.FunSuite {
   }
 
   test("freeVars(x + y): BinOp は左右を合併する") {
-    val expr = binopT(BinOps.Add, intTypeT, varrType(x, intTypeT), varrType(y, intTypeT), None)
+    val expr = binopT("+", intTypeT, varrType(x, intTypeT), varrType(y, intTypeT), None)
     assertEquals(freeVars(expr), Set(x, y))
   }
 
   test("freeVars(-x): UnaryOp は本体を伝播する") {
-    val expr = unopT(UnaryOps.Neg, intTypeT, varrType(x, intTypeT), None)
+    val expr = unopT("-", intTypeT, varrType(x, intTypeT), None)
     assertEquals(freeVars(expr), Set(x))
   }
 
@@ -212,9 +212,9 @@ class FreeVarsSuite extends munit.FunSuite {
 
   test("freeVars(λx: i32. λy: i32. x + y + z): ネストした Abs はそれぞれ束縛する") {
     val body = binopT(
-      BinOps.Add,
+      "+",
       intTypeT,
-      binopT(BinOps.Add, intTypeT, varrType(x, intTypeT), varrType(y, intTypeT), None),
+      binopT("+", intTypeT, varrType(x, intTypeT), varrType(y, intTypeT), None),
       varrType(z, intTypeT),
       None
     )

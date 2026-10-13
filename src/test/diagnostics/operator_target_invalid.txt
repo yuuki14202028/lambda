@@ -1,7 +1,7 @@
 error: `twice` cannot be used as an operator
  --> operator_target_invalid.lam:2:1
   |
-2 | operator + = twice
+2 | infixl 6 + = twice
   | ^^^^^^^^^^^^^^^^^^ has type `i32 → i32`
   |
   = note: a binary operator needs a function of type `∀a. … → a → b → c`: its first type parameter receives the type of the left operand, which is its first argument

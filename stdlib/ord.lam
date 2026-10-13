@@ -9,7 +9,7 @@ trait Ord[a] with Eq[a] {
   def geq(x: a)(y: a): bool = lt(y)(x) || eq[a](x)(y)
 }
 
-operator < = lt
-operator <= = leq
-operator > = gt
-operator >= = geq
+infix 4 < = lt
+infix 4 <= = leq
+infix 4 > = gt
+infix 4 >= = geq

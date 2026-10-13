@@ -1,0 +1,8 @@
+error: syntax error
+ --> syntax_old_operator.lam:2:1
+  |
+2 | operator + = first
+  | ^^^^^^^^ unexpected `operator`
+  |
+  = note: a declaration is complete before this point, so a new declaration (`let`, `rec`, `data`, `type`, `trait`, `impl`, `derive`, `module`, `open`, `import`) or the end of the file is expected
+  = help: an operator is declared with its precedence: `infixl 6 + = add` (or `infixr` / `infix`), and `prefix - = neg`

@@ -52,7 +52,7 @@
 
 ### 演算子
 
-- **operators.lam** - 演算子ごとの trait と `operator` 宣言、すべての数値型・`bool`・`char` のインスタンス
+- **operators.lam** - 演算子ごとの trait と演算子の宣言（`infixl 6 + = add`）、すべての数値型・`bool`・`char` のインスタンス
   - 算術演算: `Add`（`+`）, `Sub`（`-`）, `Mul`（`*`）, `Div`（`/`）, `Mod`（`%`）, `Neg`（前置 `-`）
   - 比較演算: `Eq`（`==` `!=`）, `Ord`（`<` `<=` `>` `>=`）
   - 論理・ビット演算: `Not`（前置 `!`）, `BitAnd`（`&`）, `BitOr`（`|`）, `BitXor`（`^`）

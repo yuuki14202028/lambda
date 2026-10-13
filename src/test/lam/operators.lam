@@ -1,0 +1,81 @@
+// 演算子の宣言: 優先順位と結合性、独自の記号、module の中の宣言。
+// 期待する出力は EndToEndSuite に書いてある。
+
+import "std/operators"
+import "std/list"
+
+let printInt: i32 → i32 = foreign[i32 → i32] print_int
+
+// ---- 独自の記号 ----
+
+// 右結合: 1 :: 2 :: Nil は 1 :: (2 :: Nil)
+let cons[a](x: a)(xs: List[a]): List[a] = Cons[a](x)(xs)
+infixr 5 :: = cons
+
+// 左結合: xs ++ ys ++ zs
+trait Append[a] { def append(x: a)(y: a): a }
+impl[a] Append[List[a]] { def append = appendList[a] }
+infixr 5 ++ = append
+
+// 関数に値を渡す。いちばん弱い
+let pipe[a](x: a)(f: a → i32): i32 = f(x)
+infixl 1 |> = pipe
+
+// べき乗は右結合で、* より強い
+rec let power(base: i32)(exponent: i32): i32 = if exponent == 0 then 1 else base * power(base)(exponent - 1)
+trait Power[a] { def pow(x: a)(n: i32): a }
+impl Power[i32] { def pow = power }
+infixr 8 ^^ = pow
+
+rec let sum(xs: List[i32]): i32 = match xs {
+  Nil => 0
+  Cons(x)(rest) => x + sum(rest)
+}
+
+rec let digits(xs: List[i32]): i32 = match xs {
+  Nil => 0
+  Cons(x)(rest) => x + 10 * digits(rest)
+}
+
+// ---- module の中だけの演算子 ----
+
+module Vec {
+  data T = { Mk(i32)(i32) }
+  trait Linear[a] {
+    def plus(v: a)(w: a): a
+    def scale(v: a)(k: i32): a
+  }
+  impl Linear[T] {
+    def plus(v: T)(w: T): T = match v { Mk(a)(b) => match w { Mk(c)(d) => Mk(a + c)(b + d) } }
+    def scale(v: T)(k: i32): T = match v { Mk(a)(b) => Mk(a * k)(b * k) }
+  }
+  // ここから先のこの module の中と、open した所では、+ と * が Linear の演算になる
+  infixl 6 + = plus
+  infixl 7 * = scale
+  let twiceAndShift(v: T)(w: T): T = v * 2 + w
+  let x(v: T): i32 = match v { Mk(a)(_) => a }
+  let y(v: T): i32 = match v { Mk(_)(b) => b }
+}
+
+let main(): i32 = {
+  // 優先順位: * は + より強く、同じ優先順位の - は左から
+  printInt(2 + 3 * 4);
+  printInt(10 - 3 - 2);
+  printInt(2 * 3 + 4 * 5);
+  // 前置はどの二項よりも強い
+  printInt(-2 * 3 + 10);
+  // 独自の右結合
+  printInt(digits(1 :: 2 :: 3 :: Nil[i32]));
+  printInt(2 ^^ 3 ^^ 2);
+  printInt(2 * 3 ^^ 2);
+  // :: と ++ は同じ優先順位の右結合
+  printInt(digits(1 :: Cons[i32](2)(Nil[i32]) ++ 3 :: Nil[i32]));
+  // いちばん弱い演算子: 左は 1 + 2 + 3 まで
+  printInt(1 :: 2 :: Nil[i32] ++ 3 :: Nil[i32] |> sum);
+  // 比較は && より強く、&& は || より強い
+  printInt(if 1 + 1 == 2 && 3 < 2 || 2 * 2 >= 4 then 1 else 0);
+  // module の演算子は外では見えない（ここの + は数の足し算）
+  printInt(Vec.x(Vec.twiceAndShift(Vec.Mk(1)(2))(Vec.Mk(10)(20))));
+  printInt(Vec.y(Vec.twiceAndShift(Vec.Mk(1)(2))(Vec.Mk(10)(20))));
+  0
+}

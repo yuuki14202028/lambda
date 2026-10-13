@@ -13,8 +13,8 @@ object OperatorDesugar {
   def desugar(program: TypeRec[AST.Program.type]): TypeRec[AST.Program.type] = program.cata(desugarAlg)
 
   private val desugarAlg: Algebra[TypedAST, TypeRec] = [x] => he => (he.ann, he.ast) match {
-    case (ExprAnn(t), AST.BinOp(BinOps.ShortAnd, left, right, _)) => ifT(t, left, right, boolT(false, boolTypeT))
-    case (ExprAnn(t), AST.BinOp(BinOps.ShortOr, left, right, _)) => ifT(t, left, boolT(true, boolTypeT), right)
+    case (ExprAnn(t), AST.BinOp(Operators.shortAnd, left, right, _)) => ifT(t, left, right, boolT(false, boolTypeT))
+    case (ExprAnn(t), AST.BinOp(Operators.shortOr, left, right, _)) => ifT(t, left, boolT(true, boolTypeT), right)
     case (ExprAnn(_), AST.BinOp(op, left, right, resolved)) =>
       mkApp(mkApp(resolved.getOrElse(invariant(s"operator $op reached OperatorDesugar without a resolved function")), left), right)
     case (ExprAnn(_), AST.UnaryOp(op, body, resolved)) =>

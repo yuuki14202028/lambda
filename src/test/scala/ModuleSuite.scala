@@ -19,7 +19,7 @@ class ModuleSuite extends munit.FunSuite {
     case Right(_)  => fail(s"expected error containing '$expected', but succeeded")
   }
 
-  private val add = "trait Add[a] { def add(x: a)(y: a): a }; operator + = add; impl Add[i32] { def add(a: i32)(b: i32): i32 = intrinsic[add_i32](a)(b) }\n"
+  private val add = "trait Add[a] { def add(x: a)(y: a): a }; infixl 6 + = add; impl Add[i32] { def add(a: i32)(b: i32): i32 = intrinsic[add_i32](a)(b) }\n"
 
   private val counter = add +
     """module Counter {

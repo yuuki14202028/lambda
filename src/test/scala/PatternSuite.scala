@@ -22,7 +22,7 @@ class PatternSuite extends munit.FunSuite {
   }
 
   private val prelude =
-    """trait Eq[a] { def eq(x: a)(y: a): bool }; operator == = eq; impl Eq[i32] { def eq(a: i32)(b: i32): bool = intrinsic[eq_i32](a)(b) }
+    """trait Eq[a] { def eq(x: a)(y: a): bool }; infix 4 == = eq; impl Eq[i32] { def eq(a: i32)(b: i32): bool = intrinsic[eq_i32](a)(b) }
       |data Option[a] = { None, Some(a) }
       |rec data List[a] = { Nil, Cons(a)(List[a]) }
       |data Pair[a][b] = { MkPair(a)(b) }
@@ -131,7 +131,7 @@ class PatternSuite extends munit.FunSuite {
 
   // ---- 負の数・文字列・選択肢・条件 ----
 
-  private val less = "trait Lt[a] { def lt(x: a)(y: a): bool }; operator < = lt; impl Lt[i32] { def lt(a: i32)(b: i32): bool = intrinsic[lt_i32](a)(b) }\n"
+  private val less = "trait Lt[a] { def lt(x: a)(y: a): bool }; infix 4 < = lt; impl Lt[i32] { def lt(a: i32)(b: i32): bool = intrinsic[lt_i32](a)(b) }\n"
 
   test("負の数のリテラル（直前の本体と引き算にならない）") {
     assertRight(encode(program("let f(n: i32): i32 = match n {\n  0 => n\n  -1 => 1\n  _ => 2\n}")))

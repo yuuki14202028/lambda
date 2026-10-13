@@ -164,7 +164,7 @@ class ExplicitInstanceSuite extends munit.FunSuite {
   // ---- impl の式 ----
 
   private val traits =
-    """trait Not[a] { def not(x: a): a }; prefix operator ! = not; impl Not[bool] { def not(a: bool): bool = intrinsic[not_bool](a) }
+    """trait Not[a] { def not(x: a): a }; prefix ! = not; impl Not[bool] { def not(a: bool): bool = intrinsic[not_bool](a) }
       |trait Same[a] {
       |  def same(x: a)(y: a): bool
       |  def differ(x: a)(y: a): bool = !same(x)(y)

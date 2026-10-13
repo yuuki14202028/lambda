@@ -35,7 +35,7 @@ class CharLiteralSuite extends munit.FunSuite {
 
   test("パターンにも同じ文字リテラルを書ける") {
     val src =
-      """trait Eq[a] { def eq(x: a)(y: a): bool }; operator == = eq; impl Eq[char] { def eq(x: char)(y: char): bool = intrinsic[eq_char](x)(y) }
+      """trait Eq[a] { def eq(x: a)(y: a): bool }; infix 4 == = eq; impl Eq[char] { def eq(x: char)(y: char): bool = intrinsic[eq_char](x)(y) }
         |let kind(c: char): i32 = match c {
         |  '0' | '1' => 1
         |  ' ' | '\n' => 2
@@ -50,7 +50,7 @@ class CharLiteralSuite extends munit.FunSuite {
   test("名前に . を含む型にも、演算子の trait を実装できる") {
     val src =
       """trait Add[a] { def add(x: a)(y: a): a }
-        |operator + = add
+        |infixl 6 + = add
         |impl Add[foreign.C.String] { def add(x: foreign.C.String)(y: foreign.C.String): foreign.C.String = x }
         |let greeting: foreign.C.String = "a" + "b"
         |module Money {

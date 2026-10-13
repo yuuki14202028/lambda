@@ -52,16 +52,16 @@ trait BitXor[a] {
   def bitXor(x: a)(y: a): a
 }
 
-operator + = add
-operator - = sub
-operator * = mul
-operator / = div
-operator % = mod
-operator & = bitAnd
-operator | = bitOr
-operator ^ = bitXor
-prefix operator - = neg
-prefix operator ! = not
+infixl 6 + = add
+infixl 6 - = sub
+infixl 7 * = mul
+infixl 7 / = div
+infixl 7 % = mod
+infixl 7 & = bitAnd
+infixl 5 | = bitOr
+infixl 6 ^ = bitXor
+prefix - = neg
+prefix ! = not
 
 impl Add[f32] {
   def add(x: f32)(y: f32): f32 = intrinsic[add_f32](x)(y)

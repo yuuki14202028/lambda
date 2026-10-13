@@ -185,6 +185,9 @@ object Diagnostic {
 
   // (補足, 直し方)
   private def hint(h: Hint): (Seq[String], Seq[String]) = h match {
+    case Hint.ImportOperators => (Nil, Seq("the standard operators are declared in the standard library: add `import \"std/operators\"`"))
+    case Hint.SplitOperator(binary, prefix) =>
+      (Seq(s"a run of symbols is read as one operator, so `$binary$prefix` is not `$binary` followed by the prefix `$prefix`"), Seq(s"put a space between them: `$binary $prefix`"))
     case Hint.SimilarNames(Seq(only)) => (Nil, Seq(s"a similar name exists: ${name(only)}"))
     case Hint.SimilarNames(similar) => (Nil, Seq(s"similar names exist: ${names(similar)}"))
     case Hint.DefinedLater(defined) => (
@@ -381,15 +384,14 @@ object Diagnostic {
 
       // ---- 演算子・組み込み ----
       case OperatorNotDeclared(op) =>
-        val symbol = op match { case binary: BinOps => s"`$binary`"; case unary: UnaryOps => s"prefix `$unary`" }
+        val symbol = if (op.startsWith("prefix ")) s"prefix `${op.stripPrefix("prefix ")}`" else s"`$op`"
         Description(
           s"the operator $symbol is not declared",
           "used here",
-          notes = Seq("an operator calls the function it is declared for, with the type of its left operand: after `operator + = add`, `a + b` means `add[T](a)(b)`"),
-          helps = Seq("the standard operators are declared in the standard library: add `import \"std/operators\"`")
+          notes = Seq("an operator calls the function it is declared for, with the type of its left operand: after `infixl 6 + = add`, `a + b` means `add[T](a)(b)`")
         )
       case OperatorTargetInvalid(op, function, fnType) =>
-        val binary = op match { case _: BinOps => true; case _: UnaryOps => false }
+        val binary = !op.startsWith("prefix ")
         Description(
           s"${name(function.name)} cannot be used as an operator",
           s"has type ${ty(fnType)}",
@@ -398,6 +400,16 @@ object Diagnostic {
             else "a prefix operator needs a function of type `∀a. … → a → b`: its first type parameter receives the type of the operand, which is its first argument"
           )
         )
+      case OperatorBuiltin(op) => Description(
+        s"the operator `$op` is built in",
+        "cannot be declared",
+        notes = Seq("`&&` and `||` work on `bool` only and evaluate their right operand only when needed, so they are not functions"))
+      case OperatorsNotAssociative(left, leftFixity, right, rightFixity) => Description(
+        s"`$left` and `$right` cannot be mixed without parentheses",
+        "the grouping of these operators is not determined",
+        notes = Seq(
+          s"`$left` is declared `${leftFixity.assoc.keyword} ${leftFixity.level}` and `$right` is declared `${rightFixity.assoc.keyword} ${rightFixity.level}`: operators of the same precedence group only when both are `infixl` or both are `infixr`"),
+        helps = Seq("add parentheses to say which operator applies first"))
       case IntrinsicArityMismatch(op, actual) =>
         val expected = op match { case _: BinOps => 2; case _: UnaryOps => 1 }
         Description(s"wrong number of arguments for `intrinsic[$op]`", s"expected ${plural(expected, "argument")}, found $actual")
@@ -624,7 +636,8 @@ object Diagnostic {
     // 式が始まる位置なら、始まりうる字句を並べる代わりに「式」と言う
     val startsExpression = raw.contains("`true`") && raw.contains("`false`")
     val closers = Set("`)`", "`]`", "`}`", "`=`", "`,`", "`;`", "`=>`", "`in`", "`then`", "`else`", "`:`", "`.`", "`⇒`", "the end of the file")
-    val expected = if (startsExpression) "an expression" +: raw.filter(closers) else raw
+    // 式の始まりには前置の演算子（記号の並び）も書けるが、記号 1 文字ずつは挙げない
+    val expected = if (startsExpression) "an expression" +: raw.filter(closers -- Set("`=`", "`:`")) else raw
     val onlyEnd = expected == Seq("the end of the file")
     val label =
       if (onlyEnd || expected.isEmpty) s"unexpected $found"
@@ -643,6 +656,7 @@ object Diagnostic {
       Option.when(has("""\blet\s+rec\b"""))("recursion is marked in front of the declaration: write `rec let …`"),
       Option.when(has("""\bdata\s+rec\b"""))("recursion is marked in front of the declaration: write `rec data …`"),
       Option.when(has("""\bimpl\s+rec\b"""))("recursion is marked in front of the declaration: write `rec impl …`"),
+      Option.when(has("""^\s*(prefix\s+)?operator\b"""))("an operator is declared with its precedence: `infixl 6 + = add` (or `infixr` / `infix`), and `prefix - = neg`"),
       Option.when(has("""--|#""") || rest.startsWith("*/"))("comments are written `// …` (to the end of the line) or `/* … */`"),
       Option.when(has("""\bfold\b.*\bwith\b"""))("the cases of a fold are written in braces: `fold e as T { C(x) => … }`"),
       Option.when(has("""^\s*(rec\s+)?let\s+\w+(\[[^\]]*\])*(\([^)]*\))*\s*="""))("every definition states its type: `let x: T = …`, or `let f(x: T): U = …` for a function"),

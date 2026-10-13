@@ -75,7 +75,7 @@ class CommentSuite extends munit.FunSuite {
 
   test("割り算はコメントにならない") {
     val src =
-      """trait Div[a] { def div(x: a)(y: a): a }; operator / = div; impl Div[i32] { def div(a: i32)(b: i32): i32 = intrinsic[div_i32](a)(b) }
+      """trait Div[a] { def div(x: a)(y: a): a }; infixl 7 / = div; impl Div[i32] { def div(a: i32)(b: i32): i32 = intrinsic[div_i32](a)(b) }
         |let half(n: i32): i32 = n / 2 // 半分
         |let quarter(n: i32): i32 = n / 2 / 2
         |let main(): i32 = 0

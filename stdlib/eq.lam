@@ -5,5 +5,5 @@ trait Eq[a] {
   def neq(x: a)(y: a): bool = if eq(x)(y) then false else true
 }
 
-operator == = eq
-operator != = neq
+infix 4 == = eq
+infix 4 != = neq

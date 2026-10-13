@@ -21,7 +21,8 @@ enum AST[R[_], I] {
   // rec: 包んだ宣言（let / data / impl のどれか一種類）が互いに、また自身から見える。宣言が 1 つなら自己再帰
   case TopRec(decls: Seq[R[Decl]]) extends AST[R, Decl]
   // operator + = add / prefix operator - = neg: 演算子が指す多相関数の宣言
-  case TopOperator(op: BinOps | UnaryOps, function: Variable) extends AST[R, Decl]
+  // infixl 6 + = add（fixity が None なら前置: prefix - = neg）
+  case TopOperator(op: String, fixity: Option[Fixity], function: Variable) extends AST[R, Decl]
   case TopModule(name: String, decls: Seq[R[Decl]]) extends AST[R, Decl]
   case TopOpen(path: Seq[String]) extends AST[R, Decl]
   case TopModified(modifier: Modifier, decl: R[Decl]) extends AST[R, Decl]
@@ -61,9 +62,11 @@ enum AST[R[_], I] {
   case Context(monad: R[Type], steps: Seq[ContextStep[R]], result: R[Expr], ops: Option[ContextOps[R]]) extends AST[R, Expr]
   // a ⊕ b: ⊕ に宣言された関数 f を、a の型で具体化して呼ぶ（f[T](a)(b)）。resolved は型検査が埋める f[T]。
   // && と || は bool 専用の組み込みで、resolved を持たない
-  case BinOp(op: BinOps, left: R[Expr], right: R[Expr], resolved: Option[R[Expr]]) extends AST[R, Expr]
+  // パーサが読んだ演算子の並び a ⊕ b ⊗ c。優先順位は宣言（スコープに従う）で決まるので、型検査が BinOp の木に組む
+  case OpSeq(first: R[Expr], rest: Seq[OpStep[R]]) extends AST[R, Expr]
+  case BinOp(op: String, left: R[Expr], right: R[Expr], resolved: Option[R[Expr]]) extends AST[R, Expr]
   case Intrinsic(op: IntrinsicOps, args: Seq[R[Expr]]) extends AST[R, Expr]
-  case UnaryOp(op: UnaryOps, body: R[Expr], resolved: Option[R[Expr]]) extends AST[R, Expr]
+  case UnaryOp(op: String, body: R[Expr], resolved: Option[R[Expr]]) extends AST[R, Expr]
   case If(cond: R[Expr], thenBranch: R[Expr], elseBranch: R[Expr]) extends AST[R, Expr]
   case Primitive(name: String) extends AST[R, Type]
   case TypeVar(value: TypeVariable) extends AST[R, Type]
@@ -210,10 +213,30 @@ enum IntrinsicOps {
   case UnaryOp(op: UnaryOps, operandType: String)
 }
 
-// 演算子の宣言を引く鍵（前置は二項と区別する）
-def operatorKey(op: BinOps | UnaryOps): String = op match {
-  case binary: BinOps => binary.toString
-  case unary: UnaryOps => s"prefix $unary"
+// 演算子の並びの 1 歩: 演算子（とその位置）と、右の被演算子
+case class OpStep[R[_]](op: String, span: Span, operand: R[Expr])
+
+// 二項演算子の結合性と優先順位（0〜9。大きいほど強く結び付く）
+enum Assoc {
+  case Left, Right, Non
+  def keyword: String = this match {
+    case Assoc.Left => "infixl"
+    case Assoc.Right => "infixr"
+    case Assoc.Non => "infix"
+  }
+}
+case class Fixity(assoc: Assoc, level: Int)
+
+// 演算子に宣言された関数（fixity が None なら前置）
+case class OperatorDef(function: Variable, fixity: Option[Fixity])
+
+object Operators {
+  val shortAnd = "&&"
+  val shortOr = "||"
+  // && と || は bool 専用の組み込み。宣言できず、優先順位も決まっている
+  val builtin: Map[String, Fixity] = Map(shortAnd -> Fixity(Assoc.Right, 3), shortOr -> Fixity(Assoc.Right, 2))
+  // 演算子の宣言を引く鍵（前置は二項と区別する）
+  def prefixKey(op: String): String = s"prefix $op"
 }
 
 enum UnaryOps {
@@ -330,9 +353,9 @@ def unitLit: Rec[Expr] = HFix(AST.UnitLit())
 def block(discarded: Seq[Rec[Expr]], result: Option[Rec[Expr]]): Rec[Expr] = HFix(AST.Block(discarded, result))
 def contextExpr(monad: Rec[Type], steps: Seq[ContextStep[Rec]], result: Rec[Expr]): Rec[Expr] =
   HFix(AST.Context(monad, steps, result, None))
-def binop(op: BinOps, left: Rec[Expr], right: Rec[Expr]): Rec[Expr] = HFix(AST.BinOp(op, left, right, None))
+def binop(op: String, left: Rec[Expr], right: Rec[Expr]): Rec[Expr] = HFix(AST.BinOp(op, left, right, None))
 def intrinsic(op: IntrinsicOps, args: Seq[Rec[Expr]]): Rec[Expr] = HFix(AST.Intrinsic(op, args))
-def unop(op: UnaryOps, body: Rec[Expr]): Rec[Expr] = HFix(AST.UnaryOp(op, body, None))
+def unop(op: String, body: Rec[Expr]): Rec[Expr] = HFix(AST.UnaryOp(op, body, None))
 def iff(cond: Rec[Expr], thenBranch: Rec[Expr], elseBranch: Rec[Expr]): Rec[Expr] = HFix(AST.If(cond, thenBranch, elseBranch))
 def primitive(name: String): Rec[Type] = HFix(AST.Primitive(name))
 def typeVar(variable: TypeVariable): Rec[Type] = HFix(AST.TypeVar(variable))
@@ -379,8 +402,8 @@ def topImplT(variable: TypeVariable, params: Seq[(TypeVariable, Kind)], targets:
   HCofree(DeclAnn, AST.TopImpl(variable, params, targets, context, methods, superEvidence))
 def topDeriveT(traitName: TypeVariable, target: TypeVariable): TypeRec[Decl] =
   HCofree(DeclAnn, AST.TopDerive(traitName, target))
-def topOperatorT(op: BinOps | UnaryOps, function: Variable): TypeRec[Decl] =
-  HCofree(DeclAnn, AST.TopOperator(op, function))
+def topOperatorT(op: String, fixity: Option[Fixity], function: Variable): TypeRec[Decl] =
+  HCofree(DeclAnn, AST.TopOperator(op, fixity, function))
 def topModuleT(name: String, decls: Seq[TypeRec[Decl]]): TypeRec[Decl] =
   HCofree(DeclAnn, AST.TopModule(name, decls))
 def topOpenT(path: Seq[String]): TypeRec[Decl] =
@@ -436,11 +459,11 @@ def blockT(t: TypeRec[Type], discarded: Seq[TypeRec[Expr]], result: Option[TypeR
   HCofree(ExprAnn(t), AST.Block(discarded, result))
 def contextExprT(t: TypeRec[Type], monad: TypeRec[Type], steps: Seq[ContextStep[TypeRec]], result: TypeRec[Expr], ops: ContextOps[TypeRec]): TypeRec[Expr] =
   HCofree(ExprAnn(t), AST.Context(monad, steps, result, Some(ops)))
-def binopT(op: BinOps, t: TypeRec[Type], left: TypeRec[Expr], right: TypeRec[Expr], resolved: Option[TypeRec[Expr]]): TypeRec[Expr] =
+def binopT(op: String, t: TypeRec[Type], left: TypeRec[Expr], right: TypeRec[Expr], resolved: Option[TypeRec[Expr]]): TypeRec[Expr] =
   HCofree(ExprAnn(t), AST.BinOp(op, left, right, resolved))
 def intrinsicT(op: IntrinsicOps, t: TypeRec[Type], args: Seq[TypeRec[Expr]]): TypeRec[Expr] =
   HCofree(ExprAnn(t), AST.Intrinsic(op, args))
-def unopT(op: UnaryOps, t: TypeRec[Type], body: TypeRec[Expr], resolved: Option[TypeRec[Expr]]): TypeRec[Expr] =
+def unopT(op: String, t: TypeRec[Type], body: TypeRec[Expr], resolved: Option[TypeRec[Expr]]): TypeRec[Expr] =
   HCofree(ExprAnn(t), AST.UnaryOp(op, body, resolved))
 def ifT(t: TypeRec[Type], cond: TypeRec[Expr], thenBranch: TypeRec[Expr], elseBranch: TypeRec[Expr]): TypeRec[Expr] =
   HCofree(ExprAnn(t), AST.If(cond, thenBranch, elseBranch))
@@ -560,6 +583,7 @@ def freeVars(expr: Rec[Expr]): Set[Variable] = {
     case AST.Foreign(_, _) => Set.empty
     case AST.Block(discarded, result) => discarded.foldLeft(Set.empty[Variable])(_ ++ _) ++ result.getOrElse(Set.empty)
     case AST.BinOp(_, left, right, resolved) => left ++ right ++ resolved.getOrElse(Set.empty)
+    case AST.OpSeq(first, rest) => first ++ rest.flatMap(_.operand)
     case AST.Intrinsic(_, args) => args.foldLeft(Set.empty[Variable])(_ ++ _)
     case AST.StrInterp(parts) => parts.foldLeft(Set.empty[Variable])(_ ++ _)
     case AST.Context(_, steps, result, ops) =>

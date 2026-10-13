@@ -23,7 +23,7 @@ object ModuleDesugar {
   private def flatten(decl: TypeRec[Decl]): Seq[TypeRec[Decl]] = decl.project match {
     case AST.TopModule(_, decls) => decls.flatMap(flatten)
     case AST.TopModified(_, inner) => flatten(inner)
-    case AST.TopOpen(_) | AST.TopOperator(_, _) => Seq.empty
+    case AST.TopOpen(_) | AST.TopOperator(_, _, _) => Seq.empty
     case _ => Seq(decl)
   }
 

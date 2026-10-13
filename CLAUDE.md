@@ -70,9 +70,11 @@ trait `C` は辞書のデータ型でもあり（`Env.dataTypes` に登録）、
 `match` は `PatternMatch(scrutinee, cases)` としてパースされ、パターン（`Pattern`: `_`・変数・構成子（入れ子可）・リテラル）を持つ。引数のない名前は、型検査がスコープ中の構成子でなければ変数の束縛（`Bind`）と決める。型検査はノードを保ち、構成子パターンにそのデータ型の全構成子と型引数適用済みのフィールド型（`siblings`）、リテラルに解決済みの `==` を記録する。
 PatternDesugar は行列から決定木を作り、構成子 1 段の `Match`（ChurchEncoder が符号化する形）と `if` / `let` に展開する。複数の葉から使われる本体は関数として一度だけ置く。網羅性と到達不能な分岐は、型検査が同じ決定木で調べる（`PatternDesugar.check`）。選択肢 `p | q`（`Pattern.Or`）は脱糖の入口で選択肢ごとの行に展開し（同じ分岐を指すので本体は共有される）、条件付きの分岐（`PatternCase.guard`）は「条件が偽なら後続の行へ進む」節点になり、網羅には数えない。リテラルは `==` に宣言された関数で比べる（`Pattern.Literal` が解決済みの関数を持つ。bool だけは分岐で調べる）。束縛でのパターン（`LetPattern` ノード、context の `ContextStep.BindPattern` / `LetPattern`）は分岐が 1 つの match で、すべての値に当たるものに限る（`checkBindingPattern`）。context の束縛は ContextDesugar が match にするので、PatternDesugar はその後に走る（`Compiler.desugar`）。`fold` の分岐は従来どおり構成子 1 段と束縛子だけ（`MatchCase`）。
 
-### 演算子（operator 宣言）
+### 演算子（infixl / infixr / infix / prefix 宣言）
 
-演算子と関数の対応は言語に埋め込まず、ライブラリが `operator + = add` / `prefix operator - = neg` と宣言する（`TopOperator`）。右辺は `∀a. [制約]* → a → …` の形の多相関数なら何でもよく（`operatorShape`）、`a ⊕ b` は「宣言された関数に左の値の型を型引数として渡したもの」の適用として検査する（`operatorFunction`: 型適用の時点で制約が解決されるので、trait のメソッドならインスタンス解決になる）。型検査は `BinOp` / `UnaryOp` ノードを残して解決済みの関数を `resolved` に記録し、OperatorDesugar が適用に展開する。宣言は他の宣言と同じスコープに従う（`Names.operators`。キーは `operatorKey`: `"+"` / `"prefix -"`。宣言より後で見え、module のメンバーになり、`open` / `private` に従い、後の宣言が前を隠す）。`&&` と `||` だけは bool 専用の組み込みで、`if` に脱糖する（`resolved = None`）。`std/operators` は演算子ごとに 1 つの trait（`Add` / `Sub` / … / `Eq` / `Ord`）を置き、組み込みの型のインスタンスを `intrinsic` で定義する。Generator は演算子ノードを受け取らない。
+演算子と関数の対応は言語に埋め込まず、ライブラリが `infixl 6 + = add` / `prefix - = neg` と宣言する（`TopOperator(op, fixity, function)`。`fixity` が None なら前置）。右辺は `∀a. [制約]* → a → …` の形の多相関数なら何でもよく（`operatorShape`）、`a ⊕ b` は「宣言された関数に左の値の型を型引数として渡したもの」の適用として検査する（`operatorFunction`: 型適用の時点で制約が解決されるので、trait のメソッドならインスタンス解決になる）。
+記号は記号文字の並びの最長一致で、決まった集合はない（`ParserAST.operatorSymbol`。`=` `=>` `->` `:` は予約）。優先順位（0〜9）と結合性も宣言の一部でスコープに従うので、パーサは式を並びのまま `OpSeq(first, rest: Seq[OpStep])` として読み、型検査がスコープ中の宣言で `BinOp` の木に組む（`groupOperators`。同じ優先順位は両方 infixl か両方 infixr のときだけ並べられる）。前置は二項より強い（`UnaryOp`）。型検査は `BinOp` / `UnaryOp` ノードを残して解決済みの関数を `resolved` に記録し、OperatorDesugar が適用に展開する。型検査後の AST に `OpSeq` は残らない。
+宣言は他の宣言と同じスコープに従う（`Names.operators: Map[String, OperatorDef]`。キーは二項なら記号、前置なら `Operators.prefixKey`。宣言より後で見え、module のメンバーになり、`open` / `private` に従い、後の宣言が前を隠す）。`&&` と `||` だけは bool 専用の組み込みで（`Operators.builtin`。優先順位 3 と 2、宣言不可）、`if` に脱糖する（`resolved = None`）。`std/operators` は演算子ごとに 1 つの trait（`Add` / `Sub` / … / `Eq` / `Ord`）を置き、組み込みの型のインスタンスを `intrinsic` で定義する。Generator は演算子ノードを受け取らない。
 
 ### エラー表示（Diagnostic.scala）
 

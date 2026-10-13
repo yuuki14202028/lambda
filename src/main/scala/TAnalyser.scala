@@ -122,6 +122,12 @@ object TAnalyser {
           similar(name.name, visible.filter(c => env.resolveType(TypeVariable(c)).exists(env.definesTypeName)) ++ BuiltinTypes.primitiveArities.keys)
       case CompileError.UndefinedTrait(name, _) =>
         later(name.name).toSeq ++ similar(name.name, env.traits.keys.map(_.name).filter(c => env.resolveType(TypeVariable(c)).nonEmpty))
+      case CompileError.OperatorNotDeclared(_) if env.scope.operators.isEmpty => Seq(Hint.ImportOperators)
+      case CompileError.OperatorNotDeclared(op) =>
+        def binary(symbol: String): Boolean = Operators.builtin.contains(symbol) || env.scope.operators.get(symbol).exists(_.fixity.nonEmpty)
+        (1 until op.length).map(op.splitAt).collectFirst {
+          case (first, second) if binary(first) && env.scope.operators.contains(Operators.prefixKey(second)) => Hint.SplitOperator(first, second)
+        }.toSeq
       case CompileError.UndefinedModule(path) => similar(path.mkString("."), env.modules.keys ++ env.scope.modules.keys)
       case CompileError.NoInstance(name, args)
           if args.flatMap(a => typeConstructorHead(a).map(_._1)).length == args.length &&
@@ -171,37 +177,99 @@ object TAnalyser {
   // a ⊕ b は、⊕ に宣言された多相関数 f を a の型で具体化して呼ぶ: f[T](a)(b)。
   // 型検査は f[T]（制約を解決したもの）を記録し、関数呼び出しへの書き換えは OperatorDesugar が行う
 
-  // 演算子に宣言された関数を、型 operandType で具体化する
-  private def operatorFunction(op: BinOps | UnaryOps, operandType: TypeRec[Type]): Check[TypeRec[Expr]] = for {
+  // 演算子（key: 二項は記号、前置は Operators.prefixKey）に宣言された関数を、型 operandType で具体化する
+  private def operatorFunction(key: String, operandType: TypeRec[Type]): Check[TypeRec[Expr]] = for {
     env <- ask
-    function <- lift(env.scope.operators.get(operatorKey(op)).toRight(CompileError.OperatorNotDeclared(op)))
-    fnType = env.values.getOrElse(function, invariant(s"operator ${operatorKey(op)} is declared for an undefined function ${function.name}"))
+    definition <- lift(env.scope.operators.get(key).toRight(CompileError.OperatorNotDeclared(key)))
+    function = definition.function
+    fnType = env.values.getOrElse(function, invariant(s"operator $key is declared for an undefined function ${function.name}"))
     applied <- lift(ContextDesugar.applyTypeArg(varrType(function, fnType), operandType, Kind.Star))
     resolved <- discharge(applied)
   } yield resolved
 
-  private def checkBinaryOperator(op: BinOps, left: TypeRec[Expr], right: TypeRec[Expr]): Check[TypeRec[Expr]] = op match {
+  private def checkBinaryOperator(op: String, left: TypeRec[Expr], right: TypeRec[Expr]): Check[TypeRec[Expr]] =
     // && と || は bool 専用の組み込み（右を評価しないことがあるので、関数ではない）
-    case BinOps.ShortAnd | BinOps.ShortOr => for {
+    if (Operators.builtin.contains(op)) for {
       _ <- expectAt(boolTypeT, left)
       _ <- expectAt(boolTypeT, right, left -> Related.LeftOperand(boolTypeT))
     } yield binopT(op, boolTypeT, left, right, None)
-    case _ => for {
+    else for {
       resolved <- operatorFunction(op, typeOf(left))
       // 宣言のときに形を確かめているので、f[T] は T → β → γ
       (_, afterLeft) = destructArrow(typeOf(resolved)).getOrElse(invariant(s"operator $op: ${typeOf(resolved).show} is not a function"))
       (rightParam, resultType) = destructArrow(afterLeft).getOrElse(invariant(s"operator $op: ${typeOf(resolved).show} does not take two arguments"))
       _ <- expectAt(rightParam, right, left -> Related.LeftOperand(typeOf(left)))
     } yield binopT(op, resultType, left, right, Some(resolved))
-  }
 
-  private def checkUnaryOperator(op: UnaryOps, body: TypeRec[Expr]): Check[TypeRec[Expr]] = for {
-    resolved <- operatorFunction(op, typeOf(body))
+  private def checkUnaryOperator(op: String, body: TypeRec[Expr]): Check[TypeRec[Expr]] = for {
+    resolved <- operatorFunction(Operators.prefixKey(op), typeOf(body))
     (_, resultType) = destructArrow(typeOf(resolved)).getOrElse(invariant(s"operator $op: ${typeOf(resolved).show} is not a function"))
   } yield unopT(op, resultType, body, Some(resolved))
 
-  // operator の宣言に書ける関数の型: ∀(a: *). [制約…] → a → …（二項なら、さらに引数を 1 つ取る）
-  private def operatorShape(op: BinOps | UnaryOps, fnType: TypeRec[Type]): Boolean = destructForAllK(fnType) match {
+  // ---- 演算子の並びを、スコープ中の宣言の優先順位と結合性で木に組む ----
+
+  private enum OpTree {
+    case Leaf(operand: TypeRec[Expr])
+    case Node(op: String, span: Span, left: OpTree, right: OpTree)
+  }
+
+  private def operatorFixity(env: Env, step: OpStep[TypeRec]): EitherS[Fixity] =
+    Operators.builtin.get(step.op).orElse(env.scope.operators.get(step.op).flatMap(_.fixity))
+      .toRight(CompileError.OperatorNotDeclared(step.op).at(step.span))
+
+  // 優先順位の高い演算子が先に結び付く。同じ優先順位は、両方 infixl なら左から、両方 infixr なら右から。それ以外の並びは決まらない
+  private def groupOperators(first: TypeRec[Expr], rest: Seq[(OpStep[TypeRec], Fixity)]): EitherS[OpTree] = {
+    var remaining = rest.toList
+    def conflict(left: (OpStep[TypeRec], Fixity), right: (OpStep[TypeRec], Fixity)): CompileError =
+      CompileError.OperatorsNotAssociative(left._1.op, left._2, right._1.op, right._2).at(right._1.span)
+    def climb(start: OpTree, minLevel: Int): EitherS[OpTree] = {
+      var left = start
+      while (remaining.headOption.exists(_._2.level >= minLevel)) {
+        val current = remaining.head
+        val (step, fixity) = current
+        remaining = remaining.tail
+        var right: OpTree = OpTree.Leaf(step.operand)
+        def bindsTighter(next: (OpStep[TypeRec], Fixity)): Boolean =
+          next._2.level > fixity.level || (next._2.level == fixity.level && fixity.assoc == Assoc.Right && next._2.assoc == Assoc.Right)
+        while (remaining.headOption.exists(bindsTighter)) {
+          climb(right, remaining.head._2.level) match {
+            case Right(grouped) => right = grouped
+            case Left(error) => return Left(error)
+          }
+        }
+        remaining.headOption match {
+          case Some(next) if next._2.level == fixity.level && !(fixity.assoc == Assoc.Left && next._2.assoc == Assoc.Left) =>
+            return Left(conflict(current, next))
+          case _ => ()
+        }
+        left = OpTree.Node(step.op, step.span, left, right)
+      }
+      Right(left)
+    }
+    climb(OpTree.Leaf(first), 0)
+  }
+
+  private def checkOperatorTree(tree: OpTree): Check[TypeRec[Expr]] = tree match {
+    case OpTree.Leaf(operand) => Check.pure(operand)
+    case OpTree.Node(op, span, left, right) => for {
+      env <- ask
+      typedLeft <- checkOperatorTree(left)
+      typedRight <- checkOperatorTree(right)
+      whole = for { from <- env.spans.get(typedLeft); to <- env.spans.get(typedRight) } yield from.to(to)
+      checked <- locatedAt(whole)(checkBinaryOperator(op, typedLeft, typedRight))
+      _ = whole.foreach(env.spans.record(checked, _))
+    } yield checked
+  }
+
+  private def checkOperatorSequence(first: TypeRec[Expr], rest: Seq[OpStep[TypeRec]]): Check[TypeRec[Expr]] = for {
+    env <- ask
+    fixities <- lift(rest.traverse(step => operatorFixity(env, step).map(step -> _)))
+    tree <- lift(groupOperators(first, fixities))
+    checked <- checkOperatorTree(tree)
+  } yield checked
+
+  // 演算子の宣言に書ける関数の型: ∀(a: *). [制約…] → a → …（二項なら、さらに引数を 1 つ取る）
+  private def operatorShape(binary: Boolean, fnType: TypeRec[Type]): Boolean = destructForAllK(fnType) match {
     case Some((variable, Kind.Star, body)) =>
       @annotation.tailrec
       def afterConstraints(t: TypeRec[Type]): TypeRec[Type] = destructInstArrow(t) match {
@@ -209,10 +277,7 @@ object TAnalyser {
         case None => t
       }
       destructArrow(afterConstraints(body)) match {
-        case Some((first, rest)) if Equivalence.alpha(first, typeVarT(variable)) => op match {
-          case _: BinOps => destructArrow(rest).nonEmpty
-          case _: UnaryOps => true
-        }
+        case Some((first, rest)) if Equivalence.alpha(first, typeVarT(variable)) => !binary || destructArrow(rest).nonEmpty
         case _ => false
       }
     case _ => false
@@ -659,7 +724,7 @@ object TAnalyser {
         _ <- guard(typeName == BuiltinTypes.CString || BuiltinTypes.equatableTypes.contains(typeName), CompileError.NumericLiteralUnknown(typeName))
         _ <- expect(expected, literalType)
         // リテラルは、== に宣言された関数で比べる。bool は if で分岐するので要らない
-        equals <- if (typeName == "bool") Check.pure(Option.empty[TypeRec[Expr]]) else operatorFunction(BinOps.Eq, literalType).flatMap { resolved =>
+        equals <- if (typeName == "bool") Check.pure(Option.empty[TypeRec[Expr]]) else operatorFunction("==", literalType).flatMap { resolved =>
           guard(
             Equivalence.alpha(typeOf(resolved), arrowT(literalType, arrowT(literalType, boolTypeT))),
             CompileError.TypeMismatch(arrowT(literalType, arrowT(literalType, boolTypeT)), typeOf(resolved))
@@ -732,7 +797,7 @@ object TAnalyser {
     case AST.TopImpl(_, _, _, _, _, _) => declarationNode("TopImpl")
     case AST.TopDerive(_, _) => declarationNode("TopDerive")
     case AST.TopModule(_, _) => declarationNode("TopModule")
-    case AST.TopOperator(_, _) => declarationNode("TopOperator")
+    case AST.TopOperator(_, _, _) => declarationNode("TopOperator")
     case AST.TopOpen(_) => declarationNode("TopOpen")
     case AST.TopModified(_, _) => declarationNode("TopModified")
 
@@ -1027,6 +1092,12 @@ object TAnalyser {
       chain <- lift(ContextDesugar.desugarContext(ops, typedBindings, typedResult))
     } yield contextExprT(typeOf(chain), monadType, typedBindings, typedResult, ops)
 
+    case AST.OpSeq(first, rest) => for {
+      typedFirst <- first
+      typedRest <- rest.traverse(step => step.operand.map(OpStep[TypeRec](step.op, step.span, _)))
+      checked <- checkOperatorSequence(typedFirst, typedRest)
+    } yield checked
+
     case AST.BinOp(op, left, right, _) => for {
       typedLeft <- left
       typedRight <- right
@@ -1185,14 +1256,16 @@ object TAnalyser {
     case AST.TopOpen(_) => declarationNode("TopOpen")
     case AST.TopModified(_, _) => declarationNode("TopModified")
 
-    // operator ⊕ = f: f は、最初の型引数に左の値の型を受け取る多相関数。他の宣言と同じく、宣言の後で見え、module のメンバーになる
-    case AST.TopOperator(op, written) => for {
+    // infixl 6 ⊕ = f / prefix ⊖ = f: f は、最初の型引数に左の値の型を受け取る多相関数。他の宣言と同じく、宣言の後で見え、module のメンバーになる
+    case AST.TopOperator(op, fixity, written) => for {
       env <- ask
+      _ <- guard(fixity.isEmpty || !Operators.builtin.contains(op), CompileError.OperatorBuiltin(op))
       found <- lift(env.lookupValue(written).toRight(CompileError.UndefinedVariable(written)))
       (function, fnType) = found
-      _ <- guard(operatorShape(op, fnType), CompileError.OperatorTargetInvalid(op, function, fnType))
-      key = operatorKey(op)
-    } yield (topOperatorT(op, function), env.copy(scope = env.scope.withOperator(key, function), members = env.members.withOperator(key, function)))
+      key = if (fixity.isEmpty) Operators.prefixKey(op) else op
+      _ <- guard(operatorShape(fixity.nonEmpty, fnType), CompileError.OperatorTargetInvalid(key, function, fnType))
+      definition = OperatorDef(function, fixity)
+    } yield (topOperatorT(op, fixity, function), env.copy(scope = env.scope.withOperator(key, definition), members = env.members.withOperator(key, definition)))
   }
 
   // top-level の data。フィールドからは visible（自身、rec なら組の全員）を短い名前で参照できる
@@ -1469,7 +1542,7 @@ object TAnalyser {
       case _ => sealDecl(inner)
     }
     case AST.TopModified(Modifier.Private, inner) => sealDecl(inner)
-    case AST.TopImpl(_, _, _, _, _, _) | AST.TopDerive(_, _) | AST.TopOpen(_) | AST.TopOperator(_, _) | AST.TopImport(_) => ask
+    case AST.TopImpl(_, _, _, _, _, _) | AST.TopDerive(_, _) | AST.TopOpen(_) | AST.TopOperator(_, _, _) | AST.TopImport(_) => ask
   }
 
   private def checkModule(name: String, decls: Seq[IndexedRec[Decl]]): StateT[EitherS, Env, TypeRec[Decl]] = StateT { outer =>

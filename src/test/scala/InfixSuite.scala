@@ -76,7 +76,7 @@ class InfixSuite extends munit.FunSuite {
 
   test("型チェック: ユーザー定義2引数関数の infix 使用") {
     val ok =
-      """trait Gt[a] { def gt(x: a)(y: a): bool }; operator > = gt; impl Gt[i32] { def gt(x: i32)(y: i32): bool = intrinsic[gt_i32](x)(y) }
+      """trait Gt[a] { def gt(x: a)(y: a): bool }; infix 4 > = gt; impl Gt[i32] { def gt(x: i32)(y: i32): bool = intrinsic[gt_i32](x)(y) }
         |let max(x: i32)(y: i32): i32 = if x > y then x else y
         |let main(): i32 = 2 max 5
         |""".stripMargin
@@ -88,8 +88,8 @@ class InfixSuite extends munit.FunSuite {
 
   test("型チェック: infix と記号演算子の混在") {
     val src =
-      """trait Add[a] { def add(x: a)(y: a): a }; operator + = add; impl Add[i32] { def add(x: i32)(y: i32): i32 = intrinsic[add_i32](x)(y) }
-        |trait Gt[a] { def gt(x: a)(y: a): bool }; operator > = gt; impl Gt[i32] { def gt(x: i32)(y: i32): bool = intrinsic[gt_i32](x)(y) }
+      """trait Add[a] { def add(x: a)(y: a): a }; infixl 6 + = add; impl Add[i32] { def add(x: i32)(y: i32): i32 = intrinsic[add_i32](x)(y) }
+        |trait Gt[a] { def gt(x: a)(y: a): bool }; infix 4 > = gt; impl Gt[i32] { def gt(x: i32)(y: i32): bool = intrinsic[gt_i32](x)(y) }
         |let max(x: i32)(y: i32): i32 = if x > y then x else y
         |let main(): i32 = 1 + 2 max 3
         |""".stripMargin

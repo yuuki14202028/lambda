@@ -1,0 +1,8 @@
+error: `<` and `<` cannot be mixed without parentheses
+ --> operator_mixed.lam:3:45
+  |
+3 | let f(a: i32)(b: i32)(c: i32): bool = a < b < c
+  |                                             ^ the grouping of these operators is not determined
+  |
+  = note: `<` is declared `infix 4` and `<` is declared `infix 4`: operators of the same precedence group only when both are `infixl` or both are `infixr`
+  = help: add parentheses to say which operator applies first

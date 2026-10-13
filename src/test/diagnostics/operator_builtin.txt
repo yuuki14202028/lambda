@@ -1,0 +1,7 @@
+error: the operator `&&` is built in
+ --> operator_builtin.lam:2:1
+  |
+2 | infixl 3 && = both
+  | ^^^^^^^^^^^^^^^^^^ cannot be declared
+  |
+  = note: `&&` and `||` work on `bool` only and evaluate their right operand only when needed, so they are not functions

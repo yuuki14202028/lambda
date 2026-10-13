@@ -1,8 +1,8 @@
 error: the operator `+` is not declared
- --> operator_not_imported.lam:1:19
+ --> operator_not_imported.lam:1:21
   |
 1 | let main(): i32 = 1 + 2
-  |                   ^^^^^ used here
+  |                     ^ used here
   |
-  = note: an operator calls the function it is declared for, with the type of its left operand: after `operator + = add`, `a + b` means `add[T](a)(b)`
+  = note: an operator calls the function it is declared for, with the type of its left operand: after `infixl 6 + = add`, `a + b` means `add[T](a)(b)`
   = help: the standard operators are declared in the standard library: add `import "std/operators"`

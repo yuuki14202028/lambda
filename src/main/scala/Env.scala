@@ -104,9 +104,9 @@ case class Names(
     values: Map[String, Variable],
     types: Map[String, TypeVariable],
     modules: Map[String, String],
-    operators: Map[String, Variable] = Map.empty // 演算子（operatorKey）が指す関数
+    operators: Map[String, OperatorDef] = Map.empty // 演算子（前置は Operators.prefixKey）に宣言された関数と優先順位
 ) {
-  def withOperator(key: String, function: Variable): Names = copy(operators = operators + (key -> function))
+  def withOperator(key: String, definition: OperatorDef): Names = copy(operators = operators + (key -> definition))
   def withValue(short: String, full: Variable): Names = copy(values = values + (short -> full))
   def withType(short: String, full: TypeVariable): Names = copy(types = types + (short -> full))
   def withModule(short: String, full: String): Names = copy(modules = modules + (short -> full))

@@ -96,8 +96,8 @@ given HTraverse[AST] with {
       decls.traverse(d => f(d)).map(AST.TopModule(name, _))
     case AST.TopOpen(path) =>
       Applicative[G].pure(AST.TopOpen(path))
-    case AST.TopOperator(op, function) =>
-      Applicative[G].pure(AST.TopOperator(op, function))
+    case AST.TopOperator(op, fixity, function) =>
+      Applicative[G].pure(AST.TopOperator(op, fixity, function))
     case AST.TopModified(modifier, decl) =>
       f(decl).map(AST.TopModified(modifier, _))
     case AST.Abs(v, types, body) =>
@@ -179,6 +179,8 @@ given HTraverse[AST] with {
     case AST.UnitLit() => Applicative[G].pure(AST.UnitLit())
     case AST.Block(discarded, result) =>
       (discarded.traverse(e => f(e)), result.traverse(e => f(e))).mapN(AST.Block(_, _))
+    case AST.OpSeq(first, rest) =>
+      (f(first), rest.traverse(step => f(step.operand).map(OpStep(step.op, step.span, _)))).mapN(AST.OpSeq(_, _))
     case AST.BinOp(op, l, r, resolved) =>
       (f(l), f(r), resolved.traverse(e => f(e))).mapN(AST.BinOp(op, _, _, _))
     case AST.Intrinsic(op, args) =>

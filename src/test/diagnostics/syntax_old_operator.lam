@@ -1,0 +1,3 @@
+let first[a](x: a)(y: a): a = x
+operator + = first
+let main(): i32 = 0

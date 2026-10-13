@@ -56,9 +56,6 @@ object ParserAST {
     }
   }
 
-  private def binaryLevel(op: Parser[BinOps], next: => Parser[IndexedRec[Expr]]): Parser[IndexedRec[Expr]] =
-    opLevel(op.map(o => (l, r) => at(l.extract.to(r.extract), AST.BinOp(o, l, r, None))), next)
-
   private def arrowChain[A](atom: Parser[A], whole: => Parser[A])(make: (A, A) => A): Parser[A] = {
     val arrowTail = sp.with1.soft *> '→' -*> Parser.defer(whole)
     (atom ~ arrowTail.?).map {
@@ -89,7 +86,7 @@ object ParserAST {
   }
 
   lazy val expr: Parser[IndexedRec[Expr]] =
-    Parser.defer(recExprP | usingP | instanceP | dataLetP | foldP | matchP | typeLetP | tyAbsP | absP | contextP.backtrack | letExprP | ifP | logicalOr)
+    Parser.defer(recExprP | usingP | instanceP | dataLetP | foldP | matchP | typeLetP | tyAbsP | absP | contextP.backtrack | letExprP | ifP | operatorsP)
 
 
   lazy val tyAbsP: Parser[IndexedRec[Expr]] = binderP('Λ', expr)(AST.TyAbs.apply)
@@ -325,15 +322,15 @@ object ParserAST {
       case (name, decls) => AST.TopModule[IndexedRec, Decl](name, decls)
     }.indexed
 
-  // operator + = add / prefix operator - = neg
+  // infixl 6 + = add / infixr 5 ++ = append / infix 4 == = eq / prefix - = neg
   private lazy val operatorP: Parser[IndexedRec[Decl]] = {
-    val binary: Parser[BinOps | UnaryOps] =
-      "==".as(BinOps.Eq) | "!=".as(BinOps.Neq) | "<=".as(BinOps.Leq) | ">=".as(BinOps.Geq) | "<".as(BinOps.Lt) | ">".as(BinOps.Gt) |
-        "+".as(BinOps.Add) | "-".as(BinOps.Sub) | "*".as(BinOps.Mul) | "/".as(BinOps.Div) | "%".as(BinOps.Mod) |
-        "&".as(BinOps.And) | "|".as(BinOps.Or) | "^".as(BinOps.Xor)
-    val prefix: Parser[BinOps | UnaryOps] = "-".as(UnaryOps.Neg) | "!".as(UnaryOps.Not)
-    val symbol = (keyword("prefix") *> keyword("operator") *> prefix) | (keyword("operator") *> binary)
-    (symbol ~ (spaced('=') *> qualifiedIdentifier)).map { case (op, function) => AST.TopOperator[IndexedRec, Decl](op, Variable(function)) }.indexed
+    val level = Parser.charIn('0' to '9').map(_.asDigit) <* gap
+    val assoc = keyword("infixl").as(Assoc.Left) | keyword("infixr").as(Assoc.Right) | keyword("infix").as(Assoc.Non)
+    val binary = ((assoc ~ level).map { case (a, l) => Option(Fixity(a, l)) } ~ operatorSymbol)
+    val prefix = keyword("prefix") *> operatorSymbol.map(symbol => (Option.empty[Fixity], symbol))
+    ((binary | prefix) ~ (spaced('=') *> qualifiedIdentifier)).map { case ((fixity, symbol), function) =>
+      AST.TopOperator[IndexedRec, Decl](symbol, fixity, Variable(function))
+    }.indexed
   }
 
   private lazy val openP: Parser[IndexedRec[Decl]] =
@@ -474,33 +471,20 @@ object ParserAST {
     }.indexed
   }
 
-  private val eqOp: Parser[BinOps] =
-    "==".as(BinOps.Eq) | "!=".as(BinOps.Neq) |
-    "<=".as(BinOps.Leq) | "<".as(BinOps.Lt) |
-    ">=".as(BinOps.Geq) | ">".as(BinOps.Gt)
-
-  // 次の分岐の先頭の負のリテラル（-1 => …）を引き算と読まない
-  private val addOp: Parser[BinOps] =
-    '+'.as(BinOps.Add) | (Parser.not(Parser.defer(caseStartLookahead).backtrack).with1 *> '-').backtrack.as(BinOps.Sub)
-
-  private val mulOp: Parser[BinOps] = '*'.as(BinOps.Mul) | '/'.as(BinOps.Div) | '%'.as(BinOps.Mod)
-
-  private val bitAndOp: Parser[BinOps] =
-    ('&' <* Parser.not(Parser.char('&'))).backtrack.as(BinOps.And)
+  // 演算子の記号: 記号文字の並びを最長一致で 1 つの演算子と読む（コメントの始まりと、構文に使う記号は除く）
+  private val reservedSymbols: Set[String] = Set("=", "=>", "->", ":")
+  private val operatorSymbol: Parser[String] =
+    (Parser.not(Parser.string("//") | Parser.string("/*")).with1 *> Parser.charIn("+-*/%<>=!&|^~?$@:")).rep.string
+      .filter(symbol => !reservedSymbols(symbol)).backtrack
 
   private lazy val caseStartLookahead: Parser[Unit] =
     Parser.defer(patternP *> guardP *> spaced("=>")).void
-
-  private val bitOrOp: Parser[BinOps] =
-    (Parser.not(caseStartLookahead.backtrack).with1 *> '|' <* Parser.not(Parser.char('|'))).backtrack.as(BinOps.Or)
-
-  private val xorOp: Parser[BinOps] = '^'.as(BinOps.Xor)
 
   private val exprKeywords: Set[String] = Set(
     "in", "then", "else", "with", "as", "context",
     "let", "rec", "if", "match", "fold", "data", "type",
     "import", "trait", "impl", "def", "derive", "true", "false",
-    "foreign", "intrinsic", "module", "open", "private", "opaque", "summon", "using", "operator"
+    "foreign", "intrinsic", "module", "open", "private", "opaque", "summon", "using", "infixl", "infixr", "infix"
   )
 
   private val infixIdentOp: Parser[(IndexedRec[Expr], IndexedRec[Expr]) => IndexedRec[Expr]] =
@@ -508,20 +492,23 @@ object ParserAST {
       at(l.extract.to(r.extract), AST.App(at(l.extract.to(span), AST.App(at(span, AST.Var(Variable(n))), l)), r))
     }
 
-  lazy val logicalOr: Parser[IndexedRec[Expr]]      = binaryLevel("||".as(BinOps.ShortOr), logicalAnd)
-  lazy val logicalAnd: Parser[IndexedRec[Expr]]     = binaryLevel("&&".as(BinOps.ShortAnd), bitwiseOr)
-  lazy val bitwiseOr: Parser[IndexedRec[Expr]]      = binaryLevel(bitOrOp, bitwiseXor)
-  lazy val bitwiseXor: Parser[IndexedRec[Expr]]     = binaryLevel(xorOp, bitwiseAnd)
-  lazy val bitwiseAnd: Parser[IndexedRec[Expr]]     = binaryLevel(bitAndOp, equitive)
-  lazy val equitive: Parser[IndexedRec[Expr]]       = binaryLevel(eqOp, additive)
-  lazy val additive: Parser[IndexedRec[Expr]]       = binaryLevel(addOp, multiplicative)
-  lazy val multiplicative: Parser[IndexedRec[Expr]] = binaryLevel(mulOp, infixApp)
-  lazy val infixApp: Parser[IndexedRec[Expr]]       = opLevel(infixIdentOp, unaryP, atomicStep = true)
+  // a ⊕ b ⊗ c: 優先順位は宣言で決まるので、ここでは並びのまま読む（型検査が木に組む）。
+  // 次の分岐の先頭の負のリテラル（-1 => …）は演算子と読まない
+  lazy val operatorsP: Parser[IndexedRec[Expr]] = {
+    val operator = (Parser.not(caseStartLookahead.backtrack).with1 *> operatorSymbol.spanned).backtrack
+    val step = (operator ~ (sp.with1 *> Parser.defer(infixApp))).map { case ((span, symbol), operand) => OpStep[IndexedRec](symbol, span, operand) }
+    (Parser.defer(infixApp) ~ (sp.with1.soft *> step).rep0).map {
+      case (first, Nil) => first
+      case (first, rest) => at(first.extract.to(rest.last.operand.extract), AST.OpSeq(first, rest))
+    }
+  }
 
+  lazy val infixApp: Parser[IndexedRec[Expr]] = opLevel(infixIdentOp, unaryP, atomicStep = true)
+
+  // 前置の演算子は、二項のどの演算子よりも強く結び付く
   lazy val unaryP: Parser[IndexedRec[Expr]] = {
-    val neg = ('-' -*> Parser.defer(unaryP)).map(b => AST.UnaryOp(UnaryOps.Neg, b, None)).indexed
-    val not = ('!' -*> Parser.defer(unaryP)).map(b => AST.UnaryOp(UnaryOps.Not, b, None)).indexed
-    neg | not | Parser.defer(appP)
+    val prefixed = (operatorSymbol ~ (sp.with1 *> Parser.defer(unaryP))).map { case (symbol, body) => AST.UnaryOp(symbol, body, None) }.indexed
+    prefixed | Parser.defer(appP)
   }
 
   lazy val appP: Parser[IndexedRec[Expr]] = {

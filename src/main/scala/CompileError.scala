@@ -94,6 +94,8 @@ enum Hint {
   case PrivateMember(name: String)                                                     // その名前は module の中にあるが、公開されていない
   case OpaqueType(name: String)                                                        // module の外では表現と別の型
   case SuperclassDeclaredLater(constraint: String)                                     // スーパークラスのインスタンスが rec の組の後ろにある
+  case ImportOperators                                                                 // 演算子の宣言がスコープに 1 つもない
+  case SplitOperator(binary: String, prefix: String)                                   // 二項と前置の演算子が続けて書かれ、1 つの記号と読まれた
   case ProvideWithUsing(constraint: String)                                            // impl の式のスーパークラスは using で入れられる
 }
 
@@ -158,8 +160,11 @@ enum CompileError {
   case ForAllBodyKindNotStar(kind: Kind, body: TypeRec[Type])
 
   // ---- 演算子・組み込み ----
-  case OperatorNotDeclared(op: BinOps | UnaryOps)
-  case OperatorTargetInvalid(op: BinOps | UnaryOps, function: Variable, fnType: TypeRec[Type])
+  // op は演算子を引く鍵（二項は記号、前置は "prefix 記号"）
+  case OperatorNotDeclared(op: String)
+  case OperatorTargetInvalid(op: String, function: Variable, fnType: TypeRec[Type])
+  case OperatorBuiltin(op: String)
+  case OperatorsNotAssociative(left: String, leftFixity: Fixity, right: String, rightFixity: Fixity)
   case IntrinsicArityMismatch(op: BinOps | UnaryOps, actual: Int)
   case IntrinsicOperandInvalid(op: BinOps | UnaryOps, requirement: OperandRequirement)
   case IntrinsicUnsupported(op: BinOps)
@@ -347,9 +352,12 @@ enum CompileError {
     case ArrowKindNotStar(side, kind, operand) => s"Arrow ${side.shown} must have kind *, got ${kind.show}: ${operand.show}"
     case ForAllBodyKindNotStar(kind, body) => s"∀ body must have kind *, got ${kind.show}: ${body.show}"
 
-    case OperatorNotDeclared(op) => s"Operator ${operatorShown(op)} is not declared"
+    case OperatorNotDeclared(op) => s"Operator $op is not declared"
     case OperatorTargetInvalid(op, function, fnType) =>
-      s"Operator ${operatorShown(op)} cannot be ${function.name}: its type ${fnType.show} is not a polymorphic function over its first argument"
+      s"Operator $op cannot be ${function.name}: its type ${fnType.show} is not a polymorphic function over its first argument"
+    case OperatorBuiltin(op) => s"Operator $op is built in and cannot be declared"
+    case OperatorsNotAssociative(left, leftFixity, right, rightFixity) =>
+      s"Operators $left (${leftFixity.assoc.keyword} ${leftFixity.level}) and $right (${rightFixity.assoc.keyword} ${rightFixity.level}) cannot be mixed without parentheses"
     case IntrinsicArityMismatch(op, actual) => op match {
       case _: BinOps => s"Binary intrinsic $op expects 2 arguments, got $actual"
       case _: UnaryOps => s"Unary intrinsic $op expects 1 argument, got $actual"
