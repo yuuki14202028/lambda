@@ -116,6 +116,17 @@ let testString(): bool =
       _ => false
     })
 
+let testShow(): bool =
+  show[i32](42) == "42" && show[bool](true) == "true" && show[char]('x') == "x" && show[String]("s") == "s" &&
+    show[unit](()) == "()" && show[i64](7i64) == "7" && show[f64](1.5) == "1.5" &&
+    show[Option[i32]](Some[i32](1)) == "Some(1)" && show[Option[bool]](None[bool]) == "None" &&
+    show[Either[String][i32]](Left[String][i32]("e")) == "Left(e)" &&
+    show[Pair[i32][bool]](Pair[i32][bool](1)(false)) == "(1, false)" &&
+    show[List[i32]](Nil[i32]) == "[]" &&
+    show[List[i32]](Cons[i32](1)(Cons[i32](2)(Cons[i32](3)(Nil[i32])))) == "[1, 2, 3]" &&
+    show[List[Option[i32]]](Cons[Option[i32]](Some[i32](1))(Cons[Option[i32]](None[i32])(Nil[Option[i32]]))) == "[Some(1), None]" &&
+    `n = {1}, xs = {Cons[i32](1)(Nil[i32])}, ok = {true}` == "n = 1, xs = [1], ok = true"
+
 let main(): i32 =
   if testOption() then
     if testEither() then
@@ -128,7 +139,9 @@ let main(): i32 =
                   if testOrdDefaults() then
                     if testApply() then
                       if testChar() then
-                        if testString() then 0 else 12
+                        if testString() then
+                          if testShow() then 0 else 13
+                        else 12
                       else 11
                     else 10
                   else 9

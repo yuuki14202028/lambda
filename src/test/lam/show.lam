@@ -1,0 +1,29 @@
+// 標準ライブラリの Show と出力: display / println と、文字列埋め込み。
+// 期待する出力は EndToEndSuite に書いてある。
+
+import "std/prelude"
+
+data Color = { Red, Green }
+
+impl Show[Color] {
+  def show = λc: Color. match c {
+    Red => "red"
+    Green => "green"
+  }
+}
+
+let numbers: List[i32] = Cons[i32](1)(Cons[i32](2)(Cons[i32](3)(Nil[i32])))
+
+let main(): i32 = {
+  display[i32](42);
+  display[bool](false);
+  display[char]('x');
+  display[String]("text");
+  display[List[i32]](numbers);
+  display[Option[Pair[i32][Color]]](Some[Pair[i32][Color]](Pair[i32][Color](1)(Green)));
+  display[Either[String][List[Color]]](Right[String][List[Color]](Cons[Color](Red)(Nil[Color])));
+  println(`sum of {numbers} is {foldLeft[List][i32][i32](λacc: i32. λx: i32. acc + x)(0)(numbers)}`);
+  print("no newline");
+  print("\n");
+  0
+}

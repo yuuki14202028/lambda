@@ -6,8 +6,6 @@
 
 import "std/prelude"
 
-let printInt: i32 → i32 = foreign[i32 → i32] print_int
-
 // ---- StateT ----
 
 data StateT[s][m: * → *][a] = { MkStateT(s → m[Pair[a][s]]) }
@@ -86,10 +84,10 @@ let compute(a: i32)(b: i32)(c: i32): Counting[i32] = context[Counting] {
   x + y
 }
 
-// 結果と、割り算の回数を表示する（失敗なら -1）
-let report(c: Counting[i32]): i32 = match runStateT[i32][Option][i32](c)(0) {
-  Some(Pair(value)(steps)) => { printInt(value); printInt(steps) }
-  None => printInt(0 - 1)
+// 結果と、割り算の回数を表示する
+let report(c: Counting[i32]): unit = match runStateT[i32][Option][i32](c)(0) {
+  Some(Pair(value)(steps)) => println(`{value} (divisions: {steps})`)
+  None => println("failed")
 }
 
 let main(): i32 = {

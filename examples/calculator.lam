@@ -9,8 +9,6 @@
 
 import "std/prelude"
 
-let printStr: String → i32 = foreign[String → i32] print_string_inline
-
 type Name = String
 
 // ---- 構文解析器 ----
@@ -199,21 +197,6 @@ let program: Parser[Expr] = context[Parser] {
 
 // ---- 表示 ----
 
-trait Show[a] {
-  def show(x: a): String
-  // 括弧で囲んだ表示。式の中に式を置くときに使う
-  def showNested(x: a): String = `({show(x)})`
-}
-
-impl Show[i32] {
-  def show = Str.fromInt
-  def showNested = Str.fromInt
-}
-
-impl Show[String] {
-  def show = λs: String. s
-}
-
 impl Show[Operator] {
   def show = λop: Operator. match op {
     Plus => "+"
@@ -223,19 +206,29 @@ impl Show[Operator] {
   }
 }
 
-rec impl Show[Expr] {
-  def show = λe: Expr. match e {
+// 式の中に置けるものの表示。nested は、別の式の中に置くときの表示（既定では括弧で囲む）
+trait Printed[a] {
+  def printed(x: a): String
+  def nested(x: a): String = `({printed(x)})`
+}
+
+rec impl Printed[Expr] {
+  def printed = λe: Expr. match e {
     Number(n) => show[i32](n)
     Variable(name) => name
-    Negate(inner) => `-{showNested[Expr](inner)}`
-    Binary(op)(left)(right) => `{showNested[Expr](left)} {show[Operator](op)} {showNested[Expr](right)}`
-    LetIn(name)(bound)(body) => `let {name} = {show[Expr](bound)} in {show[Expr](body)}`
+    Negate(inner) => `-{nested[Expr](inner)}`
+    Binary(op)(left)(right) => `{nested[Expr](left)} {op} {nested[Expr](right)}`
+    LetIn(name)(bound)(body) => `let {name} = {printed[Expr](bound)} in {printed[Expr](body)}`
   }
   // 数と名前は括弧なしで置く
-  def showNested = λe: Expr. match e {
-    Number(_) | Variable(_) => show[Expr](e)
-    _ => `({show[Expr](e)})`
+  def nested = λe: Expr. match e {
+    Number(_) | Variable(_) => printed[Expr](e)
+    _ => `({printed[Expr](e)})`
   }
+}
+
+impl Show[Expr] {
+  def show = printed[Expr]
 }
 
 // ---- 簡約 ----
@@ -313,13 +306,13 @@ impl Show[Failure] {
 
 // ---- 実行 ----
 
-let calculate(text: String): i32 = match parse[Expr](program)(text) {
-  Failed(at)(expected) => printStr(`{text}\n  syntax error at {at}: expected {expected}\n`)
+let calculate(text: String): unit = match parse[Expr](program)(text) {
+  Failed(at)(expected) => print(`{text}\n  syntax error at {at}: expected {expected}\n`)
   Parsed(e)(_) => {
-    printStr(`{text}\n  parsed:     {e}\n  simplified: {simplify(e)}\n`);
+    print(`{text}\n  parsed:     {e}\n  simplified: {simplify(e)}\n`);
     match evaluate(Nil[Pair[Name][i32]])(e) {
-      Right(value) => printStr(`  value:      {value}\n`)
-      Left(failure) => printStr(`  error:      {failure}\n`)
+      Right(value) => print(`  value:      {value}\n`)
+      Left(failure) => print(`  error:      {failure}\n`)
     }
   }
 }

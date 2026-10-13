@@ -1,5 +1,18 @@
-data IO[a] = { MkIO(unit) }
+// 標準出力と標準入力。
 
-let print: foreign.C.String → IO[unit] = foreign[foreign.C.String → IO[unit]] print
-let readLine: unit → IO[foreign.C.String] = foreign[unit → IO[foreign.C.String]] readLine
-let exit: i32 → IO[unit] = foreign[i32 → IO[unit]] exit
+import "std/string"
+import "std/show"
+
+let writeString: String → i32 = foreign[String → i32] print_string_inline
+
+// 文字列をそのまま出力する
+let print(text: String): unit = { writeString(text); () }
+
+// 文字列と改行を出力する
+let println(text: String): unit = { writeString(text); writeString("\n"); () }
+
+// 値を show で文字列にして、改行つきで出力する
+let display[a](x: a): unit with Show[a] = println(show[a](x))
+
+// 標準入力から 1 行読む（行末の改行を含む。入力の終わりなら空文字列）
+let readLine: unit → String = foreign[unit → String] read_line

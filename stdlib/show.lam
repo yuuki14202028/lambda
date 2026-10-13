@@ -1,0 +1,73 @@
+// 値を文字列にする。文字列埋め込み（`value = {x}`）は、この show を使う。
+
+import "std/operators"
+import "std/char"
+import "std/string"
+import "std/option"
+import "std/either"
+import "std/pair"
+import "std/list"
+
+trait Show[a] {
+  def show(x: a): String
+}
+
+impl Show[i32] {
+  def show = Str.fromInt
+}
+
+impl Show[i64] {
+  def show = foreign[i64 → String] long_to_string
+}
+
+impl Show[f64] {
+  def show = foreign[f64 → String] double_to_string
+}
+
+impl Show[bool] {
+  def show = λb: bool. if b then "true" else "false"
+}
+
+impl Show[char] {
+  def show = Str.fromChar
+}
+
+impl Show[String] {
+  def show = λs: String. s
+}
+
+impl Show[unit] {
+  def show = λu: unit. "()"
+}
+
+impl[a] Show[Option[a]] with Show[a] {
+  def show = λo: Option[a]. match o {
+    Some(x) => `Some({show[a](x)})`
+    None => "None"
+  }
+}
+
+impl[e][a] Show[Either[e][a]] with Show[e], Show[a] {
+  def show = λv: Either[e][a]. match v {
+    Left(err) => `Left({show[e](err)})`
+    Right(x) => `Right({show[a](x)})`
+  }
+}
+
+impl[a][b] Show[Pair[a][b]] with Show[a], Show[b] {
+  def show = λp: Pair[a][b]. match p {
+    Pair(x)(y) => `({show[a](x)}, {show[b](y)})`
+  }
+}
+
+// [1, 2, 3]
+impl[a] Show[List[a]] with Show[a] {
+  def show = λxs: List[a].
+    rec let rest(ys: List[a]): String = match ys {
+      Nil => ""
+      Cons(y)(more) => `, {show[a](y)}{rest(more)}`
+    } in match xs {
+      Nil => "[]"
+      Cons(x)(more) => `[{show[a](x)}{rest(more)}]`
+    }
+}

@@ -44,6 +44,18 @@ char *int_to_string(int value) {
     return buffer;
 }
 
+char *long_to_string(long value) {
+    char *buffer = malloc(32);
+    snprintf(buffer, 32, "%ld", value);
+    return buffer;
+}
+
+char *double_to_string(double value) {
+    char *buffer = malloc(64);
+    snprintf(buffer, 64, "%g", value);
+    return buffer;
+}
+
 int put_char(int value) {
     putchar(value);
     return value;
