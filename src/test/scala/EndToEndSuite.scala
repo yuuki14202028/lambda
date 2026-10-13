@@ -54,5 +54,6 @@ class EndToEndSuite extends munit.FunSuite {
   program("src/test/lam/traverse.lam", "6\n-1\n")
   program("src/test/lam/impl_rec.lam", "3\n4\n")
   program("src/test/lam/tail_calls.lam", "1000000\n2050477040\n1\n42\n7\n")
+  program("src/test/lam/mutual_rec.lam", "1\n0\n0\n10\n4\n7\n100\n")
   program("src/test/lam/modules.lam", "2\n10\n1\n2\n70\n7\n204\n9\n")
 }

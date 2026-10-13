@@ -165,7 +165,7 @@ class TraitPhase2Suite extends munit.FunSuite {
 
   test("with 制約付き再帰関数: 再帰呼び出しにも辞書が挿入される") {
     val src = showMaybe +
-      """let rec render[a](x: a)(n: i32): i32 with Show[a] =
+      """rec let render[a](x: a)(n: i32): i32 with Show[a] =
         |  if true then show[a](x) else render[a](x)(n)
         |let main(): i32 = render[i32](7)(1)
         |""".stripMargin
@@ -216,7 +216,7 @@ class TraitPhase2Suite extends munit.FunSuite {
 
   test("インスタンスは自身のメソッド本体からはまだ見えない") {
     val src = showMaybe +
-      """data rec L[a] = { N, C(a)(L[a]) }
+      """rec data L[a] = { N, C(a)(L[a]) }
         |impl[a] Show[L[a]] with Show[a] {
         |  def show = λl: L[a]. match l {
         |    N => 0
@@ -228,10 +228,10 @@ class TraitPhase2Suite extends munit.FunSuite {
     assertLeftContains(validate(src), "No instance for Show[L[a]]")
   }
 
-  test("impl rec: メソッド本体から自身のインスタンスを使える") {
+  test("rec impl: メソッド本体から自身のインスタンスを使える") {
     val src = showMaybe +
-      """data rec L[a] = { N, C(a)(L[a]) }
-        |impl rec[a] Show[L[a]] with Show[a] {
+      """rec data L[a] = { N, C(a)(L[a]) }
+        |rec impl[a] Show[L[a]] with Show[a] {
         |  def show = λl: L[a]. match l {
         |    N => 0
         |    C(x)(rest) => show[L[a]](rest)
@@ -243,19 +243,19 @@ class TraitPhase2Suite extends munit.FunSuite {
     desugar(src) match {
       case Right(p) =>
         val shown = p.show
-        assert(shown.contains("let rec $inst_Show_L"), clue(shown))
-        assert(!shown.contains("let rec $inst_Show_Maybe"), clue(shown))
+        assert(shown.contains("rec let $inst_Show_L"), clue(shown))
+        assert(!shown.contains("rec let $inst_Show_Maybe"), clue(shown))
       case Left(err) => fail(err)
     }
   }
 
-  test("impl rec: 型パラメータも文脈もない形でパースできる") {
+  test("rec impl: 型パラメータも文脈もない形でパースできる") {
     val src =
-      """data rec Nat = { Z, S(Nat) }
+      """rec data Nat = { Z, S(Nat) }
         |trait Size[a] {
         |  def size(x: a): i32
         |}
-        |impl rec Size[Nat] {
+        |rec impl Size[Nat] {
         |  def size = λn: Nat. match n {
         |    Z => 0
         |    S(m) => size[Nat](m)

@@ -12,13 +12,14 @@ type Decl = DeclNode.type
 enum AST[R[_], I] {
   case Program(decls: Seq[R[Decl]]) extends AST[R, Program.type]
   case TopLet(variable: Variable, types: R[Type], value: R[Expr]) extends AST[R, Decl]
-  case TopLetRec(variable: Variable, types: R[Type], value: R[Expr]) extends AST[R, Decl]
   case TopImport(path: String) extends AST[R, Decl]
   case TopType(variable: TypeVariable, params: Seq[(TypeVariable, Kind)], alias: R[Type]) extends AST[R, Decl]
-  case TopData(variable: TypeVariable, params: Seq[(TypeVariable, Kind)], constructors: Seq[DataConstructor[R]], recursive: Boolean) extends AST[R, Decl]
+  case TopData(variable: TypeVariable, params: Seq[(TypeVariable, Kind)], constructors: Seq[DataConstructor[R]]) extends AST[R, Decl]
   case TopTrait(variable: TypeVariable, params: Seq[(TypeVariable, Kind)], supers: Seq[Constraint[R]], methods: Seq[MethodSig[R]]) extends AST[R, Decl]
-  case TopImpl(variable: TypeVariable, params: Seq[(TypeVariable, Kind)], targets: Seq[R[Type]], context: Seq[Constraint[R]], methods: Seq[MethodImpl[R]], superEvidence: Seq[Evidence[R]], recursive: Boolean) extends AST[R, Decl]
+  case TopImpl(variable: TypeVariable, params: Seq[(TypeVariable, Kind)], targets: Seq[R[Type]], context: Seq[Constraint[R]], methods: Seq[MethodImpl[R]], superEvidence: Seq[Evidence[R]]) extends AST[R, Decl]
   case TopDerive(traitName: TypeVariable, target: TypeVariable) extends AST[R, Decl]
+  // rec: 包んだ宣言（let / data / impl のどれか一種類）が互いに、また自身から見える。宣言が 1 つなら自己再帰
+  case TopRec(decls: Seq[R[Decl]]) extends AST[R, Decl]
   case TopModule(name: String, decls: Seq[R[Decl]]) extends AST[R, Decl]
   case TopOpen(path: Seq[String]) extends AST[R, Decl]
   case TopModified(modifier: Modifier, decl: R[Decl]) extends AST[R, Decl]
@@ -26,9 +27,10 @@ enum AST[R[_], I] {
   case TyAbs(variable: TypeVariable, kind: Kind, body: R[Expr]) extends AST[R, Expr]
   case InstAbs(constraint: Constraint[R], body: R[Expr]) extends AST[R, Expr]
   case Let(variable: Variable, types: R[Type], value: R[Expr], body: R[Expr]) extends AST[R, Expr]
-  case LetRec(variable: Variable, types: R[Type], value: R[Expr], body: R[Expr]) extends AST[R, Expr]
+  case LetRec(bindings: Seq[RecBinding[R]], body: R[Expr]) extends AST[R, Expr]
   case TypeLet(variable: TypeVariable, params: Seq[(TypeVariable, Kind)], alias: R[Type], body: R[Expr]) extends AST[R, Expr]
-  case DataLet(variable: TypeVariable, params: Seq[(TypeVariable, Kind)], constructors: Seq[DataConstructor[R]], body: R[Expr], recursive: Boolean) extends AST[R, Expr]
+  case DataLet(variable: TypeVariable, params: Seq[(TypeVariable, Kind)], constructors: Seq[DataConstructor[R]], body: R[Expr]) extends AST[R, Expr]
+  case DataLetRec(datas: Seq[DataBinding[R]], body: R[Expr]) extends AST[R, Expr]
   case Match(scrutinee: R[Expr], cases: Seq[MatchCase[R]]) extends AST[R, Expr]
   case Fold(scrutinee: R[Expr], resultType: R[Type], cases: Seq[MatchCase[R]]) extends AST[R, Expr]
   case App(function: R[Expr], argument: R[Expr]) extends AST[R, Expr]
@@ -43,7 +45,7 @@ enum AST[R[_], I] {
   case Bool(value: Boolean) extends AST[R, Expr]
   case UnitLit() extends AST[R, Expr]
   case Block(discarded: Seq[R[Expr]], result: Option[R[Expr]]) extends AST[R, Expr]
-  case Context(monad: R[Type], bindings: Seq[ContextBinding[R]], result: R[Expr], ops: Option[ContextOps[R]]) extends AST[R, Expr]
+  case Context(monad: R[Type], steps: Seq[ContextStep[R]], result: R[Expr], ops: Option[ContextOps[R]]) extends AST[R, Expr]
   case BinOp(op: BinOps, left: R[Expr], right: R[Expr]) extends AST[R, Expr]
   case Intrinsic(op: IntrinsicOps, args: Seq[R[Expr]]) extends AST[R, Expr]
   case UnaryOp(op: UnaryOps, body: R[Expr]) extends AST[R, Expr]
@@ -70,9 +72,19 @@ enum Modifier {
   }
 }
 
+// rec let / rec { let …  let … } の束縛。値からは組の全員が見える
+case class RecBinding[R[_]](variable: Variable, types: R[Type], value: R[Expr])
 case class DataConstructor[R[_]](name: Variable, fields: Seq[R[Type]])
 case class MatchCase[R[_]](constructor: Variable, binders: Seq[Variable], body: R[Expr])
-case class ContextBinding[R[_]](name: Variable, annotation: R[Type], value: R[Expr], monadic: Boolean, recursive: Boolean = false)
+// rec data / rec { data …  data … } のデータ型。フィールドからは組の全員が見える
+case class DataBinding[R[_]](variable: TypeVariable, params: Seq[(TypeVariable, Kind)], constructors: Seq[DataConstructor[R]])
+
+// context ブロックの中の束縛
+enum ContextStep[R[_]] {
+  case Bind(name: Variable, annotation: R[Type], value: R[Expr]) // x: T = e;          モナドの中身を束縛する
+  case Let(name: Variable, annotation: R[Type], value: R[Expr])  // let x: T = e;
+  case Rec(bindings: Seq[RecBinding[R]])                         // rec let …;  /  rec { let …  let … };
+}
 // context[M] が使う pure[M] / flatMap[M]。型検査が名前と制約を解決して埋める（パース直後は None）
 case class ContextOps[R[_]](pure: R[Expr], flatMap: R[Expr])
 
@@ -193,15 +205,16 @@ val eraseIndex: IndexedRec ~> Rec =
 
 def program(decls: Seq[Rec[Decl]]): Rec[AST.Program.type] = HFix(AST.Program(decls))
 def topLet(variable: Variable, types: Rec[Type], value: Rec[Expr]): Rec[Decl] = HFix(AST.TopLet(variable, types, value))
-def topLetRec(variable: Variable, types: Rec[Type], value: Rec[Expr]): Rec[Decl] = HFix(AST.TopLetRec(variable, types, value))
+def topRec(decls: Seq[Rec[Decl]]): Rec[Decl] = HFix(AST.TopRec(decls))
+def topLetRec(variable: Variable, types: Rec[Type], value: Rec[Expr]): Rec[Decl] = topRec(Seq(topLet(variable, types, value)))
 def topImport(path: String): Rec[Decl] = HFix(AST.TopImport(path))
 def topType(variable: TypeVariable, params: Seq[(TypeVariable, Kind)], alias: Rec[Type]): Rec[Decl] =
   HFix(AST.TopType(variable, params, alias))
-def topData(variable: TypeVariable, params: Seq[(TypeVariable, Kind)], constructors: Seq[DataConstructor[Rec]], recursive: Boolean = false): Rec[Decl] =
-  HFix(AST.TopData(variable, params, constructors, recursive))
+def topData(variable: TypeVariable, params: Seq[(TypeVariable, Kind)], constructors: Seq[DataConstructor[Rec]]): Rec[Decl] =
+  HFix(AST.TopData(variable, params, constructors))
 def topTrait(v: TypeVariable, p: Seq[(TypeVariable, Kind)], s: Seq[Constraint[Rec]], m: Seq[MethodSig[Rec]]): Rec[Decl] = HFix(AST.TopTrait(v, p, s, m))
-def topImpl(variable: TypeVariable, params: Seq[(TypeVariable, Kind)], targets: Seq[Rec[Type]], context: Seq[Constraint[Rec]], methods: Seq[MethodImpl[Rec]], recursive: Boolean = false): Rec[Decl] =
-  HFix(AST.TopImpl(variable, params, targets, context, methods, Seq.empty, recursive))
+def topImpl(variable: TypeVariable, params: Seq[(TypeVariable, Kind)], targets: Seq[Rec[Type]], context: Seq[Constraint[Rec]], methods: Seq[MethodImpl[Rec]]): Rec[Decl] =
+  HFix(AST.TopImpl(variable, params, targets, context, methods, Seq.empty))
 def topDerive(traitName: TypeVariable, target: TypeVariable): Rec[Decl] = HFix(AST.TopDerive(traitName, target))
 def topModule(name: String, decls: Seq[Rec[Decl]]): Rec[Decl] = HFix(AST.TopModule(name, decls))
 def topOpen(path: Seq[String]): Rec[Decl] = HFix(AST.TopOpen(path))
@@ -210,11 +223,12 @@ def abs(variable: Variable, types: Rec[Type], body: Rec[Expr]): Rec[Expr] = HFix
 def tyAbs(variable: TypeVariable, kind: Kind, body: Rec[Expr]): Rec[Expr] = HFix(AST.TyAbs(variable, kind, body))
 def instAbs(constraint: Constraint[Rec], body: Rec[Expr]): Rec[Expr] = HFix(AST.InstAbs(constraint, body))
 def let(variable: Variable, types: Rec[Type], value: Rec[Expr], body: Rec[Expr]): Rec[Expr] = HFix(AST.Let(variable, types, value, body))
-def letRec(variable: Variable, types: Rec[Type], value: Rec[Expr], body: Rec[Expr]): Rec[Expr] = HFix(AST.LetRec(variable, types, value, body))
+def letRec(variable: Variable, types: Rec[Type], value: Rec[Expr], body: Rec[Expr]): Rec[Expr] =
+  HFix(AST.LetRec(Seq(RecBinding[Rec](variable, types, value)), body))
 def typeLet(variable: TypeVariable, params: Seq[(TypeVariable, Kind)], alias: Rec[Type], body: Rec[Expr]): Rec[Expr] =
   HFix(AST.TypeLet(variable, params, alias, body))
-def dataLet(variable: TypeVariable, params: Seq[(TypeVariable, Kind)], constructors: Seq[DataConstructor[Rec]], body: Rec[Expr], recursive: Boolean = false): Rec[Expr] =
-  HFix(AST.DataLet(variable, params, constructors, body, recursive))
+def dataLet(variable: TypeVariable, params: Seq[(TypeVariable, Kind)], constructors: Seq[DataConstructor[Rec]], body: Rec[Expr]): Rec[Expr] =
+  HFix(AST.DataLet(variable, params, constructors, body))
 def matchExpr(scrutinee: Rec[Expr], cases: Seq[MatchCase[Rec]]): Rec[Expr] =
   HFix(AST.Match(scrutinee, cases))
 def foldExpr(scrutinee: Rec[Expr], resultType: Rec[Type], cases: Seq[MatchCase[Rec]]): Rec[Expr] =
@@ -230,8 +244,8 @@ def strInterp(parts: Seq[Rec[Expr]]): Rec[Expr] = HFix(AST.StrInterp(parts))
 def bool(value: Boolean): Rec[Expr] = HFix(AST.Bool(value))
 def unitLit: Rec[Expr] = HFix(AST.UnitLit())
 def block(discarded: Seq[Rec[Expr]], result: Option[Rec[Expr]]): Rec[Expr] = HFix(AST.Block(discarded, result))
-def contextExpr(monad: Rec[Type], bindings: Seq[ContextBinding[Rec]], result: Rec[Expr]): Rec[Expr] =
-  HFix(AST.Context(monad, bindings, result, None))
+def contextExpr(monad: Rec[Type], steps: Seq[ContextStep[Rec]], result: Rec[Expr]): Rec[Expr] =
+  HFix(AST.Context(monad, steps, result, None))
 def binop(op: BinOps, left: Rec[Expr], right: Rec[Expr]): Rec[Expr] = HFix(AST.BinOp(op, left, right))
 def intrinsic(op: IntrinsicOps, args: Seq[Rec[Expr]]): Rec[Expr] = HFix(AST.Intrinsic(op, args))
 def unop(op: UnaryOps, body: Rec[Expr]): Rec[Expr] = HFix(AST.UnaryOp(op, body))
@@ -265,18 +279,20 @@ def programT(decls: Seq[TypeRec[Decl]], env: Env = Env.empty): TypeRec[AST.Progr
   HCofree(ProgramAnn(env), AST.Program(decls))
 def topLetT(variable: Variable, types: TypeRec[Type], value: TypeRec[Expr]): TypeRec[Decl] =
   HCofree(DeclAnn, AST.TopLet(variable, types, value))
+def topRecT(decls: Seq[TypeRec[Decl]]): TypeRec[Decl] =
+  HCofree(DeclAnn, AST.TopRec(decls))
 def topLetRecT(variable: Variable, types: TypeRec[Type], value: TypeRec[Expr]): TypeRec[Decl] =
-  HCofree(DeclAnn, AST.TopLetRec(variable, types, value))
+  topRecT(Seq(topLetT(variable, types, value)))
 def topImportT(path: String): TypeRec[Decl] =
   HCofree(DeclAnn, AST.TopImport(path))
 def topTypeT(variable: TypeVariable, params: Seq[(TypeVariable, Kind)], alias: TypeRec[Type]): TypeRec[Decl] =
   HCofree(DeclAnn, AST.TopType(variable, params, alias))
-def topDataT(variable: TypeVariable, params: Seq[(TypeVariable, Kind)], constructors: Seq[DataConstructor[TypeRec]], recursive: Boolean = false): TypeRec[Decl] =
-  HCofree(DeclAnn, AST.TopData(variable, params, constructors, recursive))
+def topDataT(variable: TypeVariable, params: Seq[(TypeVariable, Kind)], constructors: Seq[DataConstructor[TypeRec]]): TypeRec[Decl] =
+  HCofree(DeclAnn, AST.TopData(variable, params, constructors))
 def topTraitT(variable: TypeVariable, params: Seq[(TypeVariable, Kind)], supers: Seq[Constraint[TypeRec]], methods: Seq[MethodSig[TypeRec]]): TypeRec[Decl] =
   HCofree(DeclAnn, AST.TopTrait(variable, params, supers, methods))
-def topImplT(variable: TypeVariable, params: Seq[(TypeVariable, Kind)], targets: Seq[TypeRec[Type]], context: Seq[Constraint[TypeRec]], methods: Seq[MethodImpl[TypeRec]], superEvidence: Seq[Evidence[TypeRec]], recursive: Boolean = false): TypeRec[Decl] =
-  HCofree(DeclAnn, AST.TopImpl(variable, params, targets, context, methods, superEvidence, recursive))
+def topImplT(variable: TypeVariable, params: Seq[(TypeVariable, Kind)], targets: Seq[TypeRec[Type]], context: Seq[Constraint[TypeRec]], methods: Seq[MethodImpl[TypeRec]], superEvidence: Seq[Evidence[TypeRec]]): TypeRec[Decl] =
+  HCofree(DeclAnn, AST.TopImpl(variable, params, targets, context, methods, superEvidence))
 def topDeriveT(traitName: TypeVariable, target: TypeVariable): TypeRec[Decl] =
   HCofree(DeclAnn, AST.TopDerive(traitName, target))
 def topModuleT(name: String, decls: Seq[TypeRec[Decl]]): TypeRec[Decl] =
@@ -294,11 +310,15 @@ def instAbsT(t: TypeRec[Type], constraint: Constraint[TypeRec], body: TypeRec[Ex
 def letT(variable: Variable, t: TypeRec[Type], types: TypeRec[Type], value: TypeRec[Expr], body: TypeRec[Expr]): TypeRec[Expr] =
   HCofree(ExprAnn(t), AST.Let(variable, types, value, body))
 def letRecT(variable: Variable, t: TypeRec[Type], types: TypeRec[Type], value: TypeRec[Expr], body: TypeRec[Expr]): TypeRec[Expr] =
-  HCofree(ExprAnn(t), AST.LetRec(variable, types, value, body))
+  letRecGroupT(Seq(RecBinding[TypeRec](variable, types, value)), t, body)
+def letRecGroupT(bindings: Seq[RecBinding[TypeRec]], t: TypeRec[Type], body: TypeRec[Expr]): TypeRec[Expr] =
+  HCofree(ExprAnn(t), AST.LetRec(bindings, body))
 def typeLetT(variable: TypeVariable, params: Seq[(TypeVariable, Kind)], t: TypeRec[Type], alias: TypeRec[Type], body: TypeRec[Expr]): TypeRec[Expr] =
   HCofree(ExprAnn(t), AST.TypeLet(variable, params, alias, body))
-def dataLetT(variable: TypeVariable, params: Seq[(TypeVariable, Kind)], t: TypeRec[Type], constructors: Seq[DataConstructor[TypeRec]], body: TypeRec[Expr], recursive: Boolean = false): TypeRec[Expr] =
-  HCofree(ExprAnn(t), AST.DataLet(variable, params, constructors, body, recursive))
+def dataLetT(variable: TypeVariable, params: Seq[(TypeVariable, Kind)], t: TypeRec[Type], constructors: Seq[DataConstructor[TypeRec]], body: TypeRec[Expr]): TypeRec[Expr] =
+  HCofree(ExprAnn(t), AST.DataLet(variable, params, constructors, body))
+def dataLetRecT(datas: Seq[DataBinding[TypeRec]], t: TypeRec[Type], body: TypeRec[Expr]): TypeRec[Expr] =
+  HCofree(ExprAnn(t), AST.DataLetRec(datas, body))
 def matchExprT(t: TypeRec[Type], scrutinee: TypeRec[Expr], cases: Seq[MatchCase[TypeRec]]): TypeRec[Expr] =
   HCofree(ExprAnn(t), AST.Match(scrutinee, cases))
 def foldExprT(t: TypeRec[Type], scrutinee: TypeRec[Expr], resultType: TypeRec[Type], cases: Seq[MatchCase[TypeRec]]): TypeRec[Expr] =
@@ -318,8 +338,8 @@ def boolT(value: Boolean, t: TypeRec[Type]): TypeRec[Expr] = HCofree(ExprAnn(t),
 def unitLitT(t: TypeRec[Type]): TypeRec[Expr] = HCofree(ExprAnn(t), AST.UnitLit())
 def blockT(t: TypeRec[Type], discarded: Seq[TypeRec[Expr]], result: Option[TypeRec[Expr]]): TypeRec[Expr] =
   HCofree(ExprAnn(t), AST.Block(discarded, result))
-def contextExprT(t: TypeRec[Type], monad: TypeRec[Type], bindings: Seq[ContextBinding[TypeRec]], result: TypeRec[Expr], ops: ContextOps[TypeRec]): TypeRec[Expr] =
-  HCofree(ExprAnn(t), AST.Context(monad, bindings, result, Some(ops)))
+def contextExprT(t: TypeRec[Type], monad: TypeRec[Type], steps: Seq[ContextStep[TypeRec]], result: TypeRec[Expr], ops: ContextOps[TypeRec]): TypeRec[Expr] =
+  HCofree(ExprAnn(t), AST.Context(monad, steps, result, Some(ops)))
 def binopT(op: BinOps, t: TypeRec[Type], left: TypeRec[Expr], right: TypeRec[Expr]): TypeRec[Expr] =
   HCofree(ExprAnn(t), AST.BinOp(op, left, right))
 def intrinsicT(op: IntrinsicOps, t: TypeRec[Type], args: Seq[TypeRec[Expr]]): TypeRec[Expr] =
@@ -399,9 +419,10 @@ def freeVars(expr: Rec[Expr]): Set[Variable] = {
     case AST.InstAbs(_, body) => body
     case AST.InstApp(function, _) => function
     case AST.Let(variable, _, value, body) => value ++ (body - variable)
-    case AST.LetRec(variable, _, value, body) => (value - variable) ++ (body - variable)
+    case AST.LetRec(bindings, body) => bindings.foldLeft(body)(_ ++ _.value) -- bindings.map(_.variable)
     case AST.TypeLet(_, _, _, body) => body
-    case AST.DataLet(_, _, _, body, _) => body
+    case AST.DataLet(_, _, _, body) => body
+    case AST.DataLetRec(_, body) => body
     case AST.Match(scrutinee, cases) =>
       scrutinee ++ cases.foldLeft(Set.empty[Variable]) { (acc, c) =>
         acc ++ (c.body -- c.binders.toSet)
@@ -417,10 +438,11 @@ def freeVars(expr: Rec[Expr]): Set[Variable] = {
     case AST.BinOp(_, left, right) => left ++ right
     case AST.Intrinsic(_, args) => args.foldLeft(Set.empty[Variable])(_ ++ _)
     case AST.StrInterp(parts) => parts.foldLeft(Set.empty[Variable])(_ ++ _)
-    case AST.Context(_, bindings, result, ops) =>
-      val body = bindings.foldRight(result) { (b, acc) =>
-        val valueFree = if (b.recursive) b.value - b.name else b.value
-        valueFree ++ (acc - b.name)
+    case AST.Context(_, steps, result, ops) =>
+      val body = steps.foldRight(result) {
+        case (ContextStep.Bind(name, _, value), acc) => value ++ (acc - name)
+        case (ContextStep.Let(name, _, value), acc) => value ++ (acc - name)
+        case (ContextStep.Rec(bindings), acc) => bindings.foldLeft(acc)(_ ++ _.value) -- bindings.map(_.variable)
       }
       ops.fold(body)(o => body ++ o.pure ++ o.flatMap)
     case AST.UnaryOp(_, body) => body

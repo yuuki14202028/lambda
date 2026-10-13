@@ -6,8 +6,9 @@ Scala 3 で実装した、小さな型付きラムダ計算系言語（System F�
 ## 特徴
 
 - **System Fω**: 値のラムダ `λx: T. e`、型抽象 `ΛA. e`、型適用 `f[T]`、型レベルラムダとカインド（`*`, `* → *`）。型注釈と型適用はすべて明示で、HM 型推論は行いません
-- **代数的データ型**: `data` / 再帰型は `data rec`。`match` は全コンストラクタの網羅が必須、`fold` で再帰型を畳み込みます。バックエンドでは Church encoding に変換されます
-- **trait**: `trait` / `impl` による型クラス。高階カインドの trait（`Monad[m: * → *]` など）、`with C[a]` 節（宣言末尾）による制約・スーパークラスに対応。メソッド自身の型変数にも制約を付けられます（`def traverse[g: * → *][a][b](f: a → g[b])(xs: t[a]): g[t[b]] with Applicative[g]`。impl 側のメソッドにも同じ `with` 節を書きます）。型適用が明示なので辞書解決は決定的で、型検査の中で行われ、辞書渡しコードへ脱糖されます。インスタンスは値や関数と同じく、宣言してから使います。メソッド本体から自身のインスタンスを使う再帰的なインスタンスは `impl rec[a] Show[List[a]] with Show[a] { ... }` と明示します
+- **再帰**: 再帰は `rec` を付けた宣言に限ります。`rec let f(n: i32): i32 = …`、`rec data List[a] = …`、`rec impl[a] Show[List[a]] with Show[a] { … }`。相互再帰は、同じ種類の宣言を `rec { … }` で囲みます（`rec { let isEven …  let isOdd … }`、`rec { data Tree …  data Forest … }`、`rec { impl …  impl … }`）。`derive` は `impl` と同じ組に入れられ、相互再帰のデータ型には `rec { derive Functor[Tree]  derive Functor[Forest] }` と書きます。式の中（`rec let … in e`、`rec { … } in e`）と context ブロックの中（`rec { … };`）でも同じに書けます。`rec` を使った所の停止性は保証しません
+- **代数的データ型**: `data` / 再帰型は `rec data`。`match` は全コンストラクタの網羅が必須、`fold` で再帰型を畳み込みます。バックエンドでは Church encoding に変換されます
+- **trait**: `trait` / `impl` による型クラス。高階カインドの trait（`Monad[m: * → *]` など）、`with C[a]` 節（宣言末尾）による制約・スーパークラスに対応。メソッド自身の型変数にも制約を付けられます（`def traverse[g: * → *][a][b](f: a → g[b])(xs: t[a]): g[t[b]] with Applicative[g]`。impl 側のメソッドにも同じ `with` 節を書きます）。型適用が明示なので辞書解決は決定的で、型検査の中で行われ、辞書渡しコードへ脱糖されます。インスタンスは値や関数と同じく、宣言してから使います。メソッド本体から自身のインスタンスを使う再帰的なインスタンスは `rec impl[a] Show[List[a]] with Show[a] { ... }` と明示します
 - **derive**: `derive Functor[Option]` / `derive Foldable[List]` で、データ型の構造から `map` / `foldRight` / `foldLeft` のインスタンスを自動導出します。導出対象は構造から一意に決まる trait（正準シグネチャと α 同値なもの）に限り、負の位置の出現や畳み込めないフィールドはコンパイルエラーになります
 - **context 記法**: do 記法相当。`context[M] { x: T = e; ...; result }` を `Monad` trait の `pure` / `flatMap` 呼び出しへ脱糖します
 - **糖衣構文**: 関数定義 `let f[A](x: T)(y: U): R = e`、ブロック式 `{ e; ...; result }`、文字列埋め込み `` `result = {compute()}\n` ``、2 引数関数の中置適用 `120 safeDiv 5`

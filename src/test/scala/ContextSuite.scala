@@ -35,24 +35,29 @@ class ContextSuite extends munit.FunSuite {
     case Left(err) => fail(err)
   }
 
+  private def stepShape(step: ContextStep[Rec]): String = step match {
+    case ContextStep.Bind(name, _, _) => s"bind ${name.name}"
+    case ContextStep.Let(name, _, _) => s"let ${name.name}"
+    case ContextStep.Rec(bindings) => s"rec ${bindings.map(_.variable.name).mkString(" ")}"
+  }
+
   // ---- パーサー ----
 
   test("パース: context ブロックは Context ノードになる") {
     parseExpr("context[Maybe] { x: i32 = m; x + 1 }").unfix match {
       case AST.Context(monad, bindings, result, _) =>
         assertEquals(monad.show, "Maybe")
-        assertEquals(bindings.map(b => (b.name.name, b.monadic)), Seq(("x", true)))
+        assertEquals(bindings.map(stepShape), Seq("bind x"))
         assertEquals(result.show, "(x + 1)")
       case other => fail(s"not Context: $other")
     }
   }
 
-  test("パース: 純粋 let / let rec をモナド束縛と混在できる") {
-    val src = "context[Maybe] { let y: i32 = 1; x: i32 = m; let rec f(n: i32): i32 = f(n); x + y }"
+  test("パース: 純粋 let / rec let をモナド束縛と混在できる") {
+    val src = "context[Maybe] { let y: i32 = 1; x: i32 = m; rec let f(n: i32): i32 = f(n); x + y }"
     parseExpr(src).unfix match {
       case AST.Context(_, bindings, _, _) =>
-        assertEquals(bindings.map(b => (b.name.name, b.monadic, b.recursive)),
-          Seq(("y", false, false), ("x", true, false), ("f", false, true)))
+        assertEquals(bindings.map(stepShape), Seq("let y", "bind x", "rec f"))
       case other => fail(s"not Context: $other")
     }
   }

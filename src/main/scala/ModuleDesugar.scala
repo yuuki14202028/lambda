@@ -49,8 +49,8 @@ object ModuleDesugar {
         case (TypeAnn, _, _) => typeOf(t)
         case (ExprAnn(exprType), _, revealed) => HCofree(ExprAnn(typeOf(exprType)), revealed)
         // impl のターゲットはインスタンスを引く鍵（辞書の名前の元）なので、抽象型の名前のまま残す
-        case (ann, AST.TopImpl(_, _, targets, _, _, _, _), AST.TopImpl(name, params, _, context, methods, superEvidence, recursive)) =>
-          HCofree(ann, AST.TopImpl(name, params, targets, context, methods, superEvidence, recursive))
+        case (ann, AST.TopImpl(_, _, targets, _, _, _), AST.TopImpl(name, params, _, context, methods, superEvidence)) =>
+          HCofree(ann, AST.TopImpl(name, params, targets, context, methods, superEvidence))
         case (ann, _, revealed) => HCofree(ann, revealed)
       }
     }

@@ -300,7 +300,7 @@ class ModuleSuite extends munit.FunSuite {
 
   private val stack =
     """module Stack {
-      |  opaque data rec Stack[a] = { Empty, Push(a)(Stack[a]) }
+      |  opaque rec data Stack[a] = { Empty, Push(a)(Stack[a]) }
       |  let empty[a]: Stack[a] = Empty[a]
       |  let push[a](x: a)(s: Stack[a]): Stack[a] = Push[a](x)(s)
       |  let isEmpty[a](s: Stack[a]): bool = match s {

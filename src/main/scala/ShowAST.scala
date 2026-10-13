@@ -23,27 +23,41 @@ private def showEvidence(e: Evidence[ShowResult]): String = e match {
   case Evidence.Super(traitName, index, of) => s"${superDictionaryName(traitName, index).name}(${showEvidence(of)})"
 }
 
+private def showRecBindings(bindings: Seq[RecBinding[ShowResult]]): String = {
+  val lets = bindings.map(b => s"let ${b.variable.name}: ${b.types} = ${b.value}")
+  if (lets.length == 1) s"rec ${lets.head}" else s"rec { ${lets.mkString("; ")} }"
+}
+
+private def showData(v: TypeVariable, params: Seq[(TypeVariable, Kind)], constructors: Seq[DataConstructor[ShowResult]]): String = {
+  val ctorText = constructors.map { ctor =>
+    val fields = ctor.fields.map(field => s"($field)").mkString
+    s"| ${ctor.name.name}$fields"
+  }.mkString(" ")
+  s"data ${v.name}${params.map(showKindedParam).mkString} = $ctorText"
+}
+
 val showAlg: Algebra[AST, ShowResult] = [x] => node => node match {
   case AST.Program(decls)          => decls.mkString("\n")
   case AST.TopLet(v, types, value) => s"let ${v.name}: $types = $value"
-  case AST.TopLetRec(v, types, value) => s"let rec ${v.name}: $types = $value"
+  case AST.TopRec(Seq(decl))       => s"rec $decl"
+  case AST.TopRec(decls)           => s"rec {\n${decls.mkString("\n")}\n}"
   case AST.TopImport(path)         => s"import \"$path\""
   case AST.TopType(v, params, alias) =>
     val suffix = params.map(showKindedParam).mkString
     s"type ${v.name}$suffix = $alias"
-  case AST.TopData(v, params, constructors, recursive) =>
+  case AST.TopData(v, params, constructors) =>
     val suffix = params.map(showKindedParam).mkString
     val ctorText = constructors.map { ctor =>
       val fields = ctor.fields.map(field => s"($field)").mkString
       s"| ${ctor.name.name}$fields"
     }.mkString(" ")
-    s"data ${if (recursive) "rec " else ""}${v.name}$suffix = $ctorText"
+    s"data ${v.name}$suffix = $ctorText"
   case AST.TopTrait(v, params, supers, methods) =>
     val suffix = params.map(showKindedParam).mkString
     val superText = showConstraints(supers)
     val methodText = methods.map(m => s"  def ${m.name.name}: ${m.sig}").mkString("\n")
     s"trait ${v.name}$suffix$superText {\n$methodText\n}"
-  case AST.TopImpl(v, params, targets, context, methods, _, recursive) =>
+  case AST.TopImpl(v, params, targets, context, methods, _) =>
     val suffix = params.map(showKindedParam).mkString
     val targetText = targets.map(t => s"[$t]").mkString
     val contextText = showConstraints(context)
@@ -51,7 +65,7 @@ val showAlg: Algebra[AST, ShowResult] = [x] => node => node match {
       val sigText = m.sig.map(s => s": $s").getOrElse("")
       s"  def ${m.name.name}$sigText = ${m.body}"
     }.mkString("\n")
-    s"impl${if (recursive) " rec" else ""}$suffix ${v.name}$targetText$contextText {\n$methodText\n}"
+    s"impl$suffix ${v.name}$targetText$contextText {\n$methodText\n}"
   case AST.TopDerive(traitName, target) => s"derive ${traitName.name}[${target.name}]"
   case AST.TopModule(name, decls)  => s"module $name {\n${decls.mkString("\n")}\n}"
   case AST.TopOpen(path)           => s"open ${path.mkString(".")}"
@@ -61,19 +75,15 @@ val showAlg: Algebra[AST, ShowResult] = [x] => node => node match {
   case AST.TyAbs(v, k, body)         => s"Λ(${v.name}: ${k.show}). $body"
   case AST.InstAbs(constraint, body) => s"λ[${showConstraint(constraint)}]. $body"
   case AST.Let(v, types, value, body) => s"let ${v.name}: $types = $value in $body"
-  case AST.LetRec(v, types, value, body) => s"let rec ${v.name}: $types = $value in $body"
+  case AST.LetRec(bindings, body)  => s"${showRecBindings(bindings)} in $body"
   case AST.TypeLet(v, params, alias, body) =>
     val suffix = params.map(showKindedParam).mkString
     val head = s"${v.name}$suffix"
     s"type $head = $alias in $body"
-  case AST.DataLet(v, params, constructors, body, recursive) =>
-    val suffix = params.map(showKindedParam).mkString
-    val head = s"${v.name}$suffix"
-    val ctorText = constructors.map { ctor =>
-      val fields = ctor.fields.map(field => s"($field)").mkString
-      s"| ${ctor.name.name}$fields"
-    }.mkString(" ")
-    s"data ${if (recursive) "rec " else ""}$head = $ctorText in $body"
+  case AST.DataLet(v, params, constructors, body) => s"${showData(v, params, constructors)} in $body"
+  case AST.DataLetRec(Seq(d), body) => s"rec ${showData(d.variable, d.params, d.constructors)} in $body"
+  case AST.DataLetRec(datas, body) =>
+    s"rec { ${datas.map(d => showData(d.variable, d.params, d.constructors)).mkString("; ")} } in $body"
   case AST.Match(scrutinee, cases) =>
     val caseText = cases.map { c =>
       val binders = c.binders.map(binder => s"(${binder.name})").mkString
@@ -103,10 +113,11 @@ val showAlg: Algebra[AST, ShowResult] = [x] => node => node match {
     case ch => ch.toString
   } + "\""
   case AST.StrInterp(parts)        => parts.map(p => s"{$p}").mkString("`", "", "`")
-  case AST.Context(monad, bindings, result, _) =>
-    val bindingText = bindings.map { b =>
-      if (b.monadic) s"${b.name.name}: ${b.annotation} = ${b.value};"
-      else s"let ${if (b.recursive) "rec " else ""}${b.name.name}: ${b.annotation} = ${b.value};"
+  case AST.Context(monad, steps, result, _) =>
+    val bindingText = steps.map {
+      case ContextStep.Bind(name, annotation, value) => s"${name.name}: $annotation = $value;"
+      case ContextStep.Let(name, annotation, value) => s"let ${name.name}: $annotation = $value;"
+      case ContextStep.Rec(bindings) => s"${showRecBindings(bindings)};"
     }
     s"context[$monad] { ${(bindingText :+ result.toString).mkString(" ")} }"
   case AST.Bool(v)                 => s"$v"

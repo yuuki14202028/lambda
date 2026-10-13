@@ -12,7 +12,7 @@ trait Traversable[t: * → *] {
 
 impl Traversable[List] {
   def traverse[g: * → *][a][b](f: a → g[b])(xs: List[a]): g[List[b]] with Applicative[g] =
-    let rec go(l: List[a]): g[List[b]] = match l {
+    rec let go(l: List[a]): g[List[b]] = match l {
       Nil => pure[g][List[b]](Nil[b])
       Cons(x)(rest) => apply[g][List[b]][List[b]](apply[g][b][List[b] → List[b]](pure[g][b → List[b] → List[b]](λh: b. λt: List[b]. Cons[b](h)(t)))(f(x)))(go(rest))
     } in go(xs)

@@ -72,7 +72,7 @@ object ParserAST {
   }
 
   lazy val expr: Parser[IndexedRec[Expr]] =
-    Parser.defer(dataLetP | foldP.backtrack | matchP | typeLetP | tyAbsP | absP | contextP.backtrack | letExprP | ifP | logicalOr)
+    Parser.defer(recExprP | dataLetP | foldP.backtrack | matchP | typeLetP | tyAbsP | absP | contextP.backtrack | letExprP | ifP | logicalOr)
 
 
   lazy val tyAbsP: Parser[IndexedRec[Expr]] = binderP('Λ', expr)(AST.TyAbs.apply)
@@ -121,9 +121,28 @@ object ParserAST {
 
   private lazy val letExprP: Parser[IndexedRec[Expr]] = {
     Parser.defer((binding ~ inBody).map {
-      case ((true, v, t, value), body) => AST.LetRec(v, t, value, body)
-      case ((false, v, t, value), body) => AST.Let(v, t, value, body)
+      case ((v, t, value), body) => AST.Let(v, t, value, body)
     }).indexed
+  }
+
+  // rec の後には、宣言 1 つか { } で囲んだ宣言の組を書く
+  private val recKeyword: Parser[Unit] = ("rec" <* Parser.not(identChar)).backtrack <* sp
+
+  private def recGroup[A](member: Parser[A]): Parser[List[A]] = {
+    val sep = (sp1.with1.soft *> Parser.charIn("\n;").rep.void) <* sp
+    ('{' -*> member.repSep(sep) <*- '}').map(_.toList) | member.map(List(_))
+  }
+
+  private lazy val recBindings: Parser[List[RecBinding[IndexedRec]]] =
+    recKeyword *> recGroup(binding).map(_.map { case (v, t, value) => RecBinding[IndexedRec](v, t, value) })
+
+  // 式の中の rec: rec let … in e / rec { let …  let … } in e / rec data … in e / rec { data …  data … } in e
+  private lazy val recExprP: Parser[IndexedRec[Expr]] = {
+    val lets = (recBindings ~ inBody).map { case (bindings, body) => AST.LetRec(bindings, body) }
+    val datas = ((recKeyword *> recGroup(dataBinding)) ~ inBody).map { case (datas, body) =>
+      AST.DataLetRec(datas.map { case (v, params, constructors) => DataBinding[IndexedRec](v, params, constructors) }, body)
+    }
+    (datas.backtrack | lets).indexed
   }
 
   private lazy val constraintP: Parser[Constraint[IndexedRec]] =
@@ -140,26 +159,21 @@ object ParserAST {
     constraints.foldRight(value)((c, body) => at(body.extract, AST.InstAbs(c, body)))
 
   private lazy val topLetP: Parser[IndexedRec[Decl]] = binding.map {
-    case (true, v, t, value) => AST.TopLetRec(v, t, value)
-    case (false, v, t, value) => AST.TopLet(v, t, value)
+    case (v, t, value) => AST.TopLet(v, t, value)
   }.indexed
 
-  private val letHead: Parser[(Boolean, String)] = {
-    val head = "let" *> sp1 *> ("rec" <* sp1).as(true).?.map(_.getOrElse(false))
-    head ~ identifier
-  }
+  private val letHead: Parser[String] = "let" *> gap *> identifier
 
   private lazy val inBody: Parser0[IndexedRec[Expr]] = spaced("in") *> Parser.defer(expr)
 
   private lazy val typeAnnP: Parser0[IndexedRec[Type]] = spaced(':') *> typeP
   private lazy val valueP: Parser0[IndexedRec[Expr]] = spaced('=') *> expr
 
-  private lazy val binding: Parser[(Boolean, Variable, IndexedRec[Type], IndexedRec[Expr])] = {
+  private lazy val binding: Parser[(Variable, IndexedRec[Type], IndexedRec[Expr])] = {
     val typeParams = sp *> typeParamP.rep0
     val params = sp *> functionParamsP
     (letHead ~ typeParams ~ params ~ typeAnnP ~ withClauseP ~ valueP).map {
-      case ((((((recursive, name), typeParams), params), returnType), constraints), value) => (
-        recursive,
+      case (((((name, typeParams), params), returnType), constraints), value) => (
         Variable(name),
         polymorphicType(typeParams, constrainedType(constraints, functionType(params, returnType))),
         polymorphicValue(typeParams, constrainedValue(constraints, functionValue(params, value)))
@@ -190,20 +204,19 @@ object ParserAST {
     (identifier.map(Variable.apply) ~ typeP.parens.rep0).map(DataConstructor.apply)
   }
 
-  private lazy val dataBinding: Parser[(Boolean, TypeVariable, Seq[(TypeVariable, Kind)], Seq[DataConstructor[IndexedRec]])] = {
-    val recursive = "data" -+> ("rec".as(true) <* gap).?.map(_.getOrElse(false))
+  private lazy val dataBinding: Parser[(TypeVariable, Seq[(TypeVariable, Kind)], Seq[DataConstructor[IndexedRec]])] = {
     val constructors = spaced('=') *> '{' -*> dataConstructorP.repSep(spaced(',').backtrack) <*- '}'
-    (recursive ~ identifier ~ typeParamP.rep0 ~ constructors).map { case (((recursive, name), params), constructors) =>
-      (recursive, TypeVariable(name), params, constructors.toList)
+    (("data" -+> identifier) ~ typeParamP.rep0 ~ constructors).map { case ((name, params), constructors) =>
+      (TypeVariable(name), params, constructors.toList)
     }
   }
 
-  lazy val dataLetP: Parser[IndexedRec[Expr]] = (dataBinding ~ inBody).map { case ((recursive, v, params, constructors), body) =>
-    AST.DataLet(v, params, constructors, body, recursive)
+  lazy val dataLetP: Parser[IndexedRec[Expr]] = (dataBinding ~ inBody).map { case ((v, params, constructors), body) =>
+    AST.DataLet(v, params, constructors, body)
   }.indexed
 
-  private lazy val topDataP: Parser[IndexedRec[Decl]] = dataBinding.map { case (recursive, v, params, constructors) =>
-    AST.TopData(v, params, constructors, recursive)
+  private lazy val topDataP: Parser[IndexedRec[Decl]] = dataBinding.map { case (v, params, constructors) =>
+    AST.TopData(v, params, constructors)
   }.indexed
 
   lazy val traitP: Parser[IndexedRec[Decl]] = {
@@ -223,10 +236,8 @@ object ParserAST {
   }
 
   lazy val implP: Parser[IndexedRec[Decl]] = {
-    // impl rec は、メソッド本体から自身のインスタンスを使える（let rec / data rec と同じ明示の印）
-    val recursive = (gap *> "rec" <* Parser.not(identChar)).backtrack.?.map(_.isDefined)
     val implParams = (sp.with1 *> typeParamP.rep.map(_.toList)).backtrack | gap.as(List.empty[(TypeVariable, Kind)])
-    val head = ("impl" *> recursive) ~ implParams ~ (sp.with1 *> qualifiedIdentifier.map(TypeVariable.apply))
+    val head = ("impl" *> implParams) ~ (sp.with1 *> qualifiedIdentifier.map(TypeVariable.apply))
     val targets = sp *> typeP.brackets.rep.map(_.toList)
     val typeParams = sp *> typeParamP.rep0
     val params = sp *> functionParamsP
@@ -239,7 +250,7 @@ object ParserAST {
     } <* sp).rep
     val body = sp.with1 *> ('{' -*> method <*- '}')
     (head ~ targets ~ withClauseP ~ body).map {
-      case (((((recursive, implParams), name), targets), context), methods) => AST.TopImpl(name, implParams, targets, context, methods.toList, Seq.empty, recursive)
+      case ((((implParams, name), targets), context), methods) => AST.TopImpl(name, implParams, targets, context, methods.toList, Seq.empty)
     }.indexed
   }
 
@@ -264,16 +275,23 @@ object ParserAST {
   private lazy val openP: Parser[IndexedRec[Decl]] =
     (keyword("open") *> identifier.repSep('.')).map(path => AST.TopOpen[IndexedRec, Decl](path.toList)).indexed
 
+  // rec let / rec data / rec impl と、同じ種類の宣言を囲んだ rec { … }
+  private lazy val topRecP: Parser[IndexedRec[Decl]] =
+    (recKeyword *> recGroup(topDataP.backtrack | implP.backtrack | topDeriveP.backtrack | topLetP)).map(decls => AST.TopRec[IndexedRec, Decl](decls)).indexed
+
+  private lazy val recDataP: Parser[IndexedRec[Decl]] =
+    (recKeyword *> recGroup(topDataP)).map(decls => AST.TopRec[IndexedRec, Decl](decls)).indexed
+
   private lazy val opaqueP: Parser[IndexedRec[Decl]] =
-    (keyword("opaque") *> (topDataP.backtrack | topTypeP)).map(decl => AST.TopModified[IndexedRec, Decl](Modifier.Opaque, decl)).indexed
+    (keyword("opaque") *> (recDataP | topDataP.backtrack | topTypeP)).map(decl => AST.TopModified[IndexedRec, Decl](Modifier.Opaque, decl)).indexed
 
   private lazy val privateP: Parser[IndexedRec[Decl]] = {
-    val decl = Parser.defer(moduleP | opaqueP | topDataP.backtrack | topTypeP.backtrack | traitP.backtrack | topLetP)
+    val decl = Parser.defer(moduleP | opaqueP | topRecP | topDataP.backtrack | topTypeP.backtrack | traitP.backtrack | topLetP)
     (keyword("private") *> decl).map(decl => AST.TopModified[IndexedRec, Decl](Modifier.Private, decl)).indexed
   }
 
   private lazy val topDeclP: Parser[IndexedRec[Decl]] =
-    Parser.defer(moduleP | openP | privateP | opaqueP |
+    Parser.defer(moduleP | openP | privateP | opaqueP | topRecP |
       topImportP.backtrack | topDataP.backtrack | topTypeP.backtrack | traitP.backtrack | implP.backtrack | topDeriveP.backtrack | topLetP)
 
   lazy val typeP: Parser[IndexedRec[Type]] = Parser.defer(forAllP | typeLambdaP | arrowTypeP)
@@ -334,13 +352,14 @@ object ParserAST {
 
   lazy val contextP: Parser[IndexedRec[Expr]] = {
     val monad = "context" -*> Parser.defer(typeP).brackets
-    val monadicBinding = (identifier.map(Variable.apply) ~ typeAnnP ~ valueP <* spaced(';')).backtrack.map {
-      case ((name, types), value) => ContextBinding[IndexedRec](name, types, value, monadic = true)
+    val monadicBinding: Parser[ContextStep[IndexedRec]] = (identifier.map(Variable.apply) ~ typeAnnP ~ valueP <* spaced(';')).backtrack.map {
+      case ((name, types), value) => ContextStep.Bind[IndexedRec](name, types, value)
     }
-    val pureLet = (binding <* spaced(';')).backtrack.map { case (recursive, name, types, value) =>
-      ContextBinding[IndexedRec](name, types, value, monadic = false, recursive)
+    val pureLet: Parser[ContextStep[IndexedRec]] = (binding <* spaced(';')).backtrack.map { case (name, types, value) =>
+      ContextStep.Let[IndexedRec](name, types, value)
     }
-    val bindings = (pureLet | monadicBinding).rep0
+    val recLets: Parser[ContextStep[IndexedRec]] = (recBindings <* spaced(';')).backtrack.map(ContextStep.Rec[IndexedRec](_))
+    val bindings = (recLets | pureLet | monadicBinding).rep0
     val body = '{' -*> (bindings.with1 ~ Parser.defer(expr)) <*- '}'
     (monad ~ (sp.with1 *> body)).map { case (m, (bs, result)) => AST.Context(m, bs, result, None) }.indexed
   }

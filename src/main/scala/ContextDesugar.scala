@@ -16,9 +16,9 @@ object ContextDesugar {
   def desugar(program: TypeRec[AST.Program.type]): TypeRec[AST.Program.type] = program.cata(desugarAlg)
 
   private val desugarAlg: Algebra[TypedAST, TypeRec] = [x] => he => he.ast match {
-    case AST.Context(_, bindings, result, ops) =>
+    case AST.Context(_, steps, result, ops) =>
       val resolved = ops.getOrElse(invariant("context block reached ContextDesugar without resolved methods"))
-      desugarContext(resolved, bindings, result)
+      desugarContext(resolved, steps, result)
         .fold(err => invariant(s"context block failed to desugar after validation: ${err.render}"), identity)
     case node => HCofree(he.ann, node)
   }
@@ -26,22 +26,24 @@ object ContextDesugar {
   // 型検査からも呼ばれ、ブロック全体の型と束縛の型エラーをここで確定する
   def desugarContext(
       ops: ContextOps[TypeRec],
-      bindings: Seq[ContextBinding[TypeRec]],
+      steps: Seq[ContextStep[TypeRec]],
       result: TypeRec[Expr]
   ): EitherS[TypeRec[Expr]] = {
     val resultType = typeOf(result)
     for {
       retChain <- applyTypeArg(ops.pure, resultType, Kind.Star).flatMap(applyArg(_, result))
-      chain <- bindings.foldRight(Right(retChain): EitherS[TypeRec[Expr]]) { (b, accE) =>
+      chain <- steps.foldRight(Right(retChain): EitherS[TypeRec[Expr]]) { (step, accE) =>
         accE.flatMap { acc =>
-          if (b.monadic) for {
-            bindA <- applyTypeArg(ops.flatMap, b.annotation, Kind.Star)
-            bindR <- applyTypeArg(bindA, resultType, Kind.Star)
-            bindValue <- applyArg(bindR, b.value)
-            applied <- applyArg(bindValue, mkAbs(b.name, b.annotation, acc))
-          } yield applied
-          else if (b.recursive) Right(letRecT(b.name, typeOf(acc), b.annotation, b.value, acc))
-          else Right(letT(b.name, typeOf(acc), b.annotation, b.value, acc))
+          step match {
+            case ContextStep.Bind(name, annotation, value) => for {
+              bindA <- applyTypeArg(ops.flatMap, annotation, Kind.Star)
+              bindR <- applyTypeArg(bindA, resultType, Kind.Star)
+              bindValue <- applyArg(bindR, value)
+              applied <- applyArg(bindValue, mkAbs(name, annotation, acc))
+            } yield applied
+            case ContextStep.Let(name, annotation, value) => Right(letT(name, typeOf(acc), annotation, value, acc))
+            case ContextStep.Rec(bindings) => Right(letRecGroupT(bindings, typeOf(acc), acc))
+          }
         }
       }
     } yield chain

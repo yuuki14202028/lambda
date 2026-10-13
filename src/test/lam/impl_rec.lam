@@ -12,16 +12,16 @@ impl Size[i32] {
   def size = λx: i32. 1
 }
 
-impl rec[a] Size[List[a]] with Size[a] {
+rec impl[a] Size[List[a]] with Size[a] {
   def size = λl: List[a]. match l {
     Nil => 0
     Cons(x)(rest) => size[a](x) + size[List[a]](rest)
   }
 }
 
-data rec Rose[a] = { Node(a)(List[Rose[a]]) }
+rec data Rose[a] = { Node(a)(List[Rose[a]]) }
 
-impl rec[a] Size[Rose[a]] with Size[a] {
+rec impl[a] Size[Rose[a]] with Size[a] {
   def size = λr: Rose[a]. match r {
     Node(x)(children) => size[a](x) + size[List[Rose[a]]](children)
   }

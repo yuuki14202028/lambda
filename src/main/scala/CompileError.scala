@@ -22,7 +22,7 @@ enum DeclRef {
 }
 
 enum NameKind {
-  case TypeVariableName, TypeAliasName, DataTypeName, TraitName, ModuleName
+  case TypeVariableName, TypeAliasName, DataTypeName, TraitName, ModuleName, VariableName
 
   def shown: String = this match {
     case TypeVariableName => "Type variable"
@@ -30,6 +30,7 @@ enum NameKind {
     case DataTypeName => "Data type"
     case TraitName => "Trait"
     case ModuleName => "Module"
+    case VariableName => "Variable"
   }
 }
 
@@ -93,6 +94,7 @@ enum CompileError {
   case UndefinedTrait(name: TypeVariable, site: Option[DeclRef])
   case UndefinedModule(path: Seq[String])
   case ModifierOutsideModule(modifier: Modifier)
+  case MixedRecursiveGroup
   case AlreadyDefined(kind: NameKind, name: String)
   case ParamAlreadyDefined(owner: DeclRef)
   case DuplicateParams(owner: DeclRef)
@@ -203,6 +205,7 @@ enum CompileError {
     case UndefinedTrait(name, site) =>
       site.fold(s"Trait ${name.name} is not defined")(s => s"${s.shown}: trait ${name.name} is not defined")
     case UndefinedModule(path) => s"Module ${path.mkString(".")} is not defined"
+    case MixedRecursiveGroup => "rec { } must contain declarations of one kind: let, data, or impl / derive"
     case ModifierOutsideModule(modifier) => s"${modifier.keyword} can only be used inside a module"
     case AlreadyDefined(kind, name) => s"${kind.shown} $name is already defined"
     case ParamAlreadyDefined(owner) => s"${owner.shown} has a ${owner.paramNoun} that is already defined"
@@ -221,9 +224,9 @@ enum CompileError {
     case DataArityMismatch(name, expected, actual) => s"Data type $name expects $expected arguments, got $actual"
     case ForeignNotFunction(t) => s"Foreign function must have at least one argument: ${t.show}"
     case NumericLiteralUnknown(typeName) => s"Numeric literal type $typeName is not defined"
-    case RecursiveDataNotDeclared(name) => s"Recursive data type ${name.name} must be declared with data rec"
+    case RecursiveDataNotDeclared(name) => s"Recursive data type ${name.name} must be declared with rec data"
     case RecursiveValueNotFunction(name) =>
-      s"let rec ${name.name}: a definition that refers to itself must be a function (otherwise it is read before it is initialized)"
+      s"rec let ${name.name}: a definition that refers to a rec definition must be a function (otherwise it is read before it is initialized)"
 
     case KindNotStar(t, kind) => s"Type ${t.show} has kind ${kind.show}, expected *"
     case KindMismatchInTypeApp(expected, actual, argument) =>

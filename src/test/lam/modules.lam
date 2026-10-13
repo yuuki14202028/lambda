@@ -25,18 +25,18 @@ module Shape {
 }
 
 module Stack {
-  opaque data rec Stack[a] = { Empty, Push(a)(Stack[a]) }
+  opaque rec data Stack[a] = { Empty, Push(a)(Stack[a]) }
 
   let empty[a]: Stack[a] = Empty[a]
   let push[a](x: a)(s: Stack[a]): Stack[a] = Push[a](x)(s)
-  let rec size[a](s: Stack[a]): i32 = match s {
+  rec let size[a](s: Stack[a]): i32 = match s {
     Empty => 0
     Push(x)(rest) => 1 + size[a](rest)
   }
 
   derive Functor[Stack]
 
-  let rec sum(s: Stack[i32]): i32 = match s {
+  rec let sum(s: Stack[i32]): i32 = match s {
     Empty => 0
     Push(x)(rest) => x + sum(rest)
   }

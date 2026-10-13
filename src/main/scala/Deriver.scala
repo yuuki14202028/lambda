@@ -68,6 +68,18 @@ object Deriver {
 
   // ---- 検査（TAnalyser から宣言単位で呼ばれる） ----
 
+  /** derive が登録するインスタンス。フィールドの検査をせずに決まるので、rec の組では
+   * 全員のインスタンスを先に求めて互いに見えるようにしてから、各 derive を check する */
+  def instanceOf(traitName: TypeVariable, target: TypeVariable, env: Env): EitherS[InstanceDef] = for {
+    dataDef <- env.dataTypes.get(target).filter(_ => !env.traits.contains(target))
+      .toRight(CompileError.DeriveTargetNotData(target))
+    _ <- Either.cond(dataDef.params.nonEmpty, (), CompileError.DeriveKindMismatch(traitName, target))
+  } yield {
+    val prefix = dataDef.params.init
+    val targets = Seq(applyTypeConstructor(target, prefix.map { case (v, _) => typeVarT(v) }))
+    InstanceDef(traitName, targets, Seq.empty, instanceDictionaryName(traitName, Seq(target.name)), prefix)
+  }
+
   def check(traitName: TypeVariable, target: TypeVariable, env: Env): EitherS[InstanceDef] = for {
     _ <- Either.cond(
       !env.instances.contains(instanceKey(traitName, Seq(target.name))), (),
@@ -99,13 +111,9 @@ object Deriver {
     fieldPlans <- dataDef.constructors.toList.traverse { c =>
       c.fields.toList.traverse(field => classify(rule, traitName, target, dataDef, c.name, field, env))
     }
-    prefix = dataDef.params.init
-    targets = Seq(applyTypeConstructor(target, prefix.map { case (v, _) => typeVarT(v) }))
-    superEvidence <- Resolver.superConstraints(traitDef, targets).traverse(Resolver.resolve).run(env.withTypeVars(prefix))
-  } yield {
-    val inst = InstanceDef(traitName, targets, Seq.empty, instanceDictionaryName(traitName, Seq(target.name)), prefix)
-    Plan(rule, target, dataDef, fieldPlans, inst, superEvidence)
-  }
+    inst <- instanceOf(traitName, target, env)
+    superEvidence <- Resolver.superConstraints(traitDef, inst.targets).traverse(Resolver.resolve).run(env.withTypeVars(inst.params))
+  } yield Plan(rule, target, dataDef, fieldPlans, inst, superEvidence)
 
   // フィールドの入れ子コンテナ G[σ̄] に対するインスタンス traitName[G[σ̄]] の根拠
   private def containerEvidence(traitName: TypeVariable, container: TypeRec[Type], env: Env): EitherS[Evidence[TypeRec]] =
@@ -163,13 +171,12 @@ object Deriver {
       val env = program.extract match {
         case ProgramAnn(e) => e
       }
-      val expanded = decls.map { decl =>
-        decl.project match {
-          case AST.TopDerive(traitName, target) => synthesize(traitName, target, env)
-          case _ => decl
-        }
+      def expand(decl: TypeRec[Decl]): TypeRec[Decl] = decl.project match {
+        case AST.TopDerive(traitName, target) => synthesize(traitName, target, env)
+        case AST.TopRec(members) => topRecT(members.map(expand))
+        case _ => decl
       }
-      programT(expanded, env)
+      programT(decls.map(expand), env)
   }
 
   private def synthesize(traitName: TypeVariable, target: TypeVariable, env: Env): TypeRec[Decl] = {

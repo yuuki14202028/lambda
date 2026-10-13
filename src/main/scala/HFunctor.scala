@@ -46,29 +46,29 @@ given HTraverse[AST] with {
       decls.traverse(d => f(d)).map(AST.Program(_))
     case AST.TopLet(v, types, value) =>
       (f(types), f(value)).mapN(AST.TopLet(v, _, _))
-    case AST.TopLetRec(v, types, value) =>
-      (f(types), f(value)).mapN(AST.TopLetRec(v, _, _))
+    case AST.TopRec(decls) =>
+      decls.traverse(d => f(d)).map(AST.TopRec(_))
     case AST.TopImport(path) =>
       Applicative[G].pure(AST.TopImport(path))
     case AST.TopType(v, params, alias) =>
       f(alias).map(AST.TopType(v, params, _))
-    case AST.TopData(v, params, ctors, recursive) =>
+    case AST.TopData(v, params, ctors) =>
       ctors.traverse { c =>
         c.fields.traverse(field => f(field)).map(fs => DataConstructor[S](c.name, fs))
-      }.map(AST.TopData(v, params, _, recursive))
+      }.map(AST.TopData(v, params, _))
     case AST.TopTrait(v, params, supers, methods) =>
       val supersG = supers.traverse(traverseConstraint(_)(f))
       val methodsG = methods.traverse { m =>
         (f(m.sig), m.body.traverse(b => f(b))).mapN((sig, body) => MethodSig[S](m.name, sig, body))
       }
       (supersG, methodsG).mapN(AST.TopTrait(v, params, _, _))
-    case AST.TopImpl(v, params, targets, context, methods, superEvidence, recursive) =>
+    case AST.TopImpl(v, params, targets, context, methods, superEvidence) =>
       val contextG = context.traverse(traverseConstraint(_)(f))
       val methodsG = methods.traverse { m =>
         (m.sig.traverse(s => f(s)), f(m.body)).mapN((sig, body) => MethodImpl[S](m.name, sig, body))
       }
       val superEvidenceG = superEvidence.traverse(traverseEvidence(_)(f))
-      (targets.traverse(t => f(t)), contextG, methodsG, superEvidenceG).mapN(AST.TopImpl(v, params, _, _, _, _, recursive))
+      (targets.traverse(t => f(t)), contextG, methodsG, superEvidenceG).mapN(AST.TopImpl(v, params, _, _, _, _))
     case AST.TopDerive(traitName, target) =>
       Applicative[G].pure(AST.TopDerive(traitName, target))
     case AST.TopModule(name, decls) =>
@@ -85,15 +85,22 @@ given HTraverse[AST] with {
       (traverseConstraint(constraint)(f), f(body)).mapN(AST.InstAbs(_, _))
     case AST.Let(v, types, vall, body) =>
       (f(types), f(vall), f(body)).mapN(AST.Let(v, _, _, _))
-    case AST.LetRec(v, types, vall, body) =>
-      (f(types), f(vall), f(body)).mapN(AST.LetRec(v, _, _, _))
+    case AST.LetRec(bindings, body) =>
+      val bindingsG = bindings.traverse(b => (f(b.types), f(b.value)).mapN(RecBinding[S](b.variable, _, _)))
+      (bindingsG, f(body)).mapN(AST.LetRec(_, _))
     case AST.TypeLet(v, params, alias, body) =>
       (f(alias), f(body)).mapN(AST.TypeLet(v, params, _, _))
-    case AST.DataLet(v, params, ctors, body, recursive) =>
+    case AST.DataLet(v, params, ctors, body) =>
       val ctorsG = ctors.traverse { c =>
         c.fields.traverse(field => f(field)).map(fs => DataConstructor[S](c.name, fs))
       }
-      (ctorsG, f(body)).mapN(AST.DataLet(v, params, _, _, recursive))
+      (ctorsG, f(body)).mapN(AST.DataLet(v, params, _, _))
+    case AST.DataLetRec(datas, body) =>
+      val datasG = datas.traverse { d =>
+        d.constructors.traverse(c => c.fields.traverse(field => f(field)).map(fs => DataConstructor[S](c.name, fs)))
+          .map(DataBinding[S](d.variable, d.params, _))
+      }
+      (datasG, f(body)).mapN(AST.DataLetRec(_, _))
     case AST.Match(scrut, cases) =>
       val casesG = cases.traverse { c =>
         f(c.body).map(b => MatchCase[S](c.constructor, c.binders, b))
@@ -118,12 +125,15 @@ given HTraverse[AST] with {
     case AST.StringLit(v) => Applicative[G].pure(AST.StringLit(v))
     case AST.StrInterp(parts) =>
       parts.traverse(part => f(part)).map(AST.StrInterp(_))
-    case AST.Context(monad, bindings, result, ops) =>
-      val bindingsG = bindings.traverse { b =>
-        (f(b.annotation), f(b.value)).mapN(ContextBinding[S](b.name, _, _, b.monadic, b.recursive))
+    case AST.Context(monad, steps, result, ops) =>
+      val stepsG = steps.traverse[G, ContextStep[S]] {
+        case ContextStep.Bind(name, annotation, value) => (f(annotation), f(value)).mapN(ContextStep.Bind[S](name, _, _))
+        case ContextStep.Let(name, annotation, value) => (f(annotation), f(value)).mapN(ContextStep.Let[S](name, _, _))
+        case ContextStep.Rec(bindings) =>
+          bindings.traverse(b => (f(b.types), f(b.value)).mapN(RecBinding[S](b.variable, _, _))).map(ContextStep.Rec[S](_))
       }
       val opsG = ops.traverse(o => (f(o.pure), f(o.flatMap)).mapN(ContextOps[S](_, _)))
-      (f(monad), bindingsG, f(result), opsG).mapN(AST.Context(_, _, _, _))
+      (f(monad), stepsG, f(result), opsG).mapN(AST.Context(_, _, _, _))
     case AST.Bool(v) => Applicative[G].pure(AST.Bool(v))
     case AST.UnitLit() => Applicative[G].pure(AST.UnitLit())
     case AST.Block(discarded, result) =>

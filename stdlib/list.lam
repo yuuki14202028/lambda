@@ -1,25 +1,25 @@
 import "std/operators"
 import "std/option"
 
-data rec List[a] = { Nil, Cons(a)(List[a]) }
+rec data List[a] = { Nil, Cons(a)(List[a]) }
 
-let rec appendList[a](xs: List[a])(ys: List[a]): List[a] = match xs {
+rec let appendList[a](xs: List[a])(ys: List[a]): List[a] = match xs {
   Nil => ys
   Cons(x)(rest) => Cons[a](x)(appendList[a](rest)(ys))
 }
 
-let rec length[a](xs: List[a]): usize = match xs {
+rec let length[a](xs: List[a]): usize = match xs {
   Nil => 0usize
   Cons(_)(rest) => __add_usize(length[a](rest))(1usize)
 }
 
 let reverse[a](xs: List[a]): List[a] =
-  let rec go(acc: List[a])(l: List[a]): List[a] = match l {
+  rec let go(acc: List[a])(l: List[a]): List[a] = match l {
     Nil => acc
     Cons(x)(rest) => go(Cons[a](x)(acc))(rest)
   } in go(Nil[a])(xs)
 
-let rec filter[a](p: a → bool)(xs: List[a]): List[a] = match xs {
+rec let filter[a](p: a → bool)(xs: List[a]): List[a] = match xs {
   Nil => Nil[a]
   Cons(x)(rest) => if p(x) then Cons[a](x)(filter[a](p)(rest)) else filter[a](p)(rest)
 }

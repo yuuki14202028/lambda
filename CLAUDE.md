@@ -42,8 +42,9 @@ TAnalyser が検査して InstanceDef を Env に登録し、Deriver が手書�
 - 適用 `InstApp`: 式の型が `[C[τ̄]] → τ` になった時点で TAnalyser が `Resolver` で制約を解決し、根拠（`Evidence`）を記録して挿入する
 
 解決は型検査の一部で、その時点までに宣言されたインスタンスとスコープ中の制約だけを見る（インスタンスも「宣言してから使う」。impl 自身のメソッド本体からそのインスタンスはまだ見えない）。
-`impl rec` と書いた impl だけ、メソッド本体から自身のインスタンスが見え、辞書は `let rec` に落ちる。再帰は `let rec` / `data rec` / `impl rec` の印がある所に限り、`rec` を使った所の停止性は保証しない（`data rec` の正の出現検査も行わない）。
-自身を参照する `let rec` の値は関数（λ）に限る。文脈のない `impl rec` で自身のインスタンスを使うメソッドも同じ（初期化前の値を読まないため）。
+再帰は `rec` の印がある所に限る。`rec` は宣言の前に付ける修飾子で、宣言 1 つ（`rec let` / `rec data` / `rec impl`）か、同じ種類の宣言を囲んだ組（`rec { let …  let … }`）に付ける。組の全員が互いに、また自身から見える（相互再帰）。`derive` はインスタンス宣言なので `impl` と同じ組に入れられる（相互再帰のデータ型への `derive` は `rec { derive …  derive … }`）。AST では宣言を包む `TopRec(decls)`、式の中では `LetRec(bindings, body)` / `DataLetRec(datas, body)`、context ブロックの中では `ContextStep.Rec(bindings)`。
+`rec` を使った所の停止性は保証しない（`rec data` の正の出現検査も行わない）。初期化前の値を読まないよう、関数（λ）でない `rec let` の値は組の誰も参照できず、文脈のない `rec impl` で組のインスタンスを使うメソッドも関数に限る。
+`rec impl` のメソッド本体からは組のインスタンスが見え、辞書は `rec` の組の let に落ちる。`rec data` の組は `DataDef.group` に記録され、ChurchEncoder は組のデータ型に言及するフィールドを符号化せず名前のまま残す。Generator は組の全員のセルを先に確保してから値を入れる。`fold` は自身の型の出現だけを畳み込む（組の他の型は畳み込まない）。
 trait `C` は辞書のデータ型でもあり（`Env.dataTypes` に登録）、TraitEncoder は `InstArrow` / `InstAbs` / `InstApp` を通常の `→` / `λ` / 適用に置き換え、trait / impl を辞書のデータ型と値に落とすだけで、解決もユーザーエラーも持たない。
 
 ### module（名前空間・private・opaque）

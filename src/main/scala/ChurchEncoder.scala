@@ -21,10 +21,10 @@ object ChurchEncoder {
   private def encodeConstructorFields(owner: TypeVariable, args: Seq[TypeRec[Type]], dataDef: DataDef, constructor: ConstructorDef): Encode[Seq[TypeRec[Type]]] =
     constructor.fields.traverse { field =>
       val substituted = substMany(dataDef.paramVars, args, field)
-      val recursive = containsDataApplicationOf(substituted, owner)
-      if (recursive && !dataDef.recursive)
-        invariant(s"Recursive data type ${owner.name} must be declared with data rec")
-      else if (recursive) okT(substituted)
+      // rec の組のデータ型に言及するフィールドは、符号化せず名前のまま残す（展開が止まらないため）
+      if (containsDataApplicationOf(substituted, owner) && !dataDef.recursive)
+        invariant(s"Recursive data type ${owner.name} must be declared with rec data")
+      else if (dataDef.group.exists(containsDataApplicationOf(substituted, _))) okT(substituted)
       else encodeType(substituted)
     }
 
@@ -197,25 +197,34 @@ object ChurchEncoder {
     }
   }
 
+  // 式の中の data: 本体を、コンストラクタを束縛する let で包む
+  private def encodeDataLet(datas: Seq[DataBinding[Para[TypeRec, Encoded]]], group: Set[TypeVariable], body: Para[TypeRec, Encoded][Expr]): Encoded[Expr] = {
+    val defs = datas.map { d =>
+      val constructors = d.constructors.zipWithIndex.map { case (constructor, tag) =>
+        ConstructorDef(constructor.name, d.variable, constructor.fields.map(_.original), tag)
+      }
+      d.variable -> DataDef(d.params, constructors, group)
+    }
+    val scope = (env: DataEnv) => env.copy(dataTypes = env.dataTypes ++ defs)
+    val constructors = defs.flatMap { case (variable, dataDef) => dataDef.constructors.map((variable, dataDef, _)) }
+    constructors.foldRight(body.result) { case ((variable, dataDef, constructor), acc) =>
+      for {
+        bodyExpr <- acc
+        constructorT <- constructorType(variable, dataDef, constructor)
+        value <- constructorValue(variable, dataDef, constructor)
+      } yield letT(constructor.name, typeOf(bodyExpr), constructorT, value, bodyExpr)
+    }.local(scope)
+  }
+
   private val encoderAlg: RAlgebra[TypedAST, TypeRec, Encoded] = [x] =>
     (he: TypedAST[Para[TypeRec, Encoded], x]) => (he.ann, he.ast) match {
     case (ann: ProgramAnn, node) => rebuildNode(ann, node)
     case (DeclAnn, node) => rebuildNode(DeclAnn, node)
     case (TypeAnn, node) => encodeType(originalNode(TypeAnn, node))
-    case (ExprAnn(t), AST.DataLet(variable, params, constructors, body, recursive)) => for {
-      taggedConstructors = constructors.zipWithIndex.map { case (constructor, tag) =>
-        ConstructorDef(constructor.name, variable, constructor.fields.map(_.original), tag)
-      }
-      dataDef = DataDef(params, taggedConstructors, recursive)
-      encodedBody <- body.result.local((env: DataEnv) => env.copy(dataTypes = env.dataTypes + (variable -> dataDef)))
-      encoded <- dataDef.constructors.foldRight(okT(encodedBody)) { (constructor, acc) =>
-        for {
-          bodyExpr <- acc
-          constructorT <- constructorType(variable, dataDef, constructor)
-          value <- constructorValue(variable, dataDef, constructor)
-        } yield letT(constructor.name, typeOf(bodyExpr), constructorT, value, bodyExpr)
-      }
-    } yield encoded
+    case (ExprAnn(_), AST.DataLet(variable, params, constructors, body)) =>
+      encodeDataLet(Seq(DataBinding[Para[TypeRec, Encoded]](variable, params, constructors)), Set.empty, body)
+    case (ExprAnn(_), AST.DataLetRec(datas, body)) =>
+      encodeDataLet(datas, datas.map(_.variable).toSet, body)
     case (ExprAnn(t), AST.Match(scrutinee, cases)) => for {
       scrutType = typeOf(scrutinee.original)
       resultType <- encodeType(t)
@@ -260,7 +269,11 @@ object ChurchEncoder {
   }
 
   private def encodeDecl(decl: TypeRec[Decl], env: DataEnv): (Seq[TypeRec[Decl]], DataEnv) = decl.project match {
-    case AST.TopData(variable, _, _, _) =>
+    // rec の組のデータ型は、コンストラクタの定義（再帰しない）に置き換わる
+    case AST.TopRec(decls) if decls.exists(_.project match { case AST.TopData(_, _, _) => true; case _ => false }) =>
+      (decls.flatMap(encodeDecl(_, env)._1), env)
+
+    case AST.TopData(variable, _, _) =>
       val dataDef = env.dataTypes.getOrElse(variable, invariant(s"Top-level data type ${variable.name} is missing from ProgramAnn"))
       val constructorDecls = dataDef.constructors.map { constructor =>
         topLetT(constructor.name, constructorType(variable, dataDef, constructor).run(env), constructorValue(variable, dataDef, constructor).run(env))
@@ -270,7 +283,7 @@ object ChurchEncoder {
     case AST.TopTrait(variable, _, _, _) =>
       invariant(s"TopTrait ${variable.name} must be desugared by TraitEncoder before Church encoding")
 
-    case AST.TopImpl(variable, _, _, _, _, _, _) =>
+    case AST.TopImpl(variable, _, _, _, _, _) =>
       invariant(s"TopImpl ${variable.name} must be desugared by TraitEncoder before Church encoding")
 
     case AST.TopDerive(traitName, _) =>

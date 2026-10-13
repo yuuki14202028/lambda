@@ -1,0 +1,71 @@
+import "std/operators"
+import "std/functor"
+
+let printInt: i32 → i32 = foreign[i32 → i32] print_int
+
+rec {
+  let isEven(n: i32): bool = if n == 0 then true else isOdd(n - 1)
+  let isOdd(n: i32): bool = if n == 0 then false else isEven(n - 1)
+}
+
+let asInt(b: bool): i32 = if b then 1 else 0
+
+rec {
+  data Tree[a] = { Node(a)(Forest[a]) }
+  data Forest[a] = { Empty, Trees(Tree[a])(Forest[a]) }
+}
+
+rec {
+  let sumTree(t: Tree[i32]): i32 = match t {
+    Node(x)(children) => x + sumForest(children)
+  }
+  let sumForest(f: Forest[i32]): i32 = match f {
+    Empty => 0
+    Trees(t)(rest) => sumTree(t) + sumForest(rest)
+  }
+}
+
+trait Size[a] {
+  def size(x: a): i32
+}
+
+rec {
+  impl[a] Size[Tree[a]] {
+    def size = λt: Tree[a]. match t {
+      Node(x)(children) => 1 + size[Forest[a]](children)
+    }
+  }
+  impl[a] Size[Forest[a]] {
+    def size = λf: Forest[a]. match f {
+      Empty => 0
+      Trees(t)(rest) => size[Tree[a]](t) + size[Forest[a]](rest)
+    }
+  }
+}
+
+rec {
+  derive Functor[Tree]
+  derive Functor[Forest]
+}
+
+let leaf(x: i32): Tree[i32] = Node[i32](x)(Empty[i32])
+
+let tree: Tree[i32] =
+  Node[i32](1)(Trees[i32](leaf(2))(Trees[i32](Node[i32](3)(Trees[i32](leaf(4))(Empty[i32])))(Empty[i32])))
+
+let local(n: i32): i32 =
+  rec {
+    let ping(k: i32): i32 = if k == 0 then 0 else pong(k - 1) + 1
+    let pong(k: i32): i32 = if k == 0 then 0 else ping(k - 1) + 2
+  } in ping(n)
+
+let main(): i32 = {
+  printInt(asInt(isEven(10)));
+  printInt(asInt(isOdd(10)));
+  printInt(asInt(isEven(1000001)));
+  printInt(sumTree(tree));
+  printInt(size[Tree[i32]](tree));
+  printInt(local(5));
+  printInt(sumTree(map[Tree][i32][i32](λn: i32. n * 10)(tree)));
+  0
+}

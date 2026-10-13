@@ -4,8 +4,10 @@ case class TypeAlias(params: Seq[(TypeVariable, Kind)], body: TypeRec[Type]) {
   def paramVars: Seq[TypeVariable] = params.map(_._1)
 }
 
-case class DataDef(params: Seq[(TypeVariable, Kind)], constructors: Seq[ConstructorDef], recursive: Boolean) {
+// group は rec で一緒に宣言されたデータ型（自身を含む）。rec でなければ空
+case class DataDef(params: Seq[(TypeVariable, Kind)], constructors: Seq[ConstructorDef], group: Set[TypeVariable] = Set.empty) {
   def paramVars: Seq[TypeVariable] = params.map(_._1)
+  def recursive: Boolean = group.nonEmpty
 }
 
 case class ConstructorDef(name: Variable, owner: TypeVariable, fields: Seq[TypeRec[Type]], tag: Int)

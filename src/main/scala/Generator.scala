@@ -587,16 +587,19 @@ object Generator {
       bc <- body.result.local((env: Env) => env.withHeap(param))
     } yield vc ++ bindValueToHeap ++ bc ++ restoreHeap
 
-    case AST.LetRec(Variable(param), _, value, body) => for {
-      vc <- nonTail(value.result.local((env: Env) => env.withHeap(param)))
-      bc <- body.result.local((env: Env) => env.withHeap(param))
-    } yield allocateRecCell ++ vc ++ code(
-      ins("ldr", r(x9), mem(x29, -16)),
-      ins("str", r(x0), mem(x9))
-    ) ++ bc ++ restoreHeap
+    // 組の全員のセルを先に確保してから、順に値を入れる
+    case AST.LetRec(bindings, body) =>
+      val names = bindings.map(_.variable.name)
+      val scope = (env: Env) => names.foldLeft(env)(_.withHeap(_))
+      for {
+        values <- bindings.traverse(b => nonTail(b.value.result.local(scope)))
+        bc <- body.result.local(scope)
+      } yield names.foldLeft(Code.empty)((acc, _) => acc ++ allocateRecCell) ++
+        values.zipWithIndex.foldLeft(Code.empty) { case (acc, (vc, index)) => acc ++ vc ++ storeRecCell(names.length - 1 - index) } ++
+        bc ++ names.foldLeft(Code.empty)((acc, _) => acc ++ restoreHeap)
 
     case AST.TypeLet(_, _, _, body) => body.result
-    case AST.DataLet(_, _, _, _, _) => pure(sys.error("DataLet must be Church encoded before code generation"))
+    case AST.DataLet(_, _, _, _) | AST.DataLetRec(_, _) => pure(sys.error("DataLet must be Church encoded before code generation"))
     case AST.Match(_, _) => pure(sys.error("Match must be Church encoded before code generation"))
     case AST.Fold(_, _, _) => pure(sys.error("Fold must be Church encoded before code generation"))
 
@@ -642,12 +645,12 @@ object Generator {
     case AST.Program(_) => pure(Code.empty)
 
     case AST.TopLet(_, _, _) => pure(Code.empty)
-    case AST.TopLetRec(_, _, _) => pure(Code.empty)
+    case AST.TopRec(_) => pure(Code.empty)
     case AST.TopImport(_) => pure(Code.empty)
     case AST.TopType(_, _, _) => pure(Code.empty)
-    case AST.TopData(_, _, _, _) => pure(Code.empty)
+    case AST.TopData(_, _, _) => pure(Code.empty)
     case AST.TopTrait(_, _, _, _) => pure(sys.error("TopTrait must be desugared before code generation"))
-    case AST.TopImpl(_, _, _, _, _, _, _) => pure(sys.error("TopImpl must be desugared before code generation"))
+    case AST.TopImpl(_, _, _, _, _, _) => pure(sys.error("TopImpl must be desugared before code generation"))
     case AST.TopDerive(_, _) => pure(sys.error("TopDerive must be desugared before code generation"))
     case AST.TopModule(_, _) | AST.TopOpen(_) | AST.TopModified(_, _) => pure(sys.error("modules must be desugared before code generation"))
 
@@ -693,6 +696,12 @@ object Generator {
     ins("str", r(x0), mem(x29, -16))
   )
 
+  // x0 の値を、現在のフレームから depth 個外側のセルに入れる
+  private def storeRecCell(depth: Int): Code =
+    code(ins("ldr", r(x9), mem(x29, -16))) ++
+      (0 until depth).foldLeft(Code.empty)((acc, _) => acc ++ code(ins("ldr", r(x9), mem(x9, 8)))) ++
+      code(ins("str", r(x0), mem(x9)))
+
   @tailrec
   private def unwrapTypeAbs(expr: TypeRec[Expr]): TypeRec[Expr] = expr.project match {
     case AST.TyAbs(_, _, body) => unwrapTypeAbs(body)
@@ -709,8 +718,8 @@ object Generator {
     case AST.TopLet(Variable(param), _, value) =>
       value.para(genAlg).run(env).map(code => (code ++ bindValueToHeap, env.withHeap(param)))
 
-    case AST.TopLetRec(Variable(param), _, value) =>
-      directFunctionValue(param, value) match {
+    case AST.TopRec(Seq(single)) => single.project match {
+      case AST.TopLet(Variable(param), _, value) => directFunctionValue(param, value) match {
         case Some((arg, body)) => for {
           label <- fresh(s"direct_$param")
           valueEnv = env.withDirectFunction(param, label)
@@ -719,38 +728,34 @@ object Generator {
         } yield {
           (Code.empty, valueEnv)
         }
-        case None =>
-          val valueEnv = env.withHeap(param)
-          value.para(genAlg).run(valueEnv).map { vc =>
-            val recCode = allocateRecCell ++ vc ++ code(
-              ins("ldr", r(x9), mem(x29, -16)),
-              ins("str", r(x0), mem(x9))
-            )
-            (recCode, valueEnv)
-          }
+        case None => genRecLets(Seq(param -> value), env)
       }
+      case _ => sys.error("rec must contain let declarations at code generation")
+    }
+
+    case AST.TopRec(decls) =>
+      genRecLets(decls.map(_.project).map {
+        case AST.TopLet(Variable(param), _, value) => param -> value
+        case _ => sys.error("rec must contain let declarations at code generation")
+      }, env)
 
     case AST.TopImport(_) => State.pure((Code.empty, env))
     case AST.TopType(_, _, _) => State.pure((Code.empty, env))
-    case AST.TopData(_, _, _, _) => State.pure((Code.empty, env))
+    case AST.TopData(_, _, _) => State.pure((Code.empty, env))
     case AST.TopTrait(_, _, _, _) => sys.error("TopTrait must be desugared before code generation")
-    case AST.TopImpl(_, _, _, _, _, _, _) => sys.error("TopImpl must be desugared before code generation")
+    case AST.TopImpl(_, _, _, _, _, _) => sys.error("TopImpl must be desugared before code generation")
     case AST.TopDerive(_, _) => sys.error("TopDerive must be desugared before code generation")
     case AST.TopModule(_, _) | AST.TopOpen(_) | AST.TopModified(_, _) => sys.error("modules must be desugared before code generation")
   }
 
-  private def topLevelName(decl: TypeRec[Decl]): Option[Variable] = decl.project match {
-    case AST.TopLet(variable, _, _) => Some(variable)
-    case AST.TopLetRec(variable, _, _) => Some(variable)
-    case AST.TopImport(_) | AST.TopType(_, _, _) | AST.TopData(_, _, _, _) | AST.TopTrait(_, _, _, _) | AST.TopImpl(_, _, _, _, _, _, _) | AST.TopDerive(_, _) |
-        AST.TopModule(_, _) | AST.TopOpen(_) | AST.TopModified(_, _) => None
-  }
-
-  private def topLevelFreeVars(decl: TypeRec[Decl]): Set[Variable] = decl.project match {
-    case AST.TopLet(_, _, value) => freeVars(value)
-    case AST.TopLetRec(variable, _, value) => freeVars(value) - variable
-    case AST.TopImport(_) | AST.TopType(_, _, _) | AST.TopData(_, _, _, _) | AST.TopTrait(_, _, _, _) | AST.TopImpl(_, _, _, _, _, _, _) | AST.TopDerive(_, _) |
-        AST.TopModule(_, _) | AST.TopOpen(_) | AST.TopModified(_, _) => Set.empty
+  // top-level の rec の組: 全員のセルを先に確保してから、順に値を入れる
+  private def genRecLets(lets: Seq[(String, TypeRec[Expr])], env: Env): GenS[(Code, Env)] = {
+    val valueEnv = lets.foldLeft(env) { case (acc, (name, _)) => acc.withHeap(name) }
+    lets.toList.traverse { case (_, value) => value.para(genAlg).run(valueEnv) }.map { values =>
+      val cells = lets.foldLeft(Code.empty)((acc, _) => acc ++ allocateRecCell)
+      val stores = values.zipWithIndex.foldLeft(Code.empty) { case (acc, (vc, index)) => acc ++ vc ++ storeRecCell(lets.length - 1 - index) }
+      (cells ++ stores, valueEnv)
+    }
   }
 
   private def genProgram(decls: Seq[TypeRec[Decl]]): Gen[AssemblyProgram] = ReaderT { initialEnv =>

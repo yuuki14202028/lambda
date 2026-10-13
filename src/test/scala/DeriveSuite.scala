@@ -46,7 +46,7 @@ class DeriveSuite extends munit.FunSuite {
       |""".stripMargin
 
   private val optionData = "data Option[a] = { None, Some(a) }\n"
-  private val listData = "data rec List[a] = { Nil, Cons(a)(List[a]) }\n"
+  private val listData = "rec data List[a] = { Nil, Cons(a)(List[a]) }\n"
   private val eitherData = "data Either[e][a] = { Left(e), Right(a) }\n"
   private val mainDecl = "let main(): i32 = 0\n"
 
@@ -87,7 +87,7 @@ class DeriveSuite extends munit.FunSuite {
   }
 
   test("Functor[Rose]: ネストした関手フィールドは先行インスタンスへ委譲する") {
-    val roseData = "data rec Rose[a] = { Node(a)(List[Rose[a]]) }\n"
+    val roseData = "rec data Rose[a] = { Node(a)(List[Rose[a]]) }\n"
     val src = functorTrait + listData + roseData +
       "derive Functor[List]\nderive Functor[Rose]\n" + mainDecl
     assertRight(church(src))
@@ -122,7 +122,7 @@ class DeriveSuite extends munit.FunSuite {
   }
 
   test("Foldable[Rose]: ネストしたフィールドは先行インスタンスへ委譲する") {
-    val roseData = "data rec Rose[a] = { Node(a)(List[Rose[a]]) }\n"
+    val roseData = "rec data Rose[a] = { Node(a)(List[Rose[a]]) }\n"
     val src = foldableTrait + listData + roseData +
       "derive Foldable[List]\nderive Foldable[Rose]\n" + mainDecl
     assertRight(church(src))
@@ -194,13 +194,13 @@ class DeriveSuite extends munit.FunSuite {
   }
 
   test("パラメータを含まない自己適用フィールドはそのまま保持される") {
-    val src = functorTrait + "data rec Weird[a] = { MkWeird(Weird[i32]), WNil }\n" +
+    val src = functorTrait + "rec data Weird[a] = { MkWeird(Weird[i32]), WNil }\n" +
       "derive Functor[Weird]\n" + mainDecl
     assertRight(church(src))
   }
 
   test("エラー: 非正則な自己適用は導出できない") {
-    val src = functorTrait + "data rec Weird[a] = { MkWeird(Weird[Weird[a]]), WNil }\n" +
+    val src = functorTrait + "rec data Weird[a] = { MkWeird(Weird[Weird[a]]), WNil }\n" +
       "derive Functor[Weird]\n" + mainDecl
     assertLeftContains(validate(src), "cannot derive over")
   }
