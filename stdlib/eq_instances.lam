@@ -1,62 +1,77 @@
-import "std/operators"
+// 組み込みの型の Eq。
+
 import "std/eq"
 
-impl Eq[i8] {
-  def eq(x: i8)(y: i8): bool = __eq_i8(x)(y)
-}
-
-impl Eq[i16] {
-  def eq(x: i16)(y: i16): bool = __eq_i16(x)(y)
-}
-
-impl Eq[i32] {
-  def eq(x: i32)(y: i32): bool = __eq_i32(x)(y)
-}
-
-impl Eq[i64] {
-  def eq(x: i64)(y: i64): bool = __eq_i64(x)(y)
-}
-
-impl Eq[isize] {
-  def eq(x: isize)(y: isize): bool = __eq_isize(x)(y)
-}
-
-impl Eq[u8] {
-  def eq(x: u8)(y: u8): bool = __eq_u8(x)(y)
-}
-
-impl Eq[u16] {
-  def eq(x: u16)(y: u16): bool = __eq_u16(x)(y)
-}
-
-impl Eq[u32] {
-  def eq(x: u32)(y: u32): bool = __eq_u32(x)(y)
-}
-
-impl Eq[u64] {
-  def eq(x: u64)(y: u64): bool = __eq_u64(x)(y)
-}
-
-impl Eq[usize] {
-  def eq(x: usize)(y: usize): bool = __eq_usize(x)(y)
-}
-
 impl Eq[f32] {
-  def eq(x: f32)(y: f32): bool = __eq_f32(x)(y)
+  def eq(x: f32)(y: f32): bool = intrinsic[eq_f32](x)(y)
+  def neq(x: f32)(y: f32): bool = intrinsic[neq_f32](x)(y)
 }
 
 impl Eq[f64] {
-  def eq(x: f64)(y: f64): bool = __eq_f64(x)(y)
+  def eq(x: f64)(y: f64): bool = intrinsic[eq_f64](x)(y)
+  def neq(x: f64)(y: f64): bool = intrinsic[neq_f64](x)(y)
+}
+
+impl Eq[i8] {
+  def eq(x: i8)(y: i8): bool = intrinsic[eq_i8](x)(y)
+  def neq(x: i8)(y: i8): bool = intrinsic[neq_i8](x)(y)
+}
+
+impl Eq[i16] {
+  def eq(x: i16)(y: i16): bool = intrinsic[eq_i16](x)(y)
+  def neq(x: i16)(y: i16): bool = intrinsic[neq_i16](x)(y)
+}
+
+impl Eq[i32] {
+  def eq(x: i32)(y: i32): bool = intrinsic[eq_i32](x)(y)
+  def neq(x: i32)(y: i32): bool = intrinsic[neq_i32](x)(y)
+}
+
+impl Eq[i64] {
+  def eq(x: i64)(y: i64): bool = intrinsic[eq_i64](x)(y)
+  def neq(x: i64)(y: i64): bool = intrinsic[neq_i64](x)(y)
+}
+
+impl Eq[isize] {
+  def eq(x: isize)(y: isize): bool = intrinsic[eq_isize](x)(y)
+  def neq(x: isize)(y: isize): bool = intrinsic[neq_isize](x)(y)
+}
+
+impl Eq[u8] {
+  def eq(x: u8)(y: u8): bool = intrinsic[eq_u8](x)(y)
+  def neq(x: u8)(y: u8): bool = intrinsic[neq_u8](x)(y)
+}
+
+impl Eq[u16] {
+  def eq(x: u16)(y: u16): bool = intrinsic[eq_u16](x)(y)
+  def neq(x: u16)(y: u16): bool = intrinsic[neq_u16](x)(y)
+}
+
+impl Eq[u32] {
+  def eq(x: u32)(y: u32): bool = intrinsic[eq_u32](x)(y)
+  def neq(x: u32)(y: u32): bool = intrinsic[neq_u32](x)(y)
+}
+
+impl Eq[u64] {
+  def eq(x: u64)(y: u64): bool = intrinsic[eq_u64](x)(y)
+  def neq(x: u64)(y: u64): bool = intrinsic[neq_u64](x)(y)
+}
+
+impl Eq[usize] {
+  def eq(x: usize)(y: usize): bool = intrinsic[eq_usize](x)(y)
+  def neq(x: usize)(y: usize): bool = intrinsic[neq_usize](x)(y)
 }
 
 impl Eq[char] {
-  def eq(x: char)(y: char): bool = __eq_char(x)(y)
+  def eq(x: char)(y: char): bool = intrinsic[eq_char](x)(y)
+  def neq(x: char)(y: char): bool = intrinsic[neq_char](x)(y)
 }
 
 impl Eq[bool] {
-  def eq(x: bool)(y: bool): bool = __eq_bool(x)(y)
+  def eq(x: bool)(y: bool): bool = intrinsic[eq_bool](x)(y)
+  def neq(x: bool)(y: bool): bool = intrinsic[neq_bool](x)(y)
 }
 
 impl Eq[unit] {
-  def eq(_x: unit)(_y: unit): bool = true
+  def eq(x: unit)(y: unit): bool = true
 }

@@ -20,6 +20,8 @@ enum AST[R[_], I] {
   case TopDerive(traitName: TypeVariable, target: TypeVariable) extends AST[R, Decl]
   // rec: 包んだ宣言（let / data / impl のどれか一種類）が互いに、また自身から見える。宣言が 1 つなら自己再帰
   case TopRec(decls: Seq[R[Decl]]) extends AST[R, Decl]
+  // operator + = add / prefix operator - = neg: 演算子が指す多相関数の宣言
+  case TopOperator(op: BinOps | UnaryOps, function: Variable) extends AST[R, Decl]
   case TopModule(name: String, decls: Seq[R[Decl]]) extends AST[R, Decl]
   case TopOpen(path: Seq[String]) extends AST[R, Decl]
   case TopModified(modifier: Modifier, decl: R[Decl]) extends AST[R, Decl]
@@ -57,9 +59,11 @@ enum AST[R[_], I] {
   case UnitLit() extends AST[R, Expr]
   case Block(discarded: Seq[R[Expr]], result: Option[R[Expr]]) extends AST[R, Expr]
   case Context(monad: R[Type], steps: Seq[ContextStep[R]], result: R[Expr], ops: Option[ContextOps[R]]) extends AST[R, Expr]
-  case BinOp(op: BinOps, left: R[Expr], right: R[Expr]) extends AST[R, Expr]
+  // a ⊕ b: ⊕ に宣言された関数 f を、a の型で具体化して呼ぶ（f[T](a)(b)）。resolved は型検査が埋める f[T]。
+  // && と || は bool 専用の組み込みで、resolved を持たない
+  case BinOp(op: BinOps, left: R[Expr], right: R[Expr], resolved: Option[R[Expr]]) extends AST[R, Expr]
   case Intrinsic(op: IntrinsicOps, args: Seq[R[Expr]]) extends AST[R, Expr]
-  case UnaryOp(op: UnaryOps, body: R[Expr]) extends AST[R, Expr]
+  case UnaryOp(op: UnaryOps, body: R[Expr], resolved: Option[R[Expr]]) extends AST[R, Expr]
   case If(cond: R[Expr], thenBranch: R[Expr], elseBranch: R[Expr]) extends AST[R, Expr]
   case Primitive(name: String) extends AST[R, Type]
   case TypeVar(value: TypeVariable) extends AST[R, Type]
@@ -206,6 +210,12 @@ enum IntrinsicOps {
   case UnaryOp(op: UnaryOps, operandType: String)
 }
 
+// 演算子の宣言を引く鍵（前置は二項と区別する）
+def operatorKey(op: BinOps | UnaryOps): String = op match {
+  case binary: BinOps => binary.toString
+  case unary: UnaryOps => s"prefix $unary"
+}
+
 enum UnaryOps {
   case Neg, Not
   override def toString: String = this match {
@@ -320,9 +330,9 @@ def unitLit: Rec[Expr] = HFix(AST.UnitLit())
 def block(discarded: Seq[Rec[Expr]], result: Option[Rec[Expr]]): Rec[Expr] = HFix(AST.Block(discarded, result))
 def contextExpr(monad: Rec[Type], steps: Seq[ContextStep[Rec]], result: Rec[Expr]): Rec[Expr] =
   HFix(AST.Context(monad, steps, result, None))
-def binop(op: BinOps, left: Rec[Expr], right: Rec[Expr]): Rec[Expr] = HFix(AST.BinOp(op, left, right))
+def binop(op: BinOps, left: Rec[Expr], right: Rec[Expr]): Rec[Expr] = HFix(AST.BinOp(op, left, right, None))
 def intrinsic(op: IntrinsicOps, args: Seq[Rec[Expr]]): Rec[Expr] = HFix(AST.Intrinsic(op, args))
-def unop(op: UnaryOps, body: Rec[Expr]): Rec[Expr] = HFix(AST.UnaryOp(op, body))
+def unop(op: UnaryOps, body: Rec[Expr]): Rec[Expr] = HFix(AST.UnaryOp(op, body, None))
 def iff(cond: Rec[Expr], thenBranch: Rec[Expr], elseBranch: Rec[Expr]): Rec[Expr] = HFix(AST.If(cond, thenBranch, elseBranch))
 def primitive(name: String): Rec[Type] = HFix(AST.Primitive(name))
 def typeVar(variable: TypeVariable): Rec[Type] = HFix(AST.TypeVar(variable))
@@ -369,6 +379,8 @@ def topImplT(variable: TypeVariable, params: Seq[(TypeVariable, Kind)], targets:
   HCofree(DeclAnn, AST.TopImpl(variable, params, targets, context, methods, superEvidence))
 def topDeriveT(traitName: TypeVariable, target: TypeVariable): TypeRec[Decl] =
   HCofree(DeclAnn, AST.TopDerive(traitName, target))
+def topOperatorT(op: BinOps | UnaryOps, function: Variable): TypeRec[Decl] =
+  HCofree(DeclAnn, AST.TopOperator(op, function))
 def topModuleT(name: String, decls: Seq[TypeRec[Decl]]): TypeRec[Decl] =
   HCofree(DeclAnn, AST.TopModule(name, decls))
 def topOpenT(path: Seq[String]): TypeRec[Decl] =
@@ -424,12 +436,12 @@ def blockT(t: TypeRec[Type], discarded: Seq[TypeRec[Expr]], result: Option[TypeR
   HCofree(ExprAnn(t), AST.Block(discarded, result))
 def contextExprT(t: TypeRec[Type], monad: TypeRec[Type], steps: Seq[ContextStep[TypeRec]], result: TypeRec[Expr], ops: ContextOps[TypeRec]): TypeRec[Expr] =
   HCofree(ExprAnn(t), AST.Context(monad, steps, result, Some(ops)))
-def binopT(op: BinOps, t: TypeRec[Type], left: TypeRec[Expr], right: TypeRec[Expr]): TypeRec[Expr] =
-  HCofree(ExprAnn(t), AST.BinOp(op, left, right))
+def binopT(op: BinOps, t: TypeRec[Type], left: TypeRec[Expr], right: TypeRec[Expr], resolved: Option[TypeRec[Expr]]): TypeRec[Expr] =
+  HCofree(ExprAnn(t), AST.BinOp(op, left, right, resolved))
 def intrinsicT(op: IntrinsicOps, t: TypeRec[Type], args: Seq[TypeRec[Expr]]): TypeRec[Expr] =
   HCofree(ExprAnn(t), AST.Intrinsic(op, args))
-def unopT(op: UnaryOps, t: TypeRec[Type], body: TypeRec[Expr]): TypeRec[Expr] =
-  HCofree(ExprAnn(t), AST.UnaryOp(op, body))
+def unopT(op: UnaryOps, t: TypeRec[Type], body: TypeRec[Expr], resolved: Option[TypeRec[Expr]]): TypeRec[Expr] =
+  HCofree(ExprAnn(t), AST.UnaryOp(op, body, resolved))
 def ifT(t: TypeRec[Type], cond: TypeRec[Expr], thenBranch: TypeRec[Expr], elseBranch: TypeRec[Expr]): TypeRec[Expr] =
   HCofree(ExprAnn(t), AST.If(cond, thenBranch, elseBranch))
 def primitiveT(name: String): TypeRec[Type] = HCofree(TypeAnn, AST.Primitive(name))
@@ -547,7 +559,7 @@ def freeVars(expr: Rec[Expr]): Set[Variable] = {
     case AST.TyApp(function, _) => function
     case AST.Foreign(_, _) => Set.empty
     case AST.Block(discarded, result) => discarded.foldLeft(Set.empty[Variable])(_ ++ _) ++ result.getOrElse(Set.empty)
-    case AST.BinOp(_, left, right) => left ++ right
+    case AST.BinOp(_, left, right, resolved) => left ++ right ++ resolved.getOrElse(Set.empty)
     case AST.Intrinsic(_, args) => args.foldLeft(Set.empty[Variable])(_ ++ _)
     case AST.StrInterp(parts) => parts.foldLeft(Set.empty[Variable])(_ ++ _)
     case AST.Context(_, steps, result, ops) =>
@@ -559,7 +571,7 @@ def freeVars(expr: Rec[Expr]): Set[Variable] = {
         case (ContextStep.LetPattern(pattern, _, value), acc) => value ++ (acc -- patternVariables(pattern))
       }
       ops.fold(body)(o => body ++ o.pure ++ o.flatMap)
-    case AST.UnaryOp(_, body) => body
+    case AST.UnaryOp(_, body, resolved) => body ++ resolved.getOrElse(Set.empty)
     case AST.If(cond, thenBranch, elseBranch) => cond ++ thenBranch ++ elseBranch
     case AST.Num(_, _) | AST.Char(_) | AST.StringLit(_) | AST.Bool(_) | AST.UnitLit() => Set.empty
     case _ => Set.empty
@@ -672,15 +684,6 @@ def isNumericType(t: TypeRec[Type]): Boolean = t.project match {
 def isEquatableType(t: TypeRec[Type]): Boolean = t.project match {
   case AST.Primitive(name) => BuiltinTypes.equatableTypes.contains(name)
   case _ => false
-}
-
-def operatorTypeName(t: TypeRec[Type]): Option[String] = {
-  val (head, _) = collectTypeApps(t)
-  head.project match {
-    case AST.Primitive(name) => Some(name)
-    case AST.TypeVar(variable) => Some(variable.name)
-    case _ => None
-  }
 }
 
 def collectTypeApps(t: TypeRec[Type]): (TypeRec[Type], Seq[TypeRec[Type]]) = {

@@ -19,7 +19,7 @@ class ModuleSuite extends munit.FunSuite {
     case Right(_)  => fail(s"expected error containing '$expected', but succeeded")
   }
 
-  private val add = "let __add_i32(a: i32)(b: i32): i32 = intrinsic[add_i32](a)(b)\n"
+  private val add = "trait Add[a] { def add(x: a)(y: a): a }; operator + = add; impl Add[i32] { def add(a: i32)(b: i32): i32 = intrinsic[add_i32](a)(b) }\n"
 
   private val counter = add +
     """module Counter {
@@ -210,7 +210,7 @@ class ModuleSuite extends munit.FunSuite {
   test("opaque type は module の外では表現と別の型") {
     assertLeftContains(validate(withMain(counter + "let n: i32 = Counter.zero")), "Type mismatch")
     assertLeftContains(validate(withMain(counter + "let c: Counter.T = 0")), "Type mismatch")
-    assertLeftContains(validate(withMain(counter + "let n: i32 = Counter.zero + 1")), "Operator + is not defined for type Counter.T")
+    assertLeftContains(validate(withMain(counter + "let n: i32 = Counter.zero + 1")), "No instance for Add[Counter.T]")
     assertLeftContains(validate(withMain(counter + "let n: Counter.T = Counter.inc(1)")), "Type mismatch")
   }
 

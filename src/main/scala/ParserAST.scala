@@ -57,7 +57,7 @@ object ParserAST {
   }
 
   private def binaryLevel(op: Parser[BinOps], next: => Parser[IndexedRec[Expr]]): Parser[IndexedRec[Expr]] =
-    opLevel(op.map(o => (l, r) => at(l.extract.to(r.extract), AST.BinOp(o, l, r))), next)
+    opLevel(op.map(o => (l, r) => at(l.extract.to(r.extract), AST.BinOp(o, l, r, None))), next)
 
   private def arrowChain[A](atom: Parser[A], whole: => Parser[A])(make: (A, A) => A): Parser[A] = {
     val arrowTail = sp.with1.soft *> '→' -*> Parser.defer(whole)
@@ -325,6 +325,17 @@ object ParserAST {
       case (name, decls) => AST.TopModule[IndexedRec, Decl](name, decls)
     }.indexed
 
+  // operator + = add / prefix operator - = neg
+  private lazy val operatorP: Parser[IndexedRec[Decl]] = {
+    val binary: Parser[BinOps | UnaryOps] =
+      "==".as(BinOps.Eq) | "!=".as(BinOps.Neq) | "<=".as(BinOps.Leq) | ">=".as(BinOps.Geq) | "<".as(BinOps.Lt) | ">".as(BinOps.Gt) |
+        "+".as(BinOps.Add) | "-".as(BinOps.Sub) | "*".as(BinOps.Mul) | "/".as(BinOps.Div) | "%".as(BinOps.Mod) |
+        "&".as(BinOps.And) | "|".as(BinOps.Or) | "^".as(BinOps.Xor)
+    val prefix: Parser[BinOps | UnaryOps] = "-".as(UnaryOps.Neg) | "!".as(UnaryOps.Not)
+    val symbol = (keyword("prefix") *> keyword("operator") *> prefix) | (keyword("operator") *> binary)
+    (symbol ~ (spaced('=') *> qualifiedIdentifier)).map { case (op, function) => AST.TopOperator[IndexedRec, Decl](op, Variable(function)) }.indexed
+  }
+
   private lazy val openP: Parser[IndexedRec[Decl]] =
     (keyword("open") *> identifier.repSep('.')).map(path => AST.TopOpen[IndexedRec, Decl](path.toList)).indexed
 
@@ -339,12 +350,12 @@ object ParserAST {
     (keyword("opaque") *> (recDataP | topDataP.backtrack | topTypeP)).map(decl => AST.TopModified[IndexedRec, Decl](Modifier.Opaque, decl)).indexed
 
   private lazy val privateP: Parser[IndexedRec[Decl]] = {
-    val decl = Parser.defer(moduleP | opaqueP | topRecP | topDataP.backtrack | topTypeP.backtrack | traitP.backtrack | topLetP)
+    val decl = Parser.defer(moduleP | operatorP | opaqueP | topRecP | topDataP.backtrack | topTypeP.backtrack | traitP.backtrack | topLetP)
     (keyword("private") *> decl).map(decl => AST.TopModified[IndexedRec, Decl](Modifier.Private, decl)).indexed
   }
 
   private lazy val topDeclP: Parser[IndexedRec[Decl]] =
-    Parser.defer(moduleP | openP | privateP | opaqueP | topRecP |
+    Parser.defer(moduleP | openP | operatorP | privateP | opaqueP | topRecP |
       topImportP.backtrack | topDataP.backtrack | topTypeP.backtrack | traitP.backtrack | implP.backtrack | topDeriveP.backtrack | topLetP)
 
   lazy val typeP: Parser[IndexedRec[Type]] = Parser.defer(forAllP | typeLambdaP | arrowTypeP)
@@ -489,7 +500,7 @@ object ParserAST {
     "in", "then", "else", "with", "as", "context",
     "let", "rec", "if", "match", "fold", "data", "type",
     "import", "trait", "impl", "def", "derive", "true", "false",
-    "foreign", "intrinsic", "module", "open", "private", "opaque", "summon", "using"
+    "foreign", "intrinsic", "module", "open", "private", "opaque", "summon", "using", "operator"
   )
 
   private val infixIdentOp: Parser[(IndexedRec[Expr], IndexedRec[Expr]) => IndexedRec[Expr]] =
@@ -508,8 +519,8 @@ object ParserAST {
   lazy val infixApp: Parser[IndexedRec[Expr]]       = opLevel(infixIdentOp, unaryP, atomicStep = true)
 
   lazy val unaryP: Parser[IndexedRec[Expr]] = {
-    val neg = ('-' -*> Parser.defer(unaryP)).map(b => AST.UnaryOp(UnaryOps.Neg, b)).indexed
-    val not = ('!' -*> Parser.defer(unaryP)).map(b => AST.UnaryOp(UnaryOps.Not, b)).indexed
+    val neg = ('-' -*> Parser.defer(unaryP)).map(b => AST.UnaryOp(UnaryOps.Neg, b, None)).indexed
+    val not = ('!' -*> Parser.defer(unaryP)).map(b => AST.UnaryOp(UnaryOps.Not, b, None)).indexed
     neg | not | Parser.defer(appP)
   }
 

@@ -1,7 +1,7 @@
 package com.yuuki14202028
 
 /** module の脱糖。名前は型検査が完全な名前（M.x）に解決済みなので、ここでは
- *   - module / private / opaque / open を外して、宣言を平らな列に戻す
+ *   - module / private / opaque / open / operator を外して、宣言を平らな列に戻す
  *   - 封印された opaque type（Env.abstractTypes）を、その表現へ読み替える
  * だけを行う。以降のフェーズに module と抽象型は残らない。
  */
@@ -23,7 +23,7 @@ object ModuleDesugar {
   private def flatten(decl: TypeRec[Decl]): Seq[TypeRec[Decl]] = decl.project match {
     case AST.TopModule(_, decls) => decls.flatMap(flatten)
     case AST.TopModified(_, inner) => flatten(inner)
-    case AST.TopOpen(_) => Seq.empty
+    case AST.TopOpen(_) | AST.TopOperator(_, _) => Seq.empty
     case _ => Seq(decl)
   }
 

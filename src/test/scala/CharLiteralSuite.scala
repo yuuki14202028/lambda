@@ -35,7 +35,7 @@ class CharLiteralSuite extends munit.FunSuite {
 
   test("パターンにも同じ文字リテラルを書ける") {
     val src =
-      """let __eq_char(x: char)(y: char): bool = intrinsic[eq_char](x)(y)
+      """trait Eq[a] { def eq(x: a)(y: a): bool }; operator == = eq; impl Eq[char] { def eq(x: char)(y: char): bool = intrinsic[eq_char](x)(y) }
         |let kind(c: char): i32 = match c {
         |  '0' | '1' => 1
         |  ' ' | '\n' => 2
@@ -47,14 +47,16 @@ class CharLiteralSuite extends munit.FunSuite {
     assert(validate(src).isRight, clue(validate(src)))
   }
 
-  test("名前に . を含む型の演算子は、. を _ にした名前の関数で定義する") {
+  test("名前に . を含む型にも、演算子の trait を実装できる") {
     val src =
-      """let __add_foreign_C_String(x: foreign.C.String)(y: foreign.C.String): foreign.C.String = x
+      """trait Add[a] { def add(x: a)(y: a): a }
+        |operator + = add
+        |impl Add[foreign.C.String] { def add(x: foreign.C.String)(y: foreign.C.String): foreign.C.String = x }
         |let greeting: foreign.C.String = "a" + "b"
         |module Money {
         |  data T = { MkT(i32) }
         |}
-        |let __add_Money_T(x: Money.T)(y: Money.T): Money.T = x
+        |impl Add[Money.T] { def add(x: Money.T)(y: Money.T): Money.T = x }
         |let total: Money.T = Money.MkT(1) + Money.MkT(2)
         |let main(): i32 = 0
         |""".stripMargin

@@ -83,19 +83,34 @@ let noisy(): i32 = {
 let message(n: i32): String = `n = {n}, doubled = {n + n}`
 ```
 
-演算子（`+ - * / %`、`== != < <= > >=`、`&& ||`、`!`、ビット演算 `& | ^`）は、左の値の型から決まる関数の呼び出しです。`a + b` は、`a` が `i32` なら関数 `__add_i32` を呼びます。組み込みの型の分は `std/operators` にあり、自分の型にも定義できます（型の名前の `.` は `_` にします）。
+演算子（`+ - * / %`、`== != < <= > >=`、`!`、ビット演算 `& | ^`）は関数の呼び出しです。どの関数を呼ぶかは `operator` 宣言で決まり、`a + b` は「`+` に宣言された関数に、`a` の型を型引数として渡したもの」を `a` と `b` に適用します。`std/operators` は演算子ごとに trait（`Add` / `Sub` / `Mul` / `Div` / `Mod` / `Neg` / `Not` / `BitAnd` / `BitOr` / `BitXor`、比較は `Eq` / `Ord`）を用意し、そのメソッドを演算子に宣言しています。自分の型で演算子を使うには、その trait を実装します。
 
 ```lam
 data Money = { MkMoney(i32) }
 
-let __add_Money(x: Money)(y: Money): Money = match x {
-  MkMoney(a) => match y {
-    MkMoney(b) => MkMoney(a + b)
+impl Add[Money] {
+  def add(x: Money)(y: Money): Money = match x {
+    MkMoney(a) => match y {
+      MkMoney(b) => MkMoney(a + b)
+    }
   }
 }
 
 let total: Money = MkMoney(100) + MkMoney(20)
+
+// 型変数にも、制約があれば使える
+let double[a](x: a): a with Add[a] = x + x
 ```
+
+`operator` 宣言の右辺は、最初の型引数が左の値の型になる多相関数（`∀a. … → a → …`）なら何でも構いません。宣言は他の宣言と同じスコープに従います（宣言より後で見え、module のメンバーになり、`open` で持ち込め、後の宣言が前の宣言を隠します）。前置の演算子は `prefix operator` と書きます。
+
+```lam
+trait Plus[a] { def plus(x: a)(y: a): a }
+operator + = plus
+prefix operator - = neg
+```
+
+`&&` と `||` だけは `bool` 専用の組み込みで、右辺は必要なときにだけ評価されます。`match` のリテラルのパターンは、`==` に宣言された関数で比べます。
 
 ### コメント
 
@@ -556,7 +571,7 @@ error: mismatched types
 | インスタンスがない | 宣言済みのインスタンスの一覧、どのインスタンスの文脈で必要になったか、`with` 節を足す案内 |
 | `private` な名前を外から使った | その名前が `private` であること |
 | `opaque type` を中身の型として使った | module の外では別の型であること |
-| 演算子が定義されていない | `std/operators` を取り込むか、その型の演算子の関数を定義する |
+| 演算子が宣言されていない | `std/operators` を取り込む（その型にインスタンスがなければ「インスタンスがない」になる） |
 | `match` が値を取りこぼした | 当たらない値の例 |
 | 古い書き方（`let rec`、`fold … with`）、`->` | 今の書き方 |
 

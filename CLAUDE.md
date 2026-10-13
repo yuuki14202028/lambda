@@ -27,6 +27,7 @@ ParserAST (cats-parse) → ImportResolver → TAnalyser (型検査)
   → ModuleDesugar (module を平らな宣言列へ戻し、opaque type を表現へ読み替える)
   → Deriver (derive 宣言を型付き TopImpl へ合成) → ContextDesugar (context ブロックを bind/ret へ脱糖)
   → PatternDesugar (match と束縛のパターンを、構成子 1 段の分岐と if / let へ展開する)
+  → OperatorDesugar (演算子を、宣言された関数の適用へ展開する。&& と || は if へ)
   → TraitEncoder (辞書渡しへ脱糖) → ChurchEncoder (data/match/fold を Church encoding 化)
   → Generator (ARM64 アセンブリ生成)
 ```
@@ -67,7 +68,11 @@ trait `C` は辞書のデータ型でもあり（`Env.dataTypes` に登録）、
 ### match のパターン
 
 `match` は `PatternMatch(scrutinee, cases)` としてパースされ、パターン（`Pattern`: `_`・変数・構成子（入れ子可）・リテラル）を持つ。引数のない名前は、型検査がスコープ中の構成子でなければ変数の束縛（`Bind`）と決める。型検査はノードを保ち、構成子パターンにそのデータ型の全構成子と型引数適用済みのフィールド型（`siblings`）、リテラルに解決済みの `==` を記録する。
-PatternDesugar は行列から決定木を作り、構成子 1 段の `Match`（ChurchEncoder が符号化する形）と `if` / `let` に展開する。複数の葉から使われる本体は関数として一度だけ置く。網羅性と到達不能な分岐は、型検査が同じ決定木で調べる（`PatternDesugar.check`）。選択肢 `p | q`（`Pattern.Or`）は脱糖の入口で選択肢ごとの行に展開し（同じ分岐を指すので本体は共有される）、条件付きの分岐（`PatternCase.guard`）は「条件が偽なら後続の行へ進む」節点になり、網羅には数えない。文字列のリテラルはランタイムの `string_equal` で比べる。束縛でのパターン（`LetPattern` ノード、context の `ContextStep.BindPattern` / `LetPattern`）は分岐が 1 つの match で、すべての値に当たるものに限る（`checkBindingPattern`）。context の束縛は ContextDesugar が match にするので、PatternDesugar はその後に走る（`Compiler.desugar`）。`fold` の分岐は従来どおり構成子 1 段と束縛子だけ（`MatchCase`）。
+PatternDesugar は行列から決定木を作り、構成子 1 段の `Match`（ChurchEncoder が符号化する形）と `if` / `let` に展開する。複数の葉から使われる本体は関数として一度だけ置く。網羅性と到達不能な分岐は、型検査が同じ決定木で調べる（`PatternDesugar.check`）。選択肢 `p | q`（`Pattern.Or`）は脱糖の入口で選択肢ごとの行に展開し（同じ分岐を指すので本体は共有される）、条件付きの分岐（`PatternCase.guard`）は「条件が偽なら後続の行へ進む」節点になり、網羅には数えない。リテラルは `==` に宣言された関数で比べる（`Pattern.Literal` が解決済みの関数を持つ。bool だけは分岐で調べる）。束縛でのパターン（`LetPattern` ノード、context の `ContextStep.BindPattern` / `LetPattern`）は分岐が 1 つの match で、すべての値に当たるものに限る（`checkBindingPattern`）。context の束縛は ContextDesugar が match にするので、PatternDesugar はその後に走る（`Compiler.desugar`）。`fold` の分岐は従来どおり構成子 1 段と束縛子だけ（`MatchCase`）。
+
+### 演算子（operator 宣言）
+
+演算子と関数の対応は言語に埋め込まず、ライブラリが `operator + = add` / `prefix operator - = neg` と宣言する（`TopOperator`）。右辺は `∀a. [制約]* → a → …` の形の多相関数なら何でもよく（`operatorShape`）、`a ⊕ b` は「宣言された関数に左の値の型を型引数として渡したもの」の適用として検査する（`operatorFunction`: 型適用の時点で制約が解決されるので、trait のメソッドならインスタンス解決になる）。型検査は `BinOp` / `UnaryOp` ノードを残して解決済みの関数を `resolved` に記録し、OperatorDesugar が適用に展開する。宣言は他の宣言と同じスコープに従う（`Names.operators`。キーは `operatorKey`: `"+"` / `"prefix -"`。宣言より後で見え、module のメンバーになり、`open` / `private` に従い、後の宣言が前を隠す）。`&&` と `||` だけは bool 専用の組み込みで、`if` に脱糖する（`resolved = None`）。`std/operators` は演算子ごとに 1 つの trait（`Add` / `Sub` / … / `Eq` / `Ord`）を置き、組み込みの型のインスタンスを `intrinsic` で定義する。Generator は演算子ノードを受け取らない。
 
 ### エラー表示（Diagnostic.scala）
 
@@ -105,7 +110,7 @@ PatternDesugar は行列から決定木を作り、構成子 1 段の `Match`（
 
 ### その他
 
-- `stdlib/*.lam` — `import std/...` で解決される標準ライブラリ。`StandardLibrary.scala` が演算子名（`add` 等）を組み込み演算へ対応付ける。演算子 `a + b` は左の被演算子の型から関数 `__add_型名` を引く（型の名前の `.` は `_` にする。文字列は `__add_foreign_C_String`）。文字と文字列の関数は `std/char`（module `Char`）と `std/string`（module `Str`）にある
+- `stdlib/*.lam` — `import std/...` で解決される標準ライブラリ。`StandardLibrary.scala` が `intrinsic[add_i32]` などの名前を組み込み演算へ対応付ける。文字と文字列の関数は `std/char`（module `Char`）と `std/string`（module `Str`）にある
 - `runtime/ffi.c` — `foreign` で参照する C 関数の実装。関数値はコードポインタ + 環境ポインタのクロージャ
 - Generator: 束縛はすべてヒープの環境フレームに置き、`[x29, -16]` が現在のフレームを指す。関数本体の末尾位置の呼び出し（`Env.tail`）はフレームを畳んでジャンプにするので、末尾再帰はスタックを消費しない。メモリは `malloc` するだけで解放しない
 - `src/test/lam/*.lam` — EndToEndSuite が実行するプログラム（期待する出力はスイート側に書く）

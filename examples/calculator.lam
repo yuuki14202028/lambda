@@ -140,11 +140,11 @@ rec data Expr = {
   LetIn(Name)(Expr)(Expr)
 }
 
-// 左結合の二項演算: operand (operator operand)*
-let chain(operand: Parser[Expr])(operator: Parser[Operator]): Parser[Expr] =
+// 左結合の二項演算: operand (operation operand)*
+let chain(operand: Parser[Expr])(operation: Parser[Operator]): Parser[Expr] =
   rec let rest(left: Expr): Parser[Expr] =
     orElse[Expr](context[Parser] {
-      op: Operator = operator;
+      op: Operator = operation;
       right: Expr = operand;
       more: Expr = rest(Binary(op)(left)(right));
       more

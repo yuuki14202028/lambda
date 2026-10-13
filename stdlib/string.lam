@@ -1,5 +1,5 @@
 // 文字列。関数は module Str にまとめてある（Str.length(s) のように使う）。
-// 文字列どうしは ==・<・+（連結）などの演算子で扱え、Eq / Ord / Semigroup / Monoid のインスタンスがある。
+// Eq / Ord / Add（連結）/ Semigroup / Monoid のインスタンスがあるので、文字列どうしは ==・<・+ で扱える。
 
 import "std/operators"
 import "std/option"
@@ -45,13 +45,6 @@ module Str {
   let startsWith(prefix: String)(s: String): bool = equal(slice(s)(0)(length(prefix)))(prefix)
 }
 
-let __eq_foreign_C_String(x: String)(y: String): bool = Str.equal(x)(y)
-let __neq_foreign_C_String(x: String)(y: String): bool = !Str.equal(x)(y)
-let __lt_foreign_C_String(x: String)(y: String): bool = Str.compare(x)(y) < 0
-let __leq_foreign_C_String(x: String)(y: String): bool = Str.compare(x)(y) <= 0
-let __gt_foreign_C_String(x: String)(y: String): bool = Str.compare(x)(y) > 0
-let __geq_foreign_C_String(x: String)(y: String): bool = Str.compare(x)(y) >= 0
-let __add_foreign_C_String(x: String)(y: String): String = Str.append(x)(y)
 
 impl Eq[String] {
   def eq(x: String)(y: String): bool = Str.equal(x)(y)
@@ -59,6 +52,11 @@ impl Eq[String] {
 
 impl Ord[String] {
   def lt(x: String)(y: String): bool = Str.compare(x)(y) < 0
+}
+
+// + は連結
+impl Add[String] {
+  def add(x: String)(y: String): String = Str.append(x)(y)
 }
 
 impl Semigroup[String] {

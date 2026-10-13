@@ -380,21 +380,24 @@ object Diagnostic {
         "the body of `∀` must be a type of values", s"${ty(body)} has kind ${kind(k)}, expected `*`")
 
       // ---- 演算子・組み込み ----
-      case OperatorUnresolvable(op, operandType) => Description(
-        s"operator `$op` cannot be used on ${ty(operandType)}", "this operand's type has no name to look an operator up by")
-      case OperatorUndefined(op, operandType, function) => Description(
-        s"operator `$op` is not defined for ${ty(operandType)}",
-        s"needs a function named ${name(function.name)}",
-        notes = Seq(s"`a $op b` is a call to the function ${name(function.name)}, chosen from the type of the left operand"),
-        helps = operandType.project match {
-          case AST.Primitive(_) => Seq("the operators for the built-in types are defined in the standard library: add `import \"std/operators\"`")
-          case _ => Seq(s"define the operator for this type: `let ${function.name}(x: ${operandType.show})(y: ${operandType.show}): … = …`")
-        }
-      )
-      case OperatorNotAFunction(function, fnType) => Description(
-        s"the operator function ${name(function.name)} is not a function", s"${name(function.name)} has type ${ty(fnType)}")
-      case OperatorNotBinary(function, fnType) => Description(
-        s"the operator function ${name(function.name)} does not take two arguments", s"${name(function.name)} has type ${ty(fnType)}")
+      case OperatorNotDeclared(op) =>
+        val symbol = op match { case binary: BinOps => s"`$binary`"; case unary: UnaryOps => s"prefix `$unary`" }
+        Description(
+          s"the operator $symbol is not declared",
+          "used here",
+          notes = Seq("an operator calls the function it is declared for, with the type of its left operand: after `operator + = add`, `a + b` means `add[T](a)(b)`"),
+          helps = Seq("the standard operators are declared in the standard library: add `import \"std/operators\"`")
+        )
+      case OperatorTargetInvalid(op, function, fnType) =>
+        val binary = op match { case _: BinOps => true; case _: UnaryOps => false }
+        Description(
+          s"${name(function.name)} cannot be used as an operator",
+          s"has type ${ty(fnType)}",
+          notes = Seq(
+            if (binary) "a binary operator needs a function of type `∀a. … → a → b → c`: its first type parameter receives the type of the left operand, which is its first argument"
+            else "a prefix operator needs a function of type `∀a. … → a → b`: its first type parameter receives the type of the operand, which is its first argument"
+          )
+        )
       case IntrinsicArityMismatch(op, actual) =>
         val expected = op match { case _: BinOps => 2; case _: UnaryOps => 1 }
         Description(s"wrong number of arguments for `intrinsic[$op]`", s"expected ${plural(expected, "argument")}, found $actual")

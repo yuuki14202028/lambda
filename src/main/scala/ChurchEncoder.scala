@@ -289,7 +289,7 @@ object ChurchEncoder {
     case AST.TopDerive(traitName, _) =>
       invariant(s"TopDerive ${traitName.name} must be desugared by Deriver before Church encoding")
 
-    case AST.TopModule(_, _) | AST.TopOpen(_) | AST.TopModified(_, _) =>
+    case AST.TopModule(_, _) | AST.TopOpen(_) | AST.TopOperator(_, _) | AST.TopModified(_, _) =>
       invariant("modules must be desugared by ModuleDesugar before Church encoding")
 
     case _ =>

@@ -26,8 +26,8 @@ char bool unit
 foreign.C.String  foreign.C.VoidPtr  foreign.C.Ptr[T]
 ```
 
-`+` や `==` などの演算子は型ごとに `__add_i32` のような関数へ解決されます。
-これらは `stdlib/operators.lam` に `intrinsic` として定義されているため、演算子を使うには `import "std/operators"` が必要です。
+`+` や `==` などの演算子は、`operator + = add` のように宣言された関数の呼び出しです（`a + b` は `add[T](a)(b)`、`T` は `a` の型）。
+`stdlib/operators.lam` が演算子ごとの trait（`Add` / `Eq` / `Ord` など）と組み込みの型のインスタンスを宣言しているので、演算子を使うには `import "std/operators"` が必要です。自分の型では、その trait を実装します。`&&` と `||` だけは `bool` 専用の組み込みです。
 
 ## 使い方
 
@@ -81,6 +81,7 @@ ParserAST (cats-parse)
   → Deriver          derive 宣言を手書きと同形の impl へ合成
   → ContextDesugar   context ブロックを pure / flatMap へ脱糖
   → PatternDesugar   match と束縛のパターンを、構成子 1 段の分岐と if / let へ展開
+  → OperatorDesugar  演算子を、宣言された関数の適用へ（&& と || は if へ）
   → TraitEncoder     trait / impl を辞書渡しへ脱糖
   → ChurchEncoder    data / match / fold を Church encoding 化
   → Generator        ARM64 アセンブリ生成

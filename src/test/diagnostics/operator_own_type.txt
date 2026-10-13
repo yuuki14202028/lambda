@@ -1,8 +1,16 @@
-error: operator `+` is not defined for `Money`
- --> operator_own_type.lam:2:40
+error: no instance for `Add[Money]`
+ --> operator_own_type.lam:4:40
   |
-2 | let total(a: Money)(b: Money): Money = a + b
-  |                                        ^^^^^ needs a function named `__add_Money`
+4 | let total(a: Money)(b: Money): Money = a + b
+  |                                        ^^^^^ this needs the instance
   |
-  = note: `a + b` is a call to the function `__add_Money`, chosen from the type of the left operand
-  = help: define the operator for this type: `let __add_Money(x: Money)(y: Money): … = …`
+  = note: instances declared before this point:
+            impl Add[f32]
+            impl Add[f64]
+            impl Add[i16]
+            impl Add[i32]
+            impl Add[i64]
+            impl Add[i8]
+            impl Add[isize]
+            impl Add[u16]
+            … and 4 more

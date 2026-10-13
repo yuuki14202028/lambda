@@ -100,11 +100,18 @@ final class SpanTable {
 /** 短い名前から完全な名前（module M の中の x は M.x）への対応。
  * module の公開メンバーの一覧にも、修飾なしで書ける名前の一覧（Env.scope）にも使う。
  */
-case class Names(values: Map[String, Variable], types: Map[String, TypeVariable], modules: Map[String, String]) {
+case class Names(
+    values: Map[String, Variable],
+    types: Map[String, TypeVariable],
+    modules: Map[String, String],
+    operators: Map[String, Variable] = Map.empty // 演算子（operatorKey）が指す関数
+) {
+  def withOperator(key: String, function: Variable): Names = copy(operators = operators + (key -> function))
   def withValue(short: String, full: Variable): Names = copy(values = values + (short -> full))
   def withType(short: String, full: TypeVariable): Names = copy(types = types + (short -> full))
   def withModule(short: String, full: String): Names = copy(modules = modules + (short -> full))
-  def ++(other: Names): Names = Names(values ++ other.values, types ++ other.types, modules ++ other.modules)
+  def ++(other: Names): Names =
+    Names(values ++ other.values, types ++ other.types, modules ++ other.modules, operators ++ other.operators)
 }
 
 object Names {

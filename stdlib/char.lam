@@ -33,8 +33,3 @@ module Char {
 impl Ord[char] {
   def lt(x: char)(y: char): bool = Char.code(x) < Char.code(y)
 }
-
-let __lt_char(x: char)(y: char): bool = Char.code(x) < Char.code(y)
-let __leq_char(x: char)(y: char): bool = Char.code(x) <= Char.code(y)
-let __gt_char(x: char)(y: char): bool = Char.code(x) > Char.code(y)
-let __geq_char(x: char)(y: char): bool = Char.code(x) >= Char.code(y)

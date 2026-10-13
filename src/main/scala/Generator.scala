@@ -523,23 +523,9 @@ object Generator {
       }
     } yield Code.concat(discardedCode) ++ resultCode
 
-    case AST.UnaryOp(UnaryOps.Neg, body) =>
-      nonTail(body.result).map(_ ++ (primitiveName(typeOf(body.original)) match {
-        case Some("f32") => code(ins("fmov", r(s0), r(w0)), ins("fneg", r(s0), r(s0)), ins("fmov", r(w0), r(s0)))
-        case Some("f64") => code(ins("fmov", r(d0), r(x0)), ins("fneg", r(d0), r(d0)), ins("fmov", r(x0), r(d0)))
-        case Some(name) if is64BitScalar(name) => code(ins("neg", r(x0), r(x0)))
-        case _ => code(ins("neg", r(w0), r(w0)))
-      }))
-    case AST.UnaryOp(UnaryOps.Not, body) =>
-      nonTail(body.result).map(_ ++ code(
-        ins("cmp", r(w0), imm(0)),
-        ins("cset", r(w0), Condition("eq"))
-      ))
+    case AST.UnaryOp(_, _, _) => pure(sys.error("operators must be desugared by OperatorDesugar before code generation"))
 
-    case AST.BinOp(op, l, rExpr) => for {
-      lc <- nonTail(l.result)
-      rc <- nonTail(rExpr.result)
-    } yield lc ++ code(ins("str", r(x0), pre(sp, -16))) ++ rc ++ code(ins("ldr", r(x1), post(sp, 16))) ++ binInstr(op, typeOf(l.original))
+    case AST.BinOp(_, _, _, _) => pure(sys.error("operators must be desugared by OperatorDesugar before code generation"))
 
     case AST.Intrinsic(IntrinsicOps.BinOp(op, _), Seq(l, rExpr)) => for {
       lc <- nonTail(l.result)
@@ -660,7 +646,7 @@ object Generator {
     case AST.TopTrait(_, _, _, _) => pure(sys.error("TopTrait must be desugared before code generation"))
     case AST.TopImpl(_, _, _, _, _, _) => pure(sys.error("TopImpl must be desugared before code generation"))
     case AST.TopDerive(_, _) => pure(sys.error("TopDerive must be desugared before code generation"))
-    case AST.TopModule(_, _) | AST.TopOpen(_) | AST.TopModified(_, _) => pure(sys.error("modules must be desugared before code generation"))
+    case AST.TopModule(_, _) | AST.TopOpen(_) | AST.TopOperator(_, _) | AST.TopModified(_, _) => pure(sys.error("modules must be desugared before code generation"))
 
     case AST.Primitive(_) => pure(Code.empty)
     case AST.TypeVar(_) => pure(Code.empty)
@@ -753,7 +739,7 @@ object Generator {
     case AST.TopTrait(_, _, _, _) => sys.error("TopTrait must be desugared before code generation")
     case AST.TopImpl(_, _, _, _, _, _) => sys.error("TopImpl must be desugared before code generation")
     case AST.TopDerive(_, _) => sys.error("TopDerive must be desugared before code generation")
-    case AST.TopModule(_, _) | AST.TopOpen(_) | AST.TopModified(_, _) => sys.error("modules must be desugared before code generation")
+    case AST.TopModule(_, _) | AST.TopOpen(_) | AST.TopOperator(_, _) | AST.TopModified(_, _) => sys.error("modules must be desugared before code generation")
   }
 
   // top-level の rec の組: 全員のセルを先に確保してから、順に値を入れる

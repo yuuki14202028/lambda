@@ -5,6 +5,11 @@ import "std/operators"
 
 let printInt: i32 → i32 = foreign[i32 → i32] print_int
 
+// 文字列のリテラルのパターンは == で比べるので、Eq のインスタンスが要る
+impl Eq[foreign.C.String] {
+  def eq(x: foreign.C.String)(y: foreign.C.String): bool = (foreign[foreign.C.String → foreign.C.String → bool] string_equal)(x)(y)
+}
+
 data Option[a] = { None, Some(a) }
 rec data List[a] = { Nil, Cons(a)(List[a]) }
 data Pair[a][b] = { MkPair(a)(b) }

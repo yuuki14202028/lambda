@@ -1,201 +1,504 @@
-let __add_f32(x: f32)(y: f32): f32 = intrinsic[add_f32](x)(y)
-let __sub_f32(x: f32)(y: f32): f32 = intrinsic[sub_f32](x)(y)
-let __mul_f32(x: f32)(y: f32): f32 = intrinsic[mul_f32](x)(y)
-let __div_f32(x: f32)(y: f32): f32 = intrinsic[div_f32](x)(y)
-let __eq_f32(x: f32)(y: f32): bool = intrinsic[eq_f32](x)(y)
-let __neq_f32(x: f32)(y: f32): bool = intrinsic[neq_f32](x)(y)
-let __and_f32(x: f32)(y: f32): f32 = intrinsic[and_f32](x)(y)
-let __or_f32(x: f32)(y: f32): f32 = intrinsic[or_f32](x)(y)
-let __xor_f32(x: f32)(y: f32): f32 = intrinsic[xor_f32](x)(y)
-let __lt_f32(x: f32)(y: f32): bool = intrinsic[lt_f32](x)(y)
-let __leq_f32(x: f32)(y: f32): bool = intrinsic[leq_f32](x)(y)
-let __gt_f32(x: f32)(y: f32): bool = intrinsic[gt_f32](x)(y)
-let __geq_f32(x: f32)(y: f32): bool = intrinsic[geq_f32](x)(y)
-let __neg_f32(x: f32): f32 = intrinsic[neg_f32](x)
+// 演算子。
+//
+// 演算子は、宣言された多相関数を、左の値の型で具体化して呼ぶ書き方である:
+// `operator + = add` の後では、`a + b` は `add[T](a)(b)`（T は a の型）。
+// ここでは、演算子ごとの trait と、その宣言と、組み込みの型のインスタンスを定義する。
+// 自分の型に演算子を使うには、その trait のインスタンスを書く（`impl Add[Money] { def add … }`）。
+//
+// `==` `!=` は std/eq、`<` `<=` `>` `>=` は std/ord にある。`&&` と `||` は bool 専用の組み込みで、宣言はない。
 
-let __add_f64(x: f64)(y: f64): f64 = intrinsic[add_f64](x)(y)
-let __sub_f64(x: f64)(y: f64): f64 = intrinsic[sub_f64](x)(y)
-let __mul_f64(x: f64)(y: f64): f64 = intrinsic[mul_f64](x)(y)
-let __div_f64(x: f64)(y: f64): f64 = intrinsic[div_f64](x)(y)
-let __eq_f64(x: f64)(y: f64): bool = intrinsic[eq_f64](x)(y)
-let __neq_f64(x: f64)(y: f64): bool = intrinsic[neq_f64](x)(y)
-let __and_f64(x: f64)(y: f64): f64 = intrinsic[and_f64](x)(y)
-let __or_f64(x: f64)(y: f64): f64 = intrinsic[or_f64](x)(y)
-let __xor_f64(x: f64)(y: f64): f64 = intrinsic[xor_f64](x)(y)
-let __lt_f64(x: f64)(y: f64): bool = intrinsic[lt_f64](x)(y)
-let __leq_f64(x: f64)(y: f64): bool = intrinsic[leq_f64](x)(y)
-let __gt_f64(x: f64)(y: f64): bool = intrinsic[gt_f64](x)(y)
-let __geq_f64(x: f64)(y: f64): bool = intrinsic[geq_f64](x)(y)
-let __neg_f64(x: f64): f64 = intrinsic[neg_f64](x)
+import "std/eq"
+import "std/eq_instances"
+import "std/ord"
+import "std/ord_instances"
 
-let __add_i8(x: i8)(y: i8): i8 = intrinsic[add_i8](x)(y)
-let __sub_i8(x: i8)(y: i8): i8 = intrinsic[sub_i8](x)(y)
-let __mul_i8(x: i8)(y: i8): i8 = intrinsic[mul_i8](x)(y)
-let __div_i8(x: i8)(y: i8): i8 = intrinsic[div_i8](x)(y)
-let __mod_i8(x: i8)(y: i8): i8 = x - (x / y) * y
-let __eq_i8(x: i8)(y: i8): bool = intrinsic[eq_i8](x)(y)
-let __neq_i8(x: i8)(y: i8): bool = intrinsic[neq_i8](x)(y)
-let __and_i8(x: i8)(y: i8): i8 = intrinsic[and_i8](x)(y)
-let __or_i8(x: i8)(y: i8): i8 = intrinsic[or_i8](x)(y)
-let __xor_i8(x: i8)(y: i8): i8 = intrinsic[xor_i8](x)(y)
-let __lt_i8(x: i8)(y: i8): bool = intrinsic[lt_i8](x)(y)
-let __leq_i8(x: i8)(y: i8): bool = intrinsic[leq_i8](x)(y)
-let __gt_i8(x: i8)(y: i8): bool = intrinsic[gt_i8](x)(y)
-let __geq_i8(x: i8)(y: i8): bool = intrinsic[geq_i8](x)(y)
-let __neg_i8(x: i8): i8 = intrinsic[neg_i8](x)
+trait Add[a] {
+  def add(x: a)(y: a): a
+}
 
-let __add_i16(x: i16)(y: i16): i16 = intrinsic[add_i16](x)(y)
-let __sub_i16(x: i16)(y: i16): i16 = intrinsic[sub_i16](x)(y)
-let __mul_i16(x: i16)(y: i16): i16 = intrinsic[mul_i16](x)(y)
-let __div_i16(x: i16)(y: i16): i16 = intrinsic[div_i16](x)(y)
-let __mod_i16(x: i16)(y: i16): i16 = x - (x / y) * y
-let __eq_i16(x: i16)(y: i16): bool = intrinsic[eq_i16](x)(y)
-let __neq_i16(x: i16)(y: i16): bool = intrinsic[neq_i16](x)(y)
-let __and_i16(x: i16)(y: i16): i16 = intrinsic[and_i16](x)(y)
-let __or_i16(x: i16)(y: i16): i16 = intrinsic[or_i16](x)(y)
-let __xor_i16(x: i16)(y: i16): i16 = intrinsic[xor_i16](x)(y)
-let __lt_i16(x: i16)(y: i16): bool = intrinsic[lt_i16](x)(y)
-let __leq_i16(x: i16)(y: i16): bool = intrinsic[leq_i16](x)(y)
-let __gt_i16(x: i16)(y: i16): bool = intrinsic[gt_i16](x)(y)
-let __geq_i16(x: i16)(y: i16): bool = intrinsic[geq_i16](x)(y)
-let __neg_i16(x: i16): i16 = intrinsic[neg_i16](x)
+trait Sub[a] {
+  def sub(x: a)(y: a): a
+}
 
-let __add_i32(x: i32)(y: i32): i32 = intrinsic[add_i32](x)(y)
-let __sub_i32(x: i32)(y: i32): i32 = intrinsic[sub_i32](x)(y)
-let __mul_i32(x: i32)(y: i32): i32 = intrinsic[mul_i32](x)(y)
-let __div_i32(x: i32)(y: i32): i32 = intrinsic[div_i32](x)(y)
-let __mod_i32(x: i32)(y: i32): i32 = x - (x / y) * y
-let __eq_i32(x: i32)(y: i32): bool = intrinsic[eq_i32](x)(y)
-let __neq_i32(x: i32)(y: i32): bool = intrinsic[neq_i32](x)(y)
-let __and_i32(x: i32)(y: i32): i32 = intrinsic[and_i32](x)(y)
-let __or_i32(x: i32)(y: i32): i32 = intrinsic[or_i32](x)(y)
-let __xor_i32(x: i32)(y: i32): i32 = intrinsic[xor_i32](x)(y)
-let __lt_i32(x: i32)(y: i32): bool = intrinsic[lt_i32](x)(y)
-let __leq_i32(x: i32)(y: i32): bool = intrinsic[leq_i32](x)(y)
-let __gt_i32(x: i32)(y: i32): bool = intrinsic[gt_i32](x)(y)
-let __geq_i32(x: i32)(y: i32): bool = intrinsic[geq_i32](x)(y)
-let __neg_i32(x: i32): i32 = intrinsic[neg_i32](x)
+trait Mul[a] {
+  def mul(x: a)(y: a): a
+}
 
-let __add_i64(x: i64)(y: i64): i64 = intrinsic[add_i64](x)(y)
-let __sub_i64(x: i64)(y: i64): i64 = intrinsic[sub_i64](x)(y)
-let __mul_i64(x: i64)(y: i64): i64 = intrinsic[mul_i64](x)(y)
-let __div_i64(x: i64)(y: i64): i64 = intrinsic[div_i64](x)(y)
-let __mod_i64(x: i64)(y: i64): i64 = x - (x / y) * y
-let __eq_i64(x: i64)(y: i64): bool = intrinsic[eq_i64](x)(y)
-let __neq_i64(x: i64)(y: i64): bool = intrinsic[neq_i64](x)(y)
-let __and_i64(x: i64)(y: i64): i64 = intrinsic[and_i64](x)(y)
-let __or_i64(x: i64)(y: i64): i64 = intrinsic[or_i64](x)(y)
-let __xor_i64(x: i64)(y: i64): i64 = intrinsic[xor_i64](x)(y)
-let __lt_i64(x: i64)(y: i64): bool = intrinsic[lt_i64](x)(y)
-let __leq_i64(x: i64)(y: i64): bool = intrinsic[leq_i64](x)(y)
-let __gt_i64(x: i64)(y: i64): bool = intrinsic[gt_i64](x)(y)
-let __geq_i64(x: i64)(y: i64): bool = intrinsic[geq_i64](x)(y)
-let __neg_i64(x: i64): i64 = intrinsic[neg_i64](x)
+trait Div[a] {
+  def div(x: a)(y: a): a
+}
 
-let __add_isize(x: isize)(y: isize): isize = intrinsic[add_isize](x)(y)
-let __sub_isize(x: isize)(y: isize): isize = intrinsic[sub_isize](x)(y)
-let __mul_isize(x: isize)(y: isize): isize = intrinsic[mul_isize](x)(y)
-let __div_isize(x: isize)(y: isize): isize = intrinsic[div_isize](x)(y)
-let __mod_isize(x: isize)(y: isize): isize = x - (x / y) * y
-let __eq_isize(x: isize)(y: isize): bool = intrinsic[eq_isize](x)(y)
-let __neq_isize(x: isize)(y: isize): bool = intrinsic[neq_isize](x)(y)
-let __and_isize(x: isize)(y: isize): isize = intrinsic[and_isize](x)(y)
-let __or_isize(x: isize)(y: isize): isize = intrinsic[or_isize](x)(y)
-let __xor_isize(x: isize)(y: isize): isize = intrinsic[xor_isize](x)(y)
-let __lt_isize(x: isize)(y: isize): bool = intrinsic[lt_isize](x)(y)
-let __leq_isize(x: isize)(y: isize): bool = intrinsic[leq_isize](x)(y)
-let __gt_isize(x: isize)(y: isize): bool = intrinsic[gt_isize](x)(y)
-let __geq_isize(x: isize)(y: isize): bool = intrinsic[geq_isize](x)(y)
-let __neg_isize(x: isize): isize = intrinsic[neg_isize](x)
+trait Mod[a] {
+  def mod(x: a)(y: a): a
+}
 
-let __add_u8(x: u8)(y: u8): u8 = intrinsic[add_u8](x)(y)
-let __sub_u8(x: u8)(y: u8): u8 = intrinsic[sub_u8](x)(y)
-let __mul_u8(x: u8)(y: u8): u8 = intrinsic[mul_u8](x)(y)
-let __div_u8(x: u8)(y: u8): u8 = intrinsic[div_u8](x)(y)
-let __mod_u8(x: u8)(y: u8): u8 = x - (x / y) * y
-let __eq_u8(x: u8)(y: u8): bool = intrinsic[eq_u8](x)(y)
-let __neq_u8(x: u8)(y: u8): bool = intrinsic[neq_u8](x)(y)
-let __and_u8(x: u8)(y: u8): u8 = intrinsic[and_u8](x)(y)
-let __or_u8(x: u8)(y: u8): u8 = intrinsic[or_u8](x)(y)
-let __xor_u8(x: u8)(y: u8): u8 = intrinsic[xor_u8](x)(y)
-let __lt_u8(x: u8)(y: u8): bool = intrinsic[lt_u8](x)(y)
-let __leq_u8(x: u8)(y: u8): bool = intrinsic[leq_u8](x)(y)
-let __gt_u8(x: u8)(y: u8): bool = intrinsic[gt_u8](x)(y)
-let __geq_u8(x: u8)(y: u8): bool = intrinsic[geq_u8](x)(y)
-let __neg_u8(x: u8): u8 = intrinsic[neg_u8](x)
+trait Neg[a] {
+  def neg(x: a): a
+}
 
-let __add_u16(x: u16)(y: u16): u16 = intrinsic[add_u16](x)(y)
-let __sub_u16(x: u16)(y: u16): u16 = intrinsic[sub_u16](x)(y)
-let __mul_u16(x: u16)(y: u16): u16 = intrinsic[mul_u16](x)(y)
-let __div_u16(x: u16)(y: u16): u16 = intrinsic[div_u16](x)(y)
-let __mod_u16(x: u16)(y: u16): u16 = x - (x / y) * y
-let __eq_u16(x: u16)(y: u16): bool = intrinsic[eq_u16](x)(y)
-let __neq_u16(x: u16)(y: u16): bool = intrinsic[neq_u16](x)(y)
-let __and_u16(x: u16)(y: u16): u16 = intrinsic[and_u16](x)(y)
-let __or_u16(x: u16)(y: u16): u16 = intrinsic[or_u16](x)(y)
-let __xor_u16(x: u16)(y: u16): u16 = intrinsic[xor_u16](x)(y)
-let __lt_u16(x: u16)(y: u16): bool = intrinsic[lt_u16](x)(y)
-let __leq_u16(x: u16)(y: u16): bool = intrinsic[leq_u16](x)(y)
-let __gt_u16(x: u16)(y: u16): bool = intrinsic[gt_u16](x)(y)
-let __geq_u16(x: u16)(y: u16): bool = intrinsic[geq_u16](x)(y)
-let __neg_u16(x: u16): u16 = intrinsic[neg_u16](x)
+trait Not[a] {
+  def not(x: a): a
+}
 
-let __add_u32(x: u32)(y: u32): u32 = intrinsic[add_u32](x)(y)
-let __sub_u32(x: u32)(y: u32): u32 = intrinsic[sub_u32](x)(y)
-let __mul_u32(x: u32)(y: u32): u32 = intrinsic[mul_u32](x)(y)
-let __div_u32(x: u32)(y: u32): u32 = intrinsic[div_u32](x)(y)
-let __mod_u32(x: u32)(y: u32): u32 = x - (x / y) * y
-let __eq_u32(x: u32)(y: u32): bool = intrinsic[eq_u32](x)(y)
-let __neq_u32(x: u32)(y: u32): bool = intrinsic[neq_u32](x)(y)
-let __and_u32(x: u32)(y: u32): u32 = intrinsic[and_u32](x)(y)
-let __or_u32(x: u32)(y: u32): u32 = intrinsic[or_u32](x)(y)
-let __xor_u32(x: u32)(y: u32): u32 = intrinsic[xor_u32](x)(y)
-let __lt_u32(x: u32)(y: u32): bool = intrinsic[lt_u32](x)(y)
-let __leq_u32(x: u32)(y: u32): bool = intrinsic[leq_u32](x)(y)
-let __gt_u32(x: u32)(y: u32): bool = intrinsic[gt_u32](x)(y)
-let __geq_u32(x: u32)(y: u32): bool = intrinsic[geq_u32](x)(y)
-let __neg_u32(x: u32): u32 = intrinsic[neg_u32](x)
+trait BitAnd[a] {
+  def bitAnd(x: a)(y: a): a
+}
 
-let __add_u64(x: u64)(y: u64): u64 = intrinsic[add_u64](x)(y)
-let __sub_u64(x: u64)(y: u64): u64 = intrinsic[sub_u64](x)(y)
-let __mul_u64(x: u64)(y: u64): u64 = intrinsic[mul_u64](x)(y)
-let __div_u64(x: u64)(y: u64): u64 = intrinsic[div_u64](x)(y)
-let __mod_u64(x: u64)(y: u64): u64 = x - (x / y) * y
-let __eq_u64(x: u64)(y: u64): bool = intrinsic[eq_u64](x)(y)
-let __neq_u64(x: u64)(y: u64): bool = intrinsic[neq_u64](x)(y)
-let __and_u64(x: u64)(y: u64): u64 = intrinsic[and_u64](x)(y)
-let __or_u64(x: u64)(y: u64): u64 = intrinsic[or_u64](x)(y)
-let __xor_u64(x: u64)(y: u64): u64 = intrinsic[xor_u64](x)(y)
-let __lt_u64(x: u64)(y: u64): bool = intrinsic[lt_u64](x)(y)
-let __leq_u64(x: u64)(y: u64): bool = intrinsic[leq_u64](x)(y)
-let __gt_u64(x: u64)(y: u64): bool = intrinsic[gt_u64](x)(y)
-let __geq_u64(x: u64)(y: u64): bool = intrinsic[geq_u64](x)(y)
-let __neg_u64(x: u64): u64 = intrinsic[neg_u64](x)
+trait BitOr[a] {
+  def bitOr(x: a)(y: a): a
+}
 
-let __add_usize(x: usize)(y: usize): usize = intrinsic[add_usize](x)(y)
-let __sub_usize(x: usize)(y: usize): usize = intrinsic[sub_usize](x)(y)
-let __mul_usize(x: usize)(y: usize): usize = intrinsic[mul_usize](x)(y)
-let __div_usize(x: usize)(y: usize): usize = intrinsic[div_usize](x)(y)
-let __mod_usize(x: usize)(y: usize): usize = x - (x / y) * y
-let __eq_usize(x: usize)(y: usize): bool = intrinsic[eq_usize](x)(y)
-let __neq_usize(x: usize)(y: usize): bool = intrinsic[neq_usize](x)(y)
-let __and_usize(x: usize)(y: usize): usize = intrinsic[and_usize](x)(y)
-let __or_usize(x: usize)(y: usize): usize = intrinsic[or_usize](x)(y)
-let __xor_usize(x: usize)(y: usize): usize = intrinsic[xor_usize](x)(y)
-let __lt_usize(x: usize)(y: usize): bool = intrinsic[lt_usize](x)(y)
-let __leq_usize(x: usize)(y: usize): bool = intrinsic[leq_usize](x)(y)
-let __gt_usize(x: usize)(y: usize): bool = intrinsic[gt_usize](x)(y)
-let __geq_usize(x: usize)(y: usize): bool = intrinsic[geq_usize](x)(y)
-let __neg_usize(x: usize): usize = intrinsic[neg_usize](x)
+trait BitXor[a] {
+  def bitXor(x: a)(y: a): a
+}
 
-let __eq_char(x: char)(y: char): bool = intrinsic[eq_char](x)(y)
-let __neq_char(x: char)(y: char): bool = intrinsic[neq_char](x)(y)
+operator + = add
+operator - = sub
+operator * = mul
+operator / = div
+operator % = mod
+operator & = bitAnd
+operator | = bitOr
+operator ^ = bitXor
+prefix operator - = neg
+prefix operator ! = not
 
-let __eq_bool(x: bool)(y: bool): bool = intrinsic[eq_bool](x)(y)
-let __neq_bool(x: bool)(y: bool): bool = intrinsic[neq_bool](x)(y)
-let __and_bool(x: bool)(y: bool): bool = intrinsic[and_bool](x)(y)
-let __or_bool(x: bool)(y: bool): bool = intrinsic[or_bool](x)(y)
-let __xor_bool(x: bool)(y: bool): bool = intrinsic[xor_bool](x)(y)
-let __short_and_bool(x: bool)(y: unit → bool): bool = if x then y(()) else false
-let __short_or_bool(x: bool)(y: unit → bool): bool = if x then true else y(())
-let __not_bool(x: bool): bool = intrinsic[not_bool](x)
+impl Add[f32] {
+  def add(x: f32)(y: f32): f32 = intrinsic[add_f32](x)(y)
+}
+
+impl Sub[f32] {
+  def sub(x: f32)(y: f32): f32 = intrinsic[sub_f32](x)(y)
+}
+
+impl Mul[f32] {
+  def mul(x: f32)(y: f32): f32 = intrinsic[mul_f32](x)(y)
+}
+
+impl Div[f32] {
+  def div(x: f32)(y: f32): f32 = intrinsic[div_f32](x)(y)
+}
+
+impl BitAnd[f32] {
+  def bitAnd(x: f32)(y: f32): f32 = intrinsic[and_f32](x)(y)
+}
+
+impl BitOr[f32] {
+  def bitOr(x: f32)(y: f32): f32 = intrinsic[or_f32](x)(y)
+}
+
+impl BitXor[f32] {
+  def bitXor(x: f32)(y: f32): f32 = intrinsic[xor_f32](x)(y)
+}
+
+impl Neg[f32] {
+  def neg(x: f32): f32 = intrinsic[neg_f32](x)
+}
+
+impl Add[f64] {
+  def add(x: f64)(y: f64): f64 = intrinsic[add_f64](x)(y)
+}
+
+impl Sub[f64] {
+  def sub(x: f64)(y: f64): f64 = intrinsic[sub_f64](x)(y)
+}
+
+impl Mul[f64] {
+  def mul(x: f64)(y: f64): f64 = intrinsic[mul_f64](x)(y)
+}
+
+impl Div[f64] {
+  def div(x: f64)(y: f64): f64 = intrinsic[div_f64](x)(y)
+}
+
+impl BitAnd[f64] {
+  def bitAnd(x: f64)(y: f64): f64 = intrinsic[and_f64](x)(y)
+}
+
+impl BitOr[f64] {
+  def bitOr(x: f64)(y: f64): f64 = intrinsic[or_f64](x)(y)
+}
+
+impl BitXor[f64] {
+  def bitXor(x: f64)(y: f64): f64 = intrinsic[xor_f64](x)(y)
+}
+
+impl Neg[f64] {
+  def neg(x: f64): f64 = intrinsic[neg_f64](x)
+}
+
+impl Add[i8] {
+  def add(x: i8)(y: i8): i8 = intrinsic[add_i8](x)(y)
+}
+
+impl Sub[i8] {
+  def sub(x: i8)(y: i8): i8 = intrinsic[sub_i8](x)(y)
+}
+
+impl Mul[i8] {
+  def mul(x: i8)(y: i8): i8 = intrinsic[mul_i8](x)(y)
+}
+
+impl Div[i8] {
+  def div(x: i8)(y: i8): i8 = intrinsic[div_i8](x)(y)
+}
+
+impl Mod[i8] {
+  def mod(x: i8)(y: i8): i8 = x - (x / y) * y
+}
+
+impl BitAnd[i8] {
+  def bitAnd(x: i8)(y: i8): i8 = intrinsic[and_i8](x)(y)
+}
+
+impl BitOr[i8] {
+  def bitOr(x: i8)(y: i8): i8 = intrinsic[or_i8](x)(y)
+}
+
+impl BitXor[i8] {
+  def bitXor(x: i8)(y: i8): i8 = intrinsic[xor_i8](x)(y)
+}
+
+impl Neg[i8] {
+  def neg(x: i8): i8 = intrinsic[neg_i8](x)
+}
+
+impl Add[i16] {
+  def add(x: i16)(y: i16): i16 = intrinsic[add_i16](x)(y)
+}
+
+impl Sub[i16] {
+  def sub(x: i16)(y: i16): i16 = intrinsic[sub_i16](x)(y)
+}
+
+impl Mul[i16] {
+  def mul(x: i16)(y: i16): i16 = intrinsic[mul_i16](x)(y)
+}
+
+impl Div[i16] {
+  def div(x: i16)(y: i16): i16 = intrinsic[div_i16](x)(y)
+}
+
+impl Mod[i16] {
+  def mod(x: i16)(y: i16): i16 = x - (x / y) * y
+}
+
+impl BitAnd[i16] {
+  def bitAnd(x: i16)(y: i16): i16 = intrinsic[and_i16](x)(y)
+}
+
+impl BitOr[i16] {
+  def bitOr(x: i16)(y: i16): i16 = intrinsic[or_i16](x)(y)
+}
+
+impl BitXor[i16] {
+  def bitXor(x: i16)(y: i16): i16 = intrinsic[xor_i16](x)(y)
+}
+
+impl Neg[i16] {
+  def neg(x: i16): i16 = intrinsic[neg_i16](x)
+}
+
+impl Add[i32] {
+  def add(x: i32)(y: i32): i32 = intrinsic[add_i32](x)(y)
+}
+
+impl Sub[i32] {
+  def sub(x: i32)(y: i32): i32 = intrinsic[sub_i32](x)(y)
+}
+
+impl Mul[i32] {
+  def mul(x: i32)(y: i32): i32 = intrinsic[mul_i32](x)(y)
+}
+
+impl Div[i32] {
+  def div(x: i32)(y: i32): i32 = intrinsic[div_i32](x)(y)
+}
+
+impl Mod[i32] {
+  def mod(x: i32)(y: i32): i32 = x - (x / y) * y
+}
+
+impl BitAnd[i32] {
+  def bitAnd(x: i32)(y: i32): i32 = intrinsic[and_i32](x)(y)
+}
+
+impl BitOr[i32] {
+  def bitOr(x: i32)(y: i32): i32 = intrinsic[or_i32](x)(y)
+}
+
+impl BitXor[i32] {
+  def bitXor(x: i32)(y: i32): i32 = intrinsic[xor_i32](x)(y)
+}
+
+impl Neg[i32] {
+  def neg(x: i32): i32 = intrinsic[neg_i32](x)
+}
+
+impl Add[i64] {
+  def add(x: i64)(y: i64): i64 = intrinsic[add_i64](x)(y)
+}
+
+impl Sub[i64] {
+  def sub(x: i64)(y: i64): i64 = intrinsic[sub_i64](x)(y)
+}
+
+impl Mul[i64] {
+  def mul(x: i64)(y: i64): i64 = intrinsic[mul_i64](x)(y)
+}
+
+impl Div[i64] {
+  def div(x: i64)(y: i64): i64 = intrinsic[div_i64](x)(y)
+}
+
+impl Mod[i64] {
+  def mod(x: i64)(y: i64): i64 = x - (x / y) * y
+}
+
+impl BitAnd[i64] {
+  def bitAnd(x: i64)(y: i64): i64 = intrinsic[and_i64](x)(y)
+}
+
+impl BitOr[i64] {
+  def bitOr(x: i64)(y: i64): i64 = intrinsic[or_i64](x)(y)
+}
+
+impl BitXor[i64] {
+  def bitXor(x: i64)(y: i64): i64 = intrinsic[xor_i64](x)(y)
+}
+
+impl Neg[i64] {
+  def neg(x: i64): i64 = intrinsic[neg_i64](x)
+}
+
+impl Add[isize] {
+  def add(x: isize)(y: isize): isize = intrinsic[add_isize](x)(y)
+}
+
+impl Sub[isize] {
+  def sub(x: isize)(y: isize): isize = intrinsic[sub_isize](x)(y)
+}
+
+impl Mul[isize] {
+  def mul(x: isize)(y: isize): isize = intrinsic[mul_isize](x)(y)
+}
+
+impl Div[isize] {
+  def div(x: isize)(y: isize): isize = intrinsic[div_isize](x)(y)
+}
+
+impl Mod[isize] {
+  def mod(x: isize)(y: isize): isize = x - (x / y) * y
+}
+
+impl BitAnd[isize] {
+  def bitAnd(x: isize)(y: isize): isize = intrinsic[and_isize](x)(y)
+}
+
+impl BitOr[isize] {
+  def bitOr(x: isize)(y: isize): isize = intrinsic[or_isize](x)(y)
+}
+
+impl BitXor[isize] {
+  def bitXor(x: isize)(y: isize): isize = intrinsic[xor_isize](x)(y)
+}
+
+impl Neg[isize] {
+  def neg(x: isize): isize = intrinsic[neg_isize](x)
+}
+
+impl Add[u8] {
+  def add(x: u8)(y: u8): u8 = intrinsic[add_u8](x)(y)
+}
+
+impl Sub[u8] {
+  def sub(x: u8)(y: u8): u8 = intrinsic[sub_u8](x)(y)
+}
+
+impl Mul[u8] {
+  def mul(x: u8)(y: u8): u8 = intrinsic[mul_u8](x)(y)
+}
+
+impl Div[u8] {
+  def div(x: u8)(y: u8): u8 = intrinsic[div_u8](x)(y)
+}
+
+impl Mod[u8] {
+  def mod(x: u8)(y: u8): u8 = x - (x / y) * y
+}
+
+impl BitAnd[u8] {
+  def bitAnd(x: u8)(y: u8): u8 = intrinsic[and_u8](x)(y)
+}
+
+impl BitOr[u8] {
+  def bitOr(x: u8)(y: u8): u8 = intrinsic[or_u8](x)(y)
+}
+
+impl BitXor[u8] {
+  def bitXor(x: u8)(y: u8): u8 = intrinsic[xor_u8](x)(y)
+}
+
+impl Neg[u8] {
+  def neg(x: u8): u8 = intrinsic[neg_u8](x)
+}
+
+impl Add[u16] {
+  def add(x: u16)(y: u16): u16 = intrinsic[add_u16](x)(y)
+}
+
+impl Sub[u16] {
+  def sub(x: u16)(y: u16): u16 = intrinsic[sub_u16](x)(y)
+}
+
+impl Mul[u16] {
+  def mul(x: u16)(y: u16): u16 = intrinsic[mul_u16](x)(y)
+}
+
+impl Div[u16] {
+  def div(x: u16)(y: u16): u16 = intrinsic[div_u16](x)(y)
+}
+
+impl Mod[u16] {
+  def mod(x: u16)(y: u16): u16 = x - (x / y) * y
+}
+
+impl BitAnd[u16] {
+  def bitAnd(x: u16)(y: u16): u16 = intrinsic[and_u16](x)(y)
+}
+
+impl BitOr[u16] {
+  def bitOr(x: u16)(y: u16): u16 = intrinsic[or_u16](x)(y)
+}
+
+impl BitXor[u16] {
+  def bitXor(x: u16)(y: u16): u16 = intrinsic[xor_u16](x)(y)
+}
+
+impl Neg[u16] {
+  def neg(x: u16): u16 = intrinsic[neg_u16](x)
+}
+
+impl Add[u32] {
+  def add(x: u32)(y: u32): u32 = intrinsic[add_u32](x)(y)
+}
+
+impl Sub[u32] {
+  def sub(x: u32)(y: u32): u32 = intrinsic[sub_u32](x)(y)
+}
+
+impl Mul[u32] {
+  def mul(x: u32)(y: u32): u32 = intrinsic[mul_u32](x)(y)
+}
+
+impl Div[u32] {
+  def div(x: u32)(y: u32): u32 = intrinsic[div_u32](x)(y)
+}
+
+impl Mod[u32] {
+  def mod(x: u32)(y: u32): u32 = x - (x / y) * y
+}
+
+impl BitAnd[u32] {
+  def bitAnd(x: u32)(y: u32): u32 = intrinsic[and_u32](x)(y)
+}
+
+impl BitOr[u32] {
+  def bitOr(x: u32)(y: u32): u32 = intrinsic[or_u32](x)(y)
+}
+
+impl BitXor[u32] {
+  def bitXor(x: u32)(y: u32): u32 = intrinsic[xor_u32](x)(y)
+}
+
+impl Neg[u32] {
+  def neg(x: u32): u32 = intrinsic[neg_u32](x)
+}
+
+impl Add[u64] {
+  def add(x: u64)(y: u64): u64 = intrinsic[add_u64](x)(y)
+}
+
+impl Sub[u64] {
+  def sub(x: u64)(y: u64): u64 = intrinsic[sub_u64](x)(y)
+}
+
+impl Mul[u64] {
+  def mul(x: u64)(y: u64): u64 = intrinsic[mul_u64](x)(y)
+}
+
+impl Div[u64] {
+  def div(x: u64)(y: u64): u64 = intrinsic[div_u64](x)(y)
+}
+
+impl Mod[u64] {
+  def mod(x: u64)(y: u64): u64 = x - (x / y) * y
+}
+
+impl BitAnd[u64] {
+  def bitAnd(x: u64)(y: u64): u64 = intrinsic[and_u64](x)(y)
+}
+
+impl BitOr[u64] {
+  def bitOr(x: u64)(y: u64): u64 = intrinsic[or_u64](x)(y)
+}
+
+impl BitXor[u64] {
+  def bitXor(x: u64)(y: u64): u64 = intrinsic[xor_u64](x)(y)
+}
+
+impl Neg[u64] {
+  def neg(x: u64): u64 = intrinsic[neg_u64](x)
+}
+
+impl Add[usize] {
+  def add(x: usize)(y: usize): usize = intrinsic[add_usize](x)(y)
+}
+
+impl Sub[usize] {
+  def sub(x: usize)(y: usize): usize = intrinsic[sub_usize](x)(y)
+}
+
+impl Mul[usize] {
+  def mul(x: usize)(y: usize): usize = intrinsic[mul_usize](x)(y)
+}
+
+impl Div[usize] {
+  def div(x: usize)(y: usize): usize = intrinsic[div_usize](x)(y)
+}
+
+impl Mod[usize] {
+  def mod(x: usize)(y: usize): usize = x - (x / y) * y
+}
+
+impl BitAnd[usize] {
+  def bitAnd(x: usize)(y: usize): usize = intrinsic[and_usize](x)(y)
+}
+
+impl BitOr[usize] {
+  def bitOr(x: usize)(y: usize): usize = intrinsic[or_usize](x)(y)
+}
+
+impl BitXor[usize] {
+  def bitXor(x: usize)(y: usize): usize = intrinsic[xor_usize](x)(y)
+}
+
+impl Neg[usize] {
+  def neg(x: usize): usize = intrinsic[neg_usize](x)
+}
+
+impl BitAnd[bool] {
+  def bitAnd(x: bool)(y: bool): bool = intrinsic[and_bool](x)(y)
+}
+
+impl BitOr[bool] {
+  def bitOr(x: bool)(y: bool): bool = intrinsic[or_bool](x)(y)
+}
+
+impl BitXor[bool] {
+  def bitXor(x: bool)(y: bool): bool = intrinsic[xor_bool](x)(y)
+}
+
+impl Not[bool] {
+  def not(x: bool): bool = intrinsic[not_bool](x)
+}

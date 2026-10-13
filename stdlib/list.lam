@@ -12,7 +12,7 @@ rec let appendList[a](xs: List[a])(ys: List[a]): List[a] = match xs {
 
 rec let length[a](xs: List[a]): usize = match xs {
   Nil => 0usize
-  Cons(_)(rest) => __add_usize(length[a](rest))(1usize)
+  Cons(_)(rest) => length[a](rest) + 1usize
 }
 
 let reverse[a](xs: List[a]): List[a] =

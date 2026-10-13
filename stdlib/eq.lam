@@ -1,6 +1,9 @@
-import "std/operators"
+// 等しさ。`==` と `!=` は、この trait のメソッドを呼ぶ。
 
 trait Eq[a] {
   def eq(x: a)(y: a): bool
-  def neq(x: a)(y: a): bool = !eq(x)(y)
+  def neq(x: a)(y: a): bool = if eq(x)(y) then false else true
 }
+
+operator == = eq
+operator != = neq

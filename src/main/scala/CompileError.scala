@@ -158,10 +158,8 @@ enum CompileError {
   case ForAllBodyKindNotStar(kind: Kind, body: TypeRec[Type])
 
   // ---- 演算子・組み込み ----
-  case OperatorUnresolvable(op: BinOps | UnaryOps, operandType: TypeRec[Type])
-  case OperatorUndefined(op: BinOps | UnaryOps, operandType: TypeRec[Type], function: Variable)
-  case OperatorNotAFunction(function: Variable, fnType: TypeRec[Type])
-  case OperatorNotBinary(function: Variable, fnType: TypeRec[Type])
+  case OperatorNotDeclared(op: BinOps | UnaryOps)
+  case OperatorTargetInvalid(op: BinOps | UnaryOps, function: Variable, fnType: TypeRec[Type])
   case IntrinsicArityMismatch(op: BinOps | UnaryOps, actual: Int)
   case IntrinsicOperandInvalid(op: BinOps | UnaryOps, requirement: OperandRequirement)
   case IntrinsicUnsupported(op: BinOps)
@@ -349,11 +347,9 @@ enum CompileError {
     case ArrowKindNotStar(side, kind, operand) => s"Arrow ${side.shown} must have kind *, got ${kind.show}: ${operand.show}"
     case ForAllBodyKindNotStar(kind, body) => s"∀ body must have kind *, got ${kind.show}: ${body.show}"
 
-    case OperatorUnresolvable(op, operandType) => s"Cannot resolve operator $op for type ${operandType.show}"
-    case OperatorUndefined(op, operandType, function) =>
-      s"Operator $op is not defined for type ${operandType.show}; expected function ${function.name}"
-    case OperatorNotAFunction(function, fnType) => s"Operator function ${function.name} must be a function: ${fnType.show}"
-    case OperatorNotBinary(function, fnType) => s"Operator function ${function.name} must take two arguments: ${fnType.show}"
+    case OperatorNotDeclared(op) => s"Operator ${operatorShown(op)} is not declared"
+    case OperatorTargetInvalid(op, function, fnType) =>
+      s"Operator ${operatorShown(op)} cannot be ${function.name}: its type ${fnType.show} is not a polymorphic function over its first argument"
     case IntrinsicArityMismatch(op, actual) => op match {
       case _: BinOps => s"Binary intrinsic $op expects 2 arguments, got $actual"
       case _: UnaryOps => s"Unary intrinsic $op expects 1 argument, got $actual"
@@ -441,6 +437,11 @@ enum CompileError {
 
     case MainMissing => "Top-level main is not defined"
     case MainTypeInvalid(actual) => s"Top-level main must have type unit → i32, actual ${actual.show}"
+  }
+
+  private def operatorShown(op: BinOps | UnaryOps): String = op match {
+    case binary: BinOps => binary.toString
+    case unary: UnaryOps => s"prefix $unary"
   }
 
   private def siteShown(site: Option[DeclRef]): String = site.fold("")(s => s"${s.shown}: ")

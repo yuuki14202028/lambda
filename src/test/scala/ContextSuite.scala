@@ -12,10 +12,10 @@ class ContextSuite extends munit.FunSuite {
     ParserAST.programParser.parseAll(src).left.map(e => s"Parse error: $e").flatMap(p => TAnalyser.validate(p).left.map(_.render))
 
   private def desugarContext(src: String): Either[String, TypeRec[AST.Program.type]] =
-    validate(src).map(PatternDesugar.desugar).map(ContextDesugar.desugar)
+    validate(src).map(ModuleDesugar.desugar).map(ContextDesugar.desugar).map(PatternDesugar.desugar)
 
   private def desugar(src: String): Either[String, TypeRec[AST.Program.type]] =
-    desugarContext(src).map(TraitEncoder.encode)
+    desugarContext(src).map(OperatorDesugar.desugar).map(TraitEncoder.encode)
 
   private def church(src: String): Either[String, TypeRec[AST.Program.type]] =
     desugar(src).map(ChurchEncoder.encode)
@@ -78,9 +78,9 @@ class ContextSuite extends munit.FunSuite {
   // ---- 型検査+脱糖 ----
 
   private val monadMaybe =
-    """let __add_i32(x: i32)(y: i32): i32 = intrinsic[add_i32](x)(y)
-      |let __div_i32(x: i32)(y: i32): i32 = intrinsic[div_i32](x)(y)
-      |let __eq_i32(x: i32)(y: i32): bool = intrinsic[eq_i32](x)(y)
+    """trait Add[a] { def add(x: a)(y: a): a }; operator + = add; impl Add[i32] { def add(x: i32)(y: i32): i32 = intrinsic[add_i32](x)(y) }
+      |trait Div[a] { def div(x: a)(y: a): a }; operator / = div; impl Div[i32] { def div(x: i32)(y: i32): i32 = intrinsic[div_i32](x)(y) }
+      |trait Eq[a] { def eq(x: a)(y: a): bool }; operator == = eq; impl Eq[i32] { def eq(x: i32)(y: i32): bool = intrinsic[eq_i32](x)(y) }
       |
       |data Maybe[a] = { Nothing, Just(a) }
       |

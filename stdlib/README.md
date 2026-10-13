@@ -52,10 +52,11 @@
 
 ### 演算子
 
-- **operators.lam** - すべての数値型、`bool`、`char` に対する演算子
-  - 算術演算: `add`, `sub`, `mul`, `div`, `mod`, `neg`
-  - 比較演算: `eq`, `neq`, `lt`, `leq`, `gt`, `geq`
-  - ビット演算: `and`, `or`, `xor`
+- **operators.lam** - 演算子ごとの trait と `operator` 宣言、すべての数値型・`bool`・`char` のインスタンス
+  - 算術演算: `Add`（`+`）, `Sub`（`-`）, `Mul`（`*`）, `Div`（`/`）, `Mod`（`%`）, `Neg`（前置 `-`）
+  - 比較演算: `Eq`（`==` `!=`）, `Ord`（`<` `<=` `>` `>=`）
+  - 論理・ビット演算: `Not`（前置 `!`）, `BitAnd`（`&`）, `BitOr`（`|`）, `BitXor`（`^`）
+  - 自分の型で演算子を使うには、対応する trait を実装する（`impl Add[Money] { … }`）
   - 論理演算: `and`, `or`, `not`, `short_and`, `short_or`
 
 ### Prelude
@@ -84,10 +85,10 @@ derive Foldable[Tree]
 import "std/prelude"
 
 let increment(x: Option[i32]): Option[i32] =
-  map[Option][i32][i32](λn: i32. __add_i32(n)(1))(x)
+  map[Option][i32][i32](λn: i32. n + 1)(x)
 
 let divSafe(x: i32)(y: i32): Option[i32] =
-  if __eq_i32(y)(0) then None[i32] else Some[i32](__div_i32(x)(y))
+  if y == 0 then None[i32] else Some[i32](x / y)
 ```
 
 ### List を使用する
@@ -98,7 +99,7 @@ import "std/prelude"
 let nums(): List[i32] = Cons[i32](1)(Cons[i32](2)(Cons[i32](3)(Nil[i32])))
 
 let total(): i32 =
-  foldLeft[List][i32][i32](λacc: i32. λx: i32. __add_i32(acc)(x))(0)(nums())
+  foldLeft[List][i32][i32](λacc: i32. λx: i32. acc + x)(0)(nums())
 ```
 
 ### Context 記法（do 記法）
@@ -109,6 +110,6 @@ import "std/prelude"
 let example(): Option[i32] = context[Option] {
   x: i32 = Some[i32](10);
   y: i32 = Some[i32](20);
-  __add_i32(x)(y)
+  x + y
 }
 ```

@@ -1,5 +1,5 @@
 // 互いに無関係な宣言のエラーは、まとめて報告される。
-let __add_i32(a: i32)(b: i32): i32 = intrinsic[add_i32](a)(b)
+trait Add[a] { def add(x: a)(y: a): a }; operator + = add; impl Add[i32] { def add(a: i32)(b: i32): i32 = intrinsic[add_i32](a)(b) }
 
 let first: i32 = true
 

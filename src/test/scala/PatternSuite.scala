@@ -22,7 +22,7 @@ class PatternSuite extends munit.FunSuite {
   }
 
   private val prelude =
-    """let __eq_i32(a: i32)(b: i32): bool = intrinsic[eq_i32](a)(b)
+    """trait Eq[a] { def eq(x: a)(y: a): bool }; operator == = eq; impl Eq[i32] { def eq(a: i32)(b: i32): bool = intrinsic[eq_i32](a)(b) }
       |data Option[a] = { None, Some(a) }
       |rec data List[a] = { Nil, Cons(a)(List[a]) }
       |data Pair[a][b] = { MkPair(a)(b) }
@@ -121,27 +121,28 @@ class PatternSuite extends munit.FunSuite {
     assertLeftContains(validate(program("let f(n: i32): i32 = match n { Some(x) => x  _ => 0 }")), "Not a data type")
   }
 
-  test("整数のリテラルには == の定義（std/operators）が要る") {
+  test("リテラルのパターンは == に宣言された関数で比べる（宣言がなければエラー）") {
     val src =
       """let f(n: i32): i32 = match n { 0 => 1  _ => 2 }
         |let main(): i32 = 0
         |""".stripMargin
-    assertLeftContains(validate(src), "Operator == is not defined")
+    assertLeftContains(validate(src), "Operator == is not declared")
   }
 
   // ---- 負の数・文字列・選択肢・条件 ----
 
-  private val less = "let __lt_i32(a: i32)(b: i32): bool = intrinsic[lt_i32](a)(b)\n"
+  private val less = "trait Lt[a] { def lt(x: a)(y: a): bool }; operator < = lt; impl Lt[i32] { def lt(a: i32)(b: i32): bool = intrinsic[lt_i32](a)(b) }\n"
 
   test("負の数のリテラル（直前の本体と引き算にならない）") {
     assertRight(encode(program("let f(n: i32): i32 = match n {\n  0 => n\n  -1 => 1\n  _ => 2\n}")))
   }
 
-  test("文字列のリテラルは std/operators なしで使える") {
-    val src = "let f(s: foreign.C.String): i32 = match s { \"a\" => 1  \"b\" => 2  _ => 0 }\n" + main
-    val shown = encode(src).fold(fail(_), _.show)
-    assert(shown.contains("string_equal"), clue(shown))
-    assertLeftContains(validate("let f(s: foreign.C.String): i32 = match s { \"a\" => 1 }\n" + main), "no case matches _")
+  test("文字列のリテラルも == で比べる（Eq[String] のインスタンスが要る）") {
+    val eqString = "impl Eq[foreign.C.String] { def eq(x: foreign.C.String)(y: foreign.C.String): bool = true }\n"
+    val src = "let f(s: foreign.C.String): i32 = match s { \"a\" => 1  \"b\" => 2  _ => 0 }\n"
+    assertRight(encode(program(eqString + src)))
+    assertLeftContains(validate(program(src)), "No instance for Eq[foreign.C.String]")
+    assertLeftContains(validate(program(eqString + "let f(s: foreign.C.String): i32 = match s { \"a\" => 1 }")), "no case matches _")
   }
 
   test("p | q: 複数のパターンを 1 つの本体にまとめる") {

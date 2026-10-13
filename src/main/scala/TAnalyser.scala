@@ -167,62 +167,56 @@ object TAnalyser {
   private def expectEquatable(actual: TypeRec[Type]): Check[Unit] =
     guard(isEquatableType(actual), CompileError.ExpectedEquatable(actual))
 
-  private def isShortCircuit(op: BinOps): Boolean =
-    op == BinOps.ShortAnd || op == BinOps.ShortOr
+  // ---- 演算子 ----
+  // a ⊕ b は、⊕ に宣言された多相関数 f を a の型で具体化して呼ぶ: f[T](a)(b)。
+  // 型検査は f[T]（制約を解決したもの）を記録し、関数呼び出しへの書き換えは OperatorDesugar が行う
 
-  private def thunkParam(body: TypeRec[Expr]): Variable = {
-    val used = freeVars(body).map(_.name)
-    LazyList.from(0)
-      .map(i => Variable(s"__short_arg_$i"))
-      .find(v => !used.contains(v.name))
-      .get
+  // 演算子に宣言された関数を、型 operandType で具体化する
+  private def operatorFunction(op: BinOps | UnaryOps, operandType: TypeRec[Type]): Check[TypeRec[Expr]] = for {
+    env <- ask
+    function <- lift(env.scope.operators.get(operatorKey(op)).toRight(CompileError.OperatorNotDeclared(op)))
+    fnType = env.values.getOrElse(function, invariant(s"operator ${operatorKey(op)} is declared for an undefined function ${function.name}"))
+    applied <- lift(ContextDesugar.applyTypeArg(varrType(function, fnType), operandType, Kind.Star))
+    resolved <- discharge(applied)
+  } yield resolved
+
+  private def checkBinaryOperator(op: BinOps, left: TypeRec[Expr], right: TypeRec[Expr]): Check[TypeRec[Expr]] = op match {
+    // && と || は bool 専用の組み込み（右を評価しないことがあるので、関数ではない）
+    case BinOps.ShortAnd | BinOps.ShortOr => for {
+      _ <- expectAt(boolTypeT, left)
+      _ <- expectAt(boolTypeT, right, left -> Related.LeftOperand(boolTypeT))
+    } yield binopT(op, boolTypeT, left, right, None)
+    case _ => for {
+      resolved <- operatorFunction(op, typeOf(left))
+      // 宣言のときに形を確かめているので、f[T] は T → β → γ
+      (_, afterLeft) = destructArrow(typeOf(resolved)).getOrElse(invariant(s"operator $op: ${typeOf(resolved).show} is not a function"))
+      (rightParam, resultType) = destructArrow(afterLeft).getOrElse(invariant(s"operator $op: ${typeOf(resolved).show} does not take two arguments"))
+      _ <- expectAt(rightParam, right, left -> Related.LeftOperand(typeOf(left)))
+    } yield binopT(op, resultType, left, right, Some(resolved))
   }
 
-  private def resolveBinaryOperator(op: BinOps, left: TypeRec[Expr], right: TypeRec[Expr]): Check[TypeRec[Expr]] = for {
-    env <- ask
-    typeName <- lift(operatorTypeName(typeOf(left)).toRight(CompileError.OperatorUnresolvable(op, typeOf(left))))
-    operator = StandardLibrary.binaryOperatorName(op, typeName)
-    found <- lift(env.lookupValue(operator).toRight(CompileError.OperatorUndefined(op, typeOf(left), operator)))
-    (fn, fnType) = found
-    rightArg = if (isShortCircuit(op)) {
-      val thunkType = arrowT(unitTypeT, typeOf(right))
-      absT(thunkParam(right), thunkType, unitTypeT, right)
-    } else right
-    expectedRightType = if (isShortCircuit(op)) arrowT(unitTypeT, typeOf(right)) else typeOf(right)
-    result <- destructArrow(fnType) match {
-      case Some((leftParam, afterLeft)) if Equivalence.alpha(leftParam, typeOf(left)) =>
-        destructArrow(afterLeft) match {
-          case Some((rightParam, resultType)) if Equivalence.alpha(rightParam, expectedRightType) =>
-            val fnRef = varrType(fn, fnType)
-            val appliedLeft = appT(afterLeft, fnRef, left)
-            okT(appT(resultType, appliedLeft, rightArg))
-          case Some((rightParam, _)) =>
-            failAt(right, CompileError.TypeMismatch(rightParam, expectedRightType), left -> Related.LeftOperand(typeOf(left)))
-          case None =>
-            fail(CompileError.OperatorNotBinary(fn, fnType))
-        }
-      case Some((leftParam, _)) =>
-        failAt(left, CompileError.TypeMismatch(leftParam, typeOf(left)))
-      case None =>
-        fail(CompileError.OperatorNotAFunction(fn, fnType))
-    }
-  } yield result
+  private def checkUnaryOperator(op: UnaryOps, body: TypeRec[Expr]): Check[TypeRec[Expr]] = for {
+    resolved <- operatorFunction(op, typeOf(body))
+    (_, resultType) = destructArrow(typeOf(resolved)).getOrElse(invariant(s"operator $op: ${typeOf(resolved).show} is not a function"))
+  } yield unopT(op, resultType, body, Some(resolved))
 
-  private def resolveUnaryOperator(op: UnaryOps, body: TypeRec[Expr]): Check[TypeRec[Expr]] = for {
-    env <- ask
-    typeName <- lift(operatorTypeName(typeOf(body)).toRight(CompileError.OperatorUnresolvable(op, typeOf(body))))
-    operator = StandardLibrary.unaryOperatorName(op, typeName)
-    found <- lift(env.lookupValue(operator).toRight(CompileError.OperatorUndefined(op, typeOf(body), operator)))
-    (fn, fnType) = found
-    result <- destructArrow(fnType) match {
-      case Some((paramType, resultType)) if Equivalence.alpha(paramType, typeOf(body)) =>
-        okT(appT(resultType, varrType(fn, fnType), body))
-      case Some((paramType, _)) =>
-        fail(CompileError.TypeMismatch(paramType, typeOf(body)))
-      case None =>
-        fail(CompileError.OperatorNotAFunction(fn, fnType))
-    }
-  } yield result
+  // operator の宣言に書ける関数の型: ∀(a: *). [制約…] → a → …（二項なら、さらに引数を 1 つ取る）
+  private def operatorShape(op: BinOps | UnaryOps, fnType: TypeRec[Type]): Boolean = destructForAllK(fnType) match {
+    case Some((variable, Kind.Star, body)) =>
+      @annotation.tailrec
+      def afterConstraints(t: TypeRec[Type]): TypeRec[Type] = destructInstArrow(t) match {
+        case Some((_, to)) => afterConstraints(to)
+        case None => t
+      }
+      destructArrow(afterConstraints(body)) match {
+        case Some((first, rest)) if Equivalence.alpha(first, typeVarT(variable)) => op match {
+          case _: BinOps => destructArrow(rest).nonEmpty
+          case _: UnaryOps => true
+        }
+        case _ => false
+      }
+    case _ => false
+  }
 
   private def checkIntrinsic(op: IntrinsicOps, args: Seq[TypeRec[Expr]]): Check[TypeRec[Expr]] = op match {
     case IntrinsicOps.BinOp(binOp, operandTypeName) =>
@@ -661,25 +655,15 @@ object TAnalyser {
         case LiteralValue.Bool(_) => (boolTypeT, "bool")
         case LiteralValue.Str(_) => (stringTypeT, BuiltinTypes.CString)
       }
-      // 文字列はランタイムの C 関数 string_equal で比べる（文字列埋め込みの concat と同じ扱い）
-      val stringEquals = arrowT(stringTypeT, arrowT(stringTypeT, boolTypeT))
       for {
-        env <- ask
         _ <- guard(typeName == BuiltinTypes.CString || BuiltinTypes.equatableTypes.contains(typeName), CompileError.NumericLiteralUnknown(typeName))
         _ <- expect(expected, literalType)
-        // bool は if で分岐するので == は要らない
-        equals <- if (typeName == "bool") Check.pure(Option.empty[TypeRec[Expr]])
-        else if (typeName == BuiltinTypes.CString) Check.pure(Option(foreignT(Variable("string_equal"), stringEquals, stringEquals)))
-        else {
-          val operator = StandardLibrary.binaryOperatorName(BinOps.Eq, typeName)
-          for {
-            found <- lift(env.lookupValue(operator).toRight(CompileError.OperatorUndefined(BinOps.Eq, literalType, operator)))
-            (fn, fnType) = found
-            _ <- guard(
-              Equivalence.alpha(fnType, arrowT(literalType, arrowT(literalType, boolTypeT))),
-              CompileError.OperatorNotBinary(fn, fnType)
-            )
-          } yield Option(varrType(fn, fnType))
+        // リテラルは、== に宣言された関数で比べる。bool は if で分岐するので要らない
+        equals <- if (typeName == "bool") Check.pure(Option.empty[TypeRec[Expr]]) else operatorFunction(BinOps.Eq, literalType).flatMap { resolved =>
+          guard(
+            Equivalence.alpha(typeOf(resolved), arrowT(literalType, arrowT(literalType, boolTypeT))),
+            CompileError.TypeMismatch(arrowT(literalType, arrowT(literalType, boolTypeT)), typeOf(resolved))
+          ).as(Option(resolved))
         }
       } yield (Pattern.Literal[TypeRec](value, equals), Seq.empty)
 
@@ -748,6 +732,7 @@ object TAnalyser {
     case AST.TopImpl(_, _, _, _, _, _) => declarationNode("TopImpl")
     case AST.TopDerive(_, _) => declarationNode("TopDerive")
     case AST.TopModule(_, _) => declarationNode("TopModule")
+    case AST.TopOperator(_, _) => declarationNode("TopOperator")
     case AST.TopOpen(_) => declarationNode("TopOpen")
     case AST.TopModified(_, _) => declarationNode("TopModified")
 
@@ -1042,21 +1027,21 @@ object TAnalyser {
       chain <- lift(ContextDesugar.desugarContext(ops, typedBindings, typedResult))
     } yield contextExprT(typeOf(chain), monadType, typedBindings, typedResult, ops)
 
-    case AST.BinOp(op, left, right) => for {
+    case AST.BinOp(op, left, right, _) => for {
       typedLeft <- left
       typedRight <- right
-      resolved <- resolveBinaryOperator(op, typedLeft, typedRight)
-    } yield resolved
+      checked <- checkBinaryOperator(op, typedLeft, typedRight)
+    } yield checked
 
     case AST.Intrinsic(op, args) => for {
       typedArgs <- args.traverse(identity)
       checked <- checkIntrinsic(op, typedArgs)
     } yield checked
 
-    case AST.UnaryOp(op, body) => for {
+    case AST.UnaryOp(op, body, _) => for {
       typedBody <- body
-      resolved <- resolveUnaryOperator(op, typedBody)
-    } yield resolved
+      checked <- checkUnaryOperator(op, typedBody)
+    } yield checked
 
     case AST.If(cond, thenBranch, elseBranch) => for {
       typedCond <- cond
@@ -1199,6 +1184,15 @@ object TAnalyser {
     case AST.TopModule(_, _) => declarationNode("TopModule")
     case AST.TopOpen(_) => declarationNode("TopOpen")
     case AST.TopModified(_, _) => declarationNode("TopModified")
+
+    // operator ⊕ = f: f は、最初の型引数に左の値の型を受け取る多相関数。他の宣言と同じく、宣言の後で見え、module のメンバーになる
+    case AST.TopOperator(op, written) => for {
+      env <- ask
+      found <- lift(env.lookupValue(written).toRight(CompileError.UndefinedVariable(written)))
+      (function, fnType) = found
+      _ <- guard(operatorShape(op, fnType), CompileError.OperatorTargetInvalid(op, function, fnType))
+      key = operatorKey(op)
+    } yield (topOperatorT(op, function), env.copy(scope = env.scope.withOperator(key, function), members = env.members.withOperator(key, function)))
   }
 
   // top-level の data。フィールドからは visible（自身、rec なら組の全員）を短い名前で参照できる
@@ -1475,7 +1469,7 @@ object TAnalyser {
       case _ => sealDecl(inner)
     }
     case AST.TopModified(Modifier.Private, inner) => sealDecl(inner)
-    case AST.TopImpl(_, _, _, _, _, _) | AST.TopDerive(_, _) | AST.TopOpen(_) | AST.TopImport(_) => ask
+    case AST.TopImpl(_, _, _, _, _, _) | AST.TopDerive(_, _) | AST.TopOpen(_) | AST.TopOperator(_, _) | AST.TopImport(_) => ask
   }
 
   private def checkModule(name: String, decls: Seq[IndexedRec[Decl]]): StateT[EitherS, Env, TypeRec[Decl]] = StateT { outer =>
@@ -1562,7 +1556,6 @@ object TAnalyser {
       case CompileError.UndefinedModule(path) => path.headOption.exists(failed)
       case CompileError.NotAConstructor(name) => failed(name.name)
       case CompileError.NoInstance(name, _) => env.failedTraits(name.name) || env.failedTraits(shortName(name.name))
-      case CompileError.OperatorUndefined(_, _, function) => failed(function.name)
       case CompileError.ContextMethodMissing(name) => failed(name.name)
       case CompileError.StrInterpShowMissing(_) => failed("show")
       case CompileError.InContext(inner) => causedByFailure(env, inner)
