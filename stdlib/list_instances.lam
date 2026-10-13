@@ -4,6 +4,10 @@ import "std/foldable"
 import "std/traversable"
 import "std/semigroup"
 import "std/monoid"
+import "std/operators"
+import "std/pair"
+import "std/eq"
+import "std/ord"
 
 derive Functor[List]
 derive Foldable[List]
@@ -15,4 +19,21 @@ impl[t] Semigroup[List[t]] {
 
 impl[t] Monoid[List[t]] {
   def empty: List[t] = Nil[t]
+}
+
+// 要素を先頭から順に比べる（辞書順）。短いほうが前
+rec impl[a] Eq[List[a]] with Eq[a] {
+  def eq(xs: List[a])(ys: List[a]): bool = match Pair[List[a]][List[a]](xs)(ys) {
+    Pair(Nil)(Nil) => true
+    Pair(Cons(x)(xt))(Cons(y)(yt)) => eq[a](x)(y) && eq[List[a]](xt)(yt)
+    _ => false
+  }
+}
+
+rec impl[a] Ord[List[a]] with Ord[a] {
+  def lt(xs: List[a])(ys: List[a]): bool = match Pair[List[a]][List[a]](xs)(ys) {
+    Pair(Nil)(Cons(_)(_)) => true
+    Pair(Cons(x)(xt))(Cons(y)(yt)) => lt[a](x)(y) || (eq[a](x)(y) && lt[List[a]](xt)(yt))
+    _ => false
+  }
 }

@@ -7,6 +7,8 @@ import "std/foldable"
 import "std/traversable"
 import "std/semigroup"
 import "std/monoid"
+import "std/eq"
+import "std/ord"
 
 derive Functor[Option]
 derive Foldable[Option]
@@ -39,4 +41,21 @@ impl[t] Semigroup[Option[t]] {
 
 impl[t] Monoid[Option[t]] {
   def empty: Option[t] = None[t]
+}
+
+// 中身が等しければ等しい。None は Some より前
+impl[a] Eq[Option[a]] with Eq[a] {
+  def eq(x: Option[a])(y: Option[a]): bool = match Pair[Option[a]][Option[a]](x)(y) {
+    Pair(Some(l))(Some(r)) => eq[a](l)(r)
+    Pair(None)(None) => true
+    _ => false
+  }
+}
+
+impl[a] Ord[Option[a]] with Ord[a] {
+  def lt(x: Option[a])(y: Option[a]): bool = match Pair[Option[a]][Option[a]](x)(y) {
+    Pair(Some(l))(Some(r)) => lt[a](l)(r)
+    Pair(None)(Some(_)) => true
+    _ => false
+  }
 }

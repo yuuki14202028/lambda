@@ -127,6 +127,20 @@ let testShow(): bool =
     show[List[Option[i32]]](Cons[Option[i32]](Some[i32](1))(Cons[Option[i32]](None[i32])(Nil[Option[i32]]))) == "[Some(1), None]" &&
     `n = {1}, xs = {Cons[i32](1)(Nil[i32])}, ok = {true}` == "n = 1, xs = [1], ok = true"
 
+let testContainerOrder(): bool =
+  let one: List[i32] = Cons[i32](1)(Nil[i32]) in
+  let oneTwo: List[i32] = Cons[i32](1)(Cons[i32](2)(Nil[i32])) in
+  let two: List[i32] = Cons[i32](2)(Nil[i32]) in
+  eq[Option[i32]](Some[i32](1))(Some[i32](1)) && neq[Option[i32]](Some[i32](1))(None[i32]) &&
+    lt[Option[i32]](None[i32])(Some[i32](0)) && lt[Option[i32]](Some[i32](1))(Some[i32](2)) && !lt[Option[i32]](Some[i32](1))(None[i32]) &&
+    eq[Either[String][i32]](Left[String][i32]("a"))(Left[String][i32]("a")) && neq[Either[String][i32]](Left[String][i32]("a"))(Right[String][i32](1)) &&
+    lt[Either[String][i32]](Left[String][i32]("z"))(Right[String][i32](0)) && gt[Either[String][i32]](Right[String][i32](2))(Right[String][i32](1)) &&
+    eq[Pair[i32][String]](Pair[i32][String](1)("a"))(Pair[i32][String](1)("a")) &&
+    lt[Pair[i32][String]](Pair[i32][String](1)("b"))(Pair[i32][String](2)("a")) && lt[Pair[i32][String]](Pair[i32][String](1)("a"))(Pair[i32][String](1)("b")) &&
+    eq[List[i32]](oneTwo)(oneTwo) && neq[List[i32]](one)(oneTwo) && eq[List[i32]](Nil[i32])(Nil[i32]) &&
+    lt[List[i32]](one)(oneTwo) && lt[List[i32]](oneTwo)(two) && geq[List[i32]](two)(one) && !lt[List[i32]](one)(one) &&
+    eq[List[Option[i32]]](Cons[Option[i32]](None[i32])(Nil[Option[i32]]))(Cons[Option[i32]](None[i32])(Nil[Option[i32]]))
+
 let main(): i32 =
   if testOption() then
     if testEither() then
@@ -140,7 +154,9 @@ let main(): i32 =
                     if testApply() then
                       if testChar() then
                         if testString() then
-                          if testShow() then 0 else 13
+                          if testShow() then
+                            if testContainerOrder() then 0 else 14
+                          else 13
                         else 12
                       else 11
                     else 10

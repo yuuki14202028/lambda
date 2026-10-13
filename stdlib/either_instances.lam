@@ -4,6 +4,8 @@ import "std/applicative"
 import "std/foldable"
 import "std/traversable"
 import "std/pair"
+import "std/eq"
+import "std/ord"
 
 derive Functor[Either]
 derive Foldable[Either]
@@ -18,4 +20,22 @@ impl[b] Applicative[Either[b]] {
       Pair(Right(_))(Left(err)) => Left[b][c](err)
       Pair(Right(g))(Right(x)) => Right[b][c](g(x))
     }
+}
+
+// Left は Right より前
+impl[e][a] Eq[Either[e][a]] with Eq[e], Eq[a] {
+  def eq(x: Either[e][a])(y: Either[e][a]): bool = match Pair[Either[e][a]][Either[e][a]](x)(y) {
+    Pair(Left(l))(Left(r)) => eq[e](l)(r)
+    Pair(Right(l))(Right(r)) => eq[a](l)(r)
+    _ => false
+  }
+}
+
+impl[e][a] Ord[Either[e][a]] with Ord[e], Ord[a] {
+  def lt(x: Either[e][a])(y: Either[e][a]): bool = match Pair[Either[e][a]][Either[e][a]](x)(y) {
+    Pair(Left(l))(Left(r)) => lt[e](l)(r)
+    Pair(Right(l))(Right(r)) => lt[a](l)(r)
+    Pair(Left(_))(Right(_)) => true
+    Pair(Right(_))(Left(_)) => false
+  }
 }

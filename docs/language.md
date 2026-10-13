@@ -522,7 +522,7 @@ let printNumber: i32 → i32 = foreign[i32 → i32] print_int
 | --- | --- |
 | `operators` | 組み込みの型の演算子 |
 | `option` `either` `pair` `list` `id` | `Option`（`Some` / `None`）、`Either`（`Left` / `Right`）、`Pair`、`List`（`Nil` / `Cons`）、`Id` と、リストの関数 |
-| `eq` `ord` | `Eq`（`eq` / `neq`）、`Ord`（`lt` / `leq` / `gt` / `geq`） |
+| `eq` `ord` | `Eq`（`eq` / `neq`）、`Ord`（`lt` / `leq` / `gt` / `geq`）。基本の型と、`Option` / `Either` / `Pair` / `List`（辞書順）のインスタンス |
 | `semigroup` `monoid` | `append`、`empty` |
 | `functor` `foldable` `traversable` `applicative` `monad` | `map`、`foldRight` / `foldLeft`、`traverse`、`pure` / `apply`、`flatMap` |
 | `char` | module `Char`: `isDigit`、`isLetter`、`isSpace`、`toUpper`、`code` など |
