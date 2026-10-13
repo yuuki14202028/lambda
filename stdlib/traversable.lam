@@ -1,0 +1,7 @@
+import "std/functor"
+import "std/foldable"
+import "std/applicative"
+
+trait Traversable[t: * → *] with Functor[t], Foldable[t] {
+  def traverse[g: * → *][a][b](f: a → g[b])(xs: t[a]): g[t[b]] with Applicative[g]
+}

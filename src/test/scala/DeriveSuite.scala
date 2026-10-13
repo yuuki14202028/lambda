@@ -204,4 +204,87 @@ class DeriveSuite extends munit.FunSuite {
       "derive Functor[Weird]\n" + mainDecl
     assertLeftContains(validate(src), "cannot derive over")
   }
+
+  // ---- Traversable ----
+
+  private val traversablePrelude =
+    """trait Functor[f: * → *] { def map[a][b](g: a → b): f[a] → f[b] }
+      |trait Applicative[f: * → *] with Functor[f] {
+      |  def pure[a](x: a): f[a]
+      |  def apply[a][b](g: f[a → b]): f[a] → f[b]
+      |}
+      |trait Traversable[t: * → *] {
+      |  def traverse[g: * → *][a][b](f: a → g[b])(xs: t[a]): g[t[b]] with Applicative[g]
+      |}
+      |""".stripMargin
+
+  test("derive Traversable: 再帰・パラメータ・定数のフィールド") {
+    val src = traversablePrelude +
+      "rec data List[a] = { Nil, Cons(a)(List[a]) }\ndata Tagged[a] = { Tag(i32)(a) }\n" +
+      "derive Traversable[List]\nderive Traversable[Tagged]\n" + mainDecl
+    val shown = shownOrFail(church(src))
+    assert(shown.contains("$inst_Traversable_List"), clue(shown))
+    assert(shown.contains("$inst_Traversable_Tagged"), clue(shown))
+  }
+
+  test("derive Traversable: 入れ子のコンテナは、そのコンテナの traverse に委譲する") {
+    val src = traversablePrelude +
+      "rec data List[a] = { Nil, Cons(a)(List[a]) }\nrec data Rose[a] = { Node(a)(List[Rose[a]]) }\n" +
+      "derive Traversable[List]\nderive Traversable[Rose]\n" + mainDecl
+    assertRight(church(src))
+  }
+
+  test("derive Traversable: 入れ子のコンテナにインスタンスがなければエラー") {
+    val src = traversablePrelude +
+      "rec data List[a] = { Nil, Cons(a)(List[a]) }\nrec data Rose[a] = { Node(a)(List[Rose[a]]) }\n" +
+      "derive Traversable[Rose]\n" + mainDecl
+    assertLeftContains(validate(src), "Traversable")
+  }
+
+  test("derive Traversable: 関数のフィールドは導出できない") {
+    val src = traversablePrelude + "data Reader[a] = { MkReader(i32 → a) }\nderive Traversable[Reader]\n" + mainDecl
+    assertLeftContains(validate(src), "cannot derive over")
+  }
+
+  test("derive Traversable: traverse のシグネチャが正準形と違えばエラー") {
+    val src =
+      """trait Functor[f: * → *] { def map[a][b](g: a → b): f[a] → f[b] }
+        |trait Applicative[f: * → *] with Functor[f] {
+        |  def pure[a](x: a): f[a]
+        |  def apply[a][b](g: f[a → b]): f[a] → f[b]
+        |}
+        |trait Traversable[t: * → *] {
+        |  def traverse[g: * → *][a][b](f: a → g[b])(xs: t[a]): g[t[a]] with Applicative[g]
+        |}
+        |data Box[a] = { MkBox(a) }
+        |derive Traversable[Box]
+        |""".stripMargin + mainDecl
+    assertLeftContains(validate(src), "traverse")
+  }
+
+  test("derive Traversable: Applicative が定義されていなければエラー") {
+    val src =
+      """trait Applicative2[f: * → *] { def pure2[a](x: a): f[a] }
+        |trait Traversable[t: * → *] {
+        |  def traverse[g: * → *][a][b](f: a → g[b])(xs: t[a]): g[t[b]] with Applicative2[g]
+        |}
+        |data Box[a] = { MkBox(a) }
+        |derive Traversable[Box]
+        |""".stripMargin + mainDecl
+    assert(validate(src).isLeft)
+  }
+
+  test("rec { derive }: 相互再帰のデータ型にも Traversable を導出できる") {
+    val src = traversablePrelude +
+      """rec {
+        |  data Tree[a] = { Node(a)(Forest[a]) }
+        |  data Forest[a] = { Empty, Trees(Tree[a])(Forest[a]) }
+        |}
+        |rec {
+        |  derive Traversable[Tree]
+        |  derive Traversable[Forest]
+        |}
+        |""".stripMargin + mainDecl
+    assertRight(church(src))
+  }
 }

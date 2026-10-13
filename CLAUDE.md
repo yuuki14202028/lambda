@@ -31,7 +31,7 @@ ParserAST (cats-parse) → ImportResolver → TAnalyser (型検査)
   → Generator (ARM64 アセンブリ生成)
 ```
 
-制約・スーパークラスは宣言末尾の `with C[a]` 節（let・trait メソッド・impl メソッドは返り値注釈の後）。`derive Functor[D]` / `derive Foldable[D]` は
+制約・スーパークラスは宣言末尾の `with C[a]` 節（let・trait メソッド・impl メソッドは返り値注釈の後）。`derive Functor[D]` / `derive Foldable[D]` / `derive Traversable[D]` は
 TAnalyser が検査して InstanceDef を Env に登録し、Deriver が手書き impl と同形の TopImpl を合成する（Deriver.scala）。
 
 ### 制約の表現（Lean 4 風）

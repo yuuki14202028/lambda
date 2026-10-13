@@ -4,11 +4,13 @@ import "std/applicative"
 import "std/pair"
 import "std/monad"
 import "std/foldable"
+import "std/traversable"
 import "std/semigroup"
 import "std/monoid"
 
 derive Functor[Option]
 derive Foldable[Option]
+derive Traversable[Option]
 
 impl Applicative[Option] {
   def pure[a](x: a): Option[a] = Some[a](x)

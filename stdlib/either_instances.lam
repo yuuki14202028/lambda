@@ -1,9 +1,13 @@
 import "std/either"
 import "std/functor"
 import "std/applicative"
+import "std/foldable"
+import "std/traversable"
 import "std/pair"
 
 derive Functor[Either]
+derive Foldable[Either]
+derive Traversable[Either]
 
 impl[b] Applicative[Either[b]] {
   def pure[a](x: a): Either[b][a] = Right[b][a](x)
