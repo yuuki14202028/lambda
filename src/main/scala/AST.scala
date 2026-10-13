@@ -42,6 +42,10 @@ enum AST[R[_], I] {
   case Fold(scrutinee: R[Expr], resultType: R[Type], cases: Seq[MatchCase[R]]) extends AST[R, Expr]
   case App(function: R[Expr], argument: R[Expr]) extends AST[R, Expr]
   case TyApp(function: R[Expr], argument: R[Type]) extends AST[R, Expr]
+  // パーサが読んだ . を含む名前 a.b.c[T]。module の修飾か、値へのドット記法かは、型検査がスコープで決める（型検査後には残らない）
+  case Path(name: Variable, typeArgs: Seq[R[Type]]) extends AST[R, Expr]
+  // x.f[T]: x の型の module にある関数 f の呼び出し。resolved は、型検査が決めた関数（型引数と制約を適用済み）
+  case Select(receiver: R[Expr], name: String, typeArgs: Seq[R[Type]], resolved: Option[R[Expr]]) extends AST[R, Expr]
   case InstApp(function: R[Expr], evidence: Evidence[R]) extends AST[R, Expr]
   // impl C[τ̄] { def m = e … }（式）: 辞書の値を作る。インスタンスとしては登録しない。省略したメソッドはデフォルトで埋まり、
   // スーパークラスの辞書はその位置で解決する（superEvidence は型検査が埋める）
@@ -440,6 +444,8 @@ def appT(t: TypeRec[Type], function: TypeRec[Expr], argument: TypeRec[Expr]): Ty
   HCofree(ExprAnn(t), AST.App(function, argument))
 def tyAppT(t: TypeRec[Type], function: TypeRec[Expr], argument: TypeRec[Type]): TypeRec[Expr] =
   HCofree(ExprAnn(t), AST.TyApp(function, argument))
+def selectT(t: TypeRec[Type], receiver: TypeRec[Expr], name: String, typeArgs: Seq[TypeRec[Type]], resolved: TypeRec[Expr]): TypeRec[Expr] =
+  HCofree(ExprAnn(t), AST.Select(receiver, name, typeArgs, Some(resolved)))
 def instAppT(t: TypeRec[Type], function: TypeRec[Expr], evidence: Evidence[TypeRec]): TypeRec[Expr] =
   HCofree(ExprAnn(t), AST.InstApp(function, evidence))
 def instanceT(t: TypeRec[Type], traitName: TypeVariable, targets: Seq[TypeRec[Type]], methods: Seq[MethodImpl[TypeRec]], superEvidence: Seq[Evidence[TypeRec]]): TypeRec[Expr] =
@@ -580,6 +586,8 @@ def freeVars(expr: Rec[Expr]): Set[Variable] = {
       }
     case AST.App(function, argument) => function ++ argument
     case AST.TyApp(function, _) => function
+    case AST.Path(name, _) => Set(name)
+    case AST.Select(receiver, _, _, resolved) => receiver ++ resolved.getOrElse(Set.empty)
     case AST.Foreign(_, _) => Set.empty
     case AST.Block(discarded, result) => discarded.foldLeft(Set.empty[Variable])(_ ++ _) ++ result.getOrElse(Set.empty)
     case AST.BinOp(_, left, right, resolved) => left ++ right ++ resolved.getOrElse(Set.empty)

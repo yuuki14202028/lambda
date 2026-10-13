@@ -572,6 +572,7 @@ object Generator {
     case AST.InstAbs(_, _) => pure(sys.error("InstAbs must be desugared by TraitEncoder before code generation"))
     case AST.InstApp(_, _) => pure(sys.error("InstApp must be desugared by TraitEncoder before code generation"))
     case AST.Summon(_, _) => pure(sys.error("Summon must be desugared by TraitEncoder before code generation"))
+    case AST.Path(_, _) | AST.Select(_, _, _, _) => pure(sys.error("dot notation must be desugared by SelectDesugar before code generation"))
     case AST.Using(_, _) => pure(sys.error("Using must be desugared by TraitEncoder before code generation"))
     case AST.Instance(_, _, _, _) => pure(sys.error("Instance must be desugared by TraitEncoder before code generation"))
 

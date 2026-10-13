@@ -1,0 +1,7 @@
+rec data List[a] = { Nil, Cons(a)(List[a]) }
+module List {
+  let convert[a][b](xs: List[a])(f: a → b): List[b] = Nil[b]
+}
+let numbers: List[i32] = Nil[i32]
+let bs: List[bool] = numbers.convert(λn: i32. true)
+let main(): i32 = 0

@@ -1,0 +1,9 @@
+rec data List[a] = { Nil, Cons(a)(List[a]) }
+module List {
+  let isEmpty[a](xs: List[a]): bool = match xs { Nil => true  Cons(_)(_) => false }
+  let size[a](xs: List[a]): i32 = 0
+}
+let numbers: List[i32] = Nil[i32]
+let n: i32 = numbers.sizes
+let m: i32 = numbers.length
+let main(): i32 = 0

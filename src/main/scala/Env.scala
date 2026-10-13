@@ -112,6 +112,11 @@ case class Names(
   def withModule(short: String, full: String): Names = copy(modules = modules + (short -> full))
   def ++(other: Names): Names =
     Names(values ++ other.values, types ++ other.types, modules ++ other.modules, operators ++ other.operators)
+  // この表にあって before にない（または指す先が違う）名前
+  def since(before: Names): Names = {
+    def added[K, V](now: Map[K, V], old: Map[K, V]): Map[K, V] = now.filter { case (key, value) => !old.get(key).contains(value) }
+    Names(added(values, before.values), added(types, before.types), added(modules, before.modules), added(operators, before.operators))
+  }
 }
 
 object Names {
@@ -134,6 +139,8 @@ case class Env(
     scope: Names = Names.empty,                             // 修飾なしで書ける module メンバーと、見えている module
     members: Names = Names.empty,                           // 検査中の module が公開する名前
     modules: Map[String, Names] = Map.empty,                // 宣言済みの module（完全な名前）と、その公開メンバー
+    privates: Names = Names.empty,                          // 検査中の module の private なメンバー
+    modulePrivates: Map[String, Names] = Map.empty,         // 宣言済みの module の private なメンバー（同じ module をもう一度開いたときに見える）
     abstractTypes: Map[TypeVariable, TypeAlias] = Map.empty, // 封印された opaque type と、その表現（ModuleDesugar が読み替える）
     keepConstraints: Boolean = false,                        // 式の型に残った制約を解決しない（辞書を明示的に渡す適用 f(with d) の f の位置）
     spans: SpanTable = new SpanTable,                        // 型付きノードの位置（エラー表示用）
@@ -221,6 +228,13 @@ case class Env(
       case ModuleRef.Closed(names) => names.types.get(segments.last)
       case ModuleRef.InProgress(modulePath) => Some(TypeVariable((modulePath :+ segments.last).mkString("."))).filter(definesTypeName)
     }
+  }
+
+  // 型の module（型と同じ完全な名前の module）のメンバー。検査中の module なら、private なものと宣言したばかりのものも見える
+  def moduleMember(module: String, member: String): Option[Variable] = {
+    val inside = path.startsWith(module.split('.').toSeq)
+    modules.get(module).flatMap(_.values.get(member))
+      .orElse(Option.when(inside)(Variable(s"$module.$member")).filter(values.contains))
   }
 
   def lookupValue(name: Variable): Option[(Variable, TypeRec[Type])] =

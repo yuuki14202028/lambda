@@ -1,0 +1,8 @@
+error: `List.repeat` cannot be called with dot notation here
+ --> select_not_applicable.lam:6:23
+  |
+6 | let more: List[i32] = numbers.repeat(2)
+  |                       ^^^^^^^^^^^^^^ this value has type `List[i32]`
+  |
+  = note: `List.repeat` has type `i32 → List[i32] → List[i32]`
+  = note: `x.f` passes `x` as the first argument of `f`; the type parameters that appear in the type of that argument are read from the type of `x`, and they must be the leading type parameters of `f`

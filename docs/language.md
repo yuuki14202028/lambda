@@ -518,10 +518,71 @@ open Geometry
 let further: Point = moveRight(start)(2)
 ```
 
+同じ名前の module は、もう一度開いてメンバーを足せます。前に宣言したメンバーは、そのまま名前だけで書けます。
+
+```lam
+module Shapes {
+  data Circle = { MkCircle(i32) }
+  let unit: Circle = MkCircle(1)
+}
+
+module Shapes {
+  let grow(c: Circle): Circle = match c {
+    MkCircle(r) => MkCircle(r + 1)
+  }
+  let two: Circle = grow(unit)
+}
+```
+
+### ドット記法
+
+`x.f` は、**`x` の型と同じ名前の module にある関数 `f`** に、`x` を最初の引数として渡します。型引数は `x` の型から読みます。
+
+```lam
+data Stack[a] = { MkStack(List[a]) }
+
+module Stack {
+  let empty[a](u: unit): Stack[a] = MkStack[a](Nil[a])
+
+  let push[a](s: Stack[a])(x: a): Stack[a] = match s {
+    MkStack(items) => MkStack[a](Cons[a](x)(items))
+  }
+
+  let top[a](s: Stack[a])(fallback: a): a = match s {
+    MkStack(Nil) => fallback
+    MkStack(Cons(x)(_)) => x
+  }
+
+  // 受け手の型から決まらない型引数（b）は、呼ぶときに名前の後に書く
+  let convert[a][b](s: Stack[a])(f: a → b): Stack[b] = match s {
+    MkStack(items) => MkStack[b](map[List][a][b](f)(items))
+  }
+}
+
+// s.push(1) は Stack.push[i32](s)(1)
+let numbers: Stack[i32] = Stack.empty[i32](()).push(1).push(2)
+
+let flags: Stack[bool] = numbers.convert[bool](λn: i32. n > 1)
+
+// 続きは行を変えて書ける
+let result: bool = numbers
+  .push(3)
+  .convert[bool](λn: i32. n > 2)
+  .top(false)
+```
+
+規則は次のとおりです。
+
+- 探すのは、型の名前と同じ名前の module だけです。`List[i32]` なら `List`、module の中の型 `Shape.T` なら `Shape.T`、組み込みの型はその名前（`i32`、`bool`、`char`。文字列は `String`）です。型変数や関数の型には module がないので、ドットでは呼べません。
+- 関数の型 `∀ā. … → P → …` の最初の引数の型 `P` を `x` の型と見比べて、`P` に現れる型引数を決めます。それらは関数の型引数の先頭に並んでいなければなりません。残りの型引数は `x.f[T]` と名前の後に書きます。制約（`with`）は、その時点で解決されます。
+- `a.b` の `a` が値なら、ドット記法です。値でなければ module の修飾（`M.x`）です。値は同じ名前の module を隠します。
+
+推論はありません。`x` の型は既に決まっていて、そこから読むだけです。
+
 ### 公開する範囲
 
-- `private` を付けた宣言は、module の外から見えません。
-- `opaque type T = …` は、module の中では右辺と同じ型、外では中身のわからない別の型です。
+- `private` を付けた宣言は、module の外から見えません（同じ module をもう一度開いた所からは見えます）。
+- `opaque type T = …` は、宣言した module のブロックの中では右辺と同じ型、その外では中身のわからない別の型です。
 - `opaque data` は、型の名前だけを公開し、構成子を隠します。
 
 外からは、module が公開する関数を通してだけ値を作り、読めます。

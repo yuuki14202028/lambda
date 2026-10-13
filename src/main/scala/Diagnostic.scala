@@ -185,6 +185,9 @@ object Diagnostic {
 
   // (補足, 直し方)
   private def hint(h: Hint): (Seq[String], Seq[String]) = h match {
+    case Hint.ModuleMembers(module, members) if members.isEmpty => (Seq(s"module ${name(module)} has no public members"), Nil)
+    case Hint.ModuleMembers(module, members) =>
+      (Seq(s"members of ${name(module)}: ${names(members.take(12))}${if (members.length > 12) s", … and ${members.length - 12} more" else ""}"), Nil)
     case Hint.ImportOperators => (Nil, Seq("the standard operators are declared in the standard library: add `import \"std/operators\"`"))
     case Hint.SplitOperator(binary, prefix) =>
       (Seq(s"a run of symbols is read as one operator, so `$binary$prefix` is not `$binary` followed by the prefix `$prefix`"), Seq(s"put a space between them: `$binary $prefix`"))
@@ -273,6 +276,28 @@ object Diagnostic {
       )
       case UndefinedModule(path) => Description(s"cannot find module ${name(path.mkString("."))}", "no module with this name is visible here",
         notes = Seq("a module can be opened only after it is closed; inside a module, its members are already visible without `open`"))
+      case SelectWithoutModule(member, receiverType) => Description(
+        s"cannot use ${name("." + member)} on a value of type ${ty(receiverType)}",
+        "this type has no module",
+        notes = Seq("`x.f` calls the function `f` in the module named after the type of `x`; only data types, opaque types and built-in types have such a module"),
+        helps = Seq(s"call the function directly: `$member(…)`"))
+      case SelectUndefined(member, module, receiverType) => Description(
+        s"module ${name(module)} has no member ${name(member)}",
+        s"this value has type ${ty(receiverType)}",
+        notes = Seq(s"`x.$member` calls the function `$module.$member`, because the type of `x` is ${ty(receiverType)}"),
+        helps = Seq(s"define it in the module of the type: `module $module { let $member… }`, or call the function directly"))
+      case SelectNotApplicable(function, fnType, receiverType) => Description(
+        s"${name(function.name)} cannot be called with dot notation here",
+        s"this value has type ${ty(receiverType)}",
+        notes = Seq(
+          s"${name(function.name)} has type ${ty(fnType)}",
+          "`x.f` passes `x` as the first argument of `f`; the type parameters that appear in the type of that argument are read from the type of `x`, and they must be the leading type parameters of `f`"))
+      case SelectTypeArguments(function, fnType, expected, actual) => Description(
+        s"${name(function.name)} needs ${plural(expected, "type argument")} after its name",
+        s"found $actual",
+        notes = Seq(
+          s"${name(function.name)} has type ${ty(fnType)}",
+          "the type parameters that appear in the type of the first argument are read from the value before the dot; the remaining ones are written after the name: `x.f[T]`"))
       case ModifierOutsideModule(modifier) => Description(
         s"${name(modifier.keyword)} is only allowed inside a module",
         "this declaration is not inside a `module { … }`",

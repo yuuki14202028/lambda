@@ -143,6 +143,10 @@ given HTraverse[AST] with {
       (f(func), f(arg)).mapN(AST.App(_, _))
     case AST.TyApp(func, arg) =>
       (f(func), f(arg)).mapN(AST.TyApp(_, _))
+    case AST.Path(name, typeArgs) =>
+      typeArgs.traverse(t => f(t)).map(AST.Path(name, _))
+    case AST.Select(receiver, name, typeArgs, resolved) =>
+      (f(receiver), typeArgs.traverse(t => f(t)), resolved.traverse(e => f(e))).mapN(AST.Select(_, name, _, _))
     case AST.InstApp(func, evidence) =>
       (f(func), traverseEvidence(evidence)(f)).mapN(AST.InstApp(_, _))
     case AST.Using(dictionary, body) =>

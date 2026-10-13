@@ -128,8 +128,21 @@ class ModuleSuite extends munit.FunSuite {
     }
   }
 
-  test("同じ module を二度定義できない") {
-    assertLeftContains(validate(withMain("module M { }\nmodule M { }")), "Module M is already defined")
+  test("同じ module はもう一度開ける（メンバーを足す）") {
+    val src =
+      """module M {
+        |  let x: i32 = 1
+        |  private let hidden: i32 = 2
+        |}
+        |module M {
+        |  let y: i32 = x
+        |  let z: i32 = hidden
+        |}
+        |let a: i32 = M.x
+        |let b: i32 = M.y
+        |""".stripMargin
+    assertRight(encode(withMain(src)))
+    assertLeftContains(validate(withMain(src + "let c: i32 = M.hidden")), "Variable M.hidden is not defined")
   }
 
   test("未定義の module・メンバー") {

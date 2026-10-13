@@ -128,6 +128,10 @@ object TAnalyser {
         (1 until op.length).map(op.splitAt).collectFirst {
           case (first, second) if binary(first) && env.scope.operators.contains(Operators.prefixKey(second)) => Hint.SplitOperator(first, second)
         }.toSeq
+      case CompileError.SelectUndefined(member, module, _) =>
+        val members = env.modules.get(module).map(_.values.keys.toSeq.sorted).getOrElse(Seq.empty)
+        val close = similar(member, members)
+        if (close.nonEmpty) close else Seq(Hint.ModuleMembers(module, members))
       case CompileError.UndefinedModule(path) => similar(path.mkString("."), env.modules.keys ++ env.scope.modules.keys)
       case CompileError.NoInstance(name, args)
           if args.flatMap(a => typeConstructorHead(a).map(_._1)).length == args.length &&
@@ -205,6 +209,113 @@ object TAnalyser {
     resolved <- operatorFunction(Operators.prefixKey(op), typeOf(body))
     (_, resultType) = destructArrow(typeOf(resolved)).getOrElse(invariant(s"operator $op: ${typeOf(resolved).show} is not a function"))
   } yield unopT(op, resultType, body, Some(resolved))
+
+  // ---- ドット記法: x.f は、x の型の module にある関数 f の呼び出し ----
+
+  // 型の module の名前。data・opaque type・trait は型と同じ完全な名前、組み込みの型はその名前（foreign.C.String は String）
+  private def moduleOfType(env: Env, t: TypeRec[Type]): Option[String] = typeConstructorHead(t).collect {
+    case (name, _) if name.startsWith("foreign.C.") => name.stripPrefix("foreign.C.")
+    case (name, _) if !env.typeVars.contains(TypeVariable(name)) => name
+  }
+
+  // pattern の中の型変数 variables を、target と一致するように決める（型の形を上から順に見比べるだけで、推論はしない）
+  private def matchType(pattern: TypeRec[Type], target: TypeRec[Type], variables: Set[TypeVariable]): Option[Map[TypeVariable, TypeRec[Type]]] = {
+    def go(p: TypeRec[Type], t: TypeRec[Type], found: Map[TypeVariable, TypeRec[Type]]): Option[Map[TypeVariable, TypeRec[Type]]] =
+      (p.project, t.project) match {
+        case (AST.TypeVar(v), _) if variables(v) => found.get(v) match {
+          case Some(previous) => Option.when(Equivalence.alpha(previous, t))(found)
+          case None => Some(found + (v -> t))
+        }
+        case (AST.TypeApp(pf, pa), AST.TypeApp(tf, ta)) => go(pf, tf, found).flatMap(go(pa, ta, _))
+        case (AST.Arrow(pf, pt), AST.Arrow(tf, tt)) => go(pf, tf, found).flatMap(go(pt, tt, _))
+        case _ => Option.when(Equivalence.alpha(p, t))(found)
+      }
+    go(pattern, target, Map.empty)
+  }
+
+  private def checkSelect(receiver: TypeRec[Expr], member: String, typeArgs: Seq[TypeRec[Type]]): Check[TypeRec[Expr]] = for {
+    env <- ask
+    receiverType = typeOf(receiver)
+    module <- moduleOfType(env, receiverType) match {
+      case Some(found) => Check.pure(found)
+      case None => failAt[String](receiver, CompileError.SelectWithoutModule(member, receiverType))
+    }
+    function <- lift(env.moduleMember(module, member).toRight(CompileError.SelectUndefined(member, module, receiverType)))
+    fnType = env.values.getOrElse(function, invariant(s"module member ${function.name} has no type"))
+    // f: ∀ā. [制約…] → P → …。P に現れる型引数は受け手の型から読み、残りは名前の後に書く
+    (params, afterParams) = {
+      @annotation.tailrec
+      def binders(t: TypeRec[Type], acc: Seq[(TypeVariable, Kind)]): (Seq[(TypeVariable, Kind)], TypeRec[Type]) = destructForAllK(t) match {
+        case Some((variable, kind, body)) => binders(body, acc :+ (variable -> kind))
+        case None => (acc, t)
+      }
+      binders(fnType, Seq.empty)
+    }
+    notApplicable = CompileError.SelectNotApplicable(function, fnType, receiverType)
+    firstParam <- {
+      @annotation.tailrec
+      def afterConstraints(t: TypeRec[Type]): TypeRec[Type] = destructInstArrow(t) match {
+        case Some((_, to)) => afterConstraints(to)
+        case None => t
+      }
+      lift(destructArrow(afterConstraints(afterParams)).map(_._1).toRight(notApplicable))
+    }
+    matched <- lift(matchType(firstParam, receiverType, params.map(_._1).toSet).toRight(notApplicable))
+    fromReceiver = params.takeWhile { case (variable, _) => matched.contains(variable) }
+    _ <- guard(fromReceiver.length == matched.size, notApplicable)
+    explicit = params.drop(fromReceiver.length)
+    _ <- guard(explicit.length == typeArgs.length, CompileError.SelectTypeArguments(function, fnType, explicit.length, typeArgs.length))
+    written <- typeArgs.traverse(expandWellKinded)
+    arguments = fromReceiver.map { case (variable, kind) => (matched(variable), kind) } ++ written
+    applied <- lift(arguments.foldLeft[EitherS[TypeRec[Expr]]](Right(varrType(function, fnType))) { case (acc, (argument, kind)) =>
+      acc.flatMap(ContextDesugar.applyTypeArg(_, argument, kind))
+    })
+    // 制約はここで解決する（x.f(with d) とは書けない）
+    resolved <- discharge(applied).local((e: Env) => e.copy(keepConstraints = false))
+    (param, resultType) <- lift(destructArrow(typeOf(resolved)).toRight(notApplicable))
+    _ <- guard(Equivalence.alpha(param, receiverType), notApplicable)
+  } yield selectT(resultType, receiver, member, typeArgs, resolved)
+
+  // . を含む名前 a.b.c: 値を指すいちばん短い前半（a か a.b か …）を値として読み、残りをドット記法として読む。
+  // 値は同じ名前の module を隠す。前半のどれも値でなければ、全体を修飾された名前として報告する
+  private def checkPath(name: Variable, typeArgs: Seq[TypeRec[Type]]): Check[TypeRec[Expr]] = ask.flatMap { env =>
+    val segments = name.name.split('.').toSeq
+    val prefix = (1 to segments.length).find(n => env.lookupValue(Variable(segments.take(n).mkString("."))).nonEmpty)
+    def variable(written: Variable): Check[TypeRec[Expr]] = for {
+      found <- lift(env.lookupValue(written).toRight(CompileError.UndefinedVariable(written)))
+      resolved <- discharge(varrType(found._1, found._2))
+    } yield resolved
+    prefix match {
+      case Some(n) if n < segments.length =>
+        val selectors = segments.drop(n)
+        for {
+          base <- variable(Variable(segments.take(n).mkString("."))).local((e: Env) => e.copy(keepConstraints = false))
+          inner <- selectors.init.foldLeft(Check.pure(base))((receiver, member) => receiver.flatMap(checkSelect(_, member, Seq.empty)))
+          selected <- checkSelect(inner, selectors.last, typeArgs)
+        } yield selected
+      case _ =>
+        for {
+          base <- if (typeArgs.isEmpty) variable(name) else variable(name).local((e: Env) => e.copy(keepConstraints = false))
+          applied <- typeArgs.zipWithIndex.foldLeft(Check.pure(base)) { case (function, (argument, index)) =>
+            val last = index == typeArgs.length - 1
+            function.flatMap(f => if (last) checkTyApp(f, argument) else checkTyApp(f, argument).local((e: Env) => e.copy(keepConstraints = false)))
+          }
+        } yield applied
+    }
+  }
+
+  private def checkTyApp(typedFunction: TypeRec[Expr], typedArgument: TypeRec[Type]): Check[TypeRec[Expr]] = for {
+    expanded <- expandWellKinded(typedArgument)
+    (argumentType, argKind) = expanded
+    resultType <- destructForAllK(typeOf(typedFunction)) match {
+      case Some((variable, expectedKind, bodyType)) =>
+        if (expectedKind == argKind) okT(Equivalence.normalize(substType(variable, argumentType, bodyType)))
+        else failAt(typedArgument, CompileError.KindMismatchInTypeApp(expectedKind, argKind, Some(argumentType)),
+          typedFunction -> Related.FunctionType(typeOf(typedFunction)))
+      case None => failAt(typedFunction, CompileError.NotPolymorphic(typeOf(typedFunction)))
+    }
+    resolved <- discharge(tyAppT(resultType, typedFunction, typedArgument))
+  } yield resolved
 
   // ---- 演算子の並びを、スコープ中の宣言の優先順位と結合性で木に組む ----
 
@@ -992,17 +1103,16 @@ object TAnalyser {
     case AST.TyApp(function, argument) => for {
       typedFunction <- function
       typedArgument <- argument
-      expanded <- expandWellKinded(typedArgument)
-      (argumentType, argKind) = expanded
-      resultType <- destructForAllK(typeOf(typedFunction)) match {
-        case Some((variable, expectedKind, bodyType)) =>
-          if (expectedKind == argKind) okT(Equivalence.normalize(substType(variable, argumentType, bodyType)))
-          else failAt(typedArgument, CompileError.KindMismatchInTypeApp(expectedKind, argKind, Some(argumentType)),
-            typedFunction -> Related.FunctionType(typeOf(typedFunction)))
-        case None => failAt(typedFunction, CompileError.NotPolymorphic(typeOf(typedFunction)))
-      }
-      resolved <- discharge(tyAppT(resultType, typedFunction, typedArgument))
+      resolved <- checkTyApp(typedFunction, typedArgument)
     } yield resolved
+
+    case AST.Path(name, typeArgs) => typeArgs.traverse(identity).flatMap(checkPath(name, _))
+
+    case AST.Select(receiver, member, typeArgs, _) => for {
+      typedReceiver <- receiver
+      typedArgs <- typeArgs.traverse(identity)
+      selected <- checkSelect(typedReceiver, member, typedArgs)
+    } yield selected
 
     case AST.Foreign(value, types) => for {
       typedTypes <- types
@@ -1547,9 +1657,11 @@ object TAnalyser {
 
   private def checkModule(name: String, decls: Seq[IndexedRec[Decl]]): StateT[EitherS, Env, TypeRec[Decl]] = StateT { outer =>
     val full = outer.qualify(name)
+    // 同じ module はもう一度開ける（メンバーを足す）。前に宣言したメンバーは、private なものも含めて短い名前で見える
+    val declared = outer.modules.getOrElse(full, Names.empty)
+    val hidden = outer.modulePrivates.getOrElse(full, Names.empty)
     for {
-      _ <- Either.cond(!outer.modules.contains(full), (), CompileError.AlreadyDefined(NameKind.ModuleName, full))
-      checked <- checkAll(decls, outer.copy(path = outer.path :+ name, members = Names.empty))
+      checked <- checkAll(decls, outer.copy(path = outer.path :+ name, scope = outer.scope ++ declared ++ hidden, members = declared, privates = hidden))
       (inner, typedDecls) = checked
       sealedEnv <- sealDecls(typedDecls).run(inner)
     } yield (
@@ -1557,7 +1669,9 @@ object TAnalyser {
         path = outer.path,
         scope = outer.scope.withModule(name, full),
         members = outer.members.withModule(name, full),
-        modules = sealedEnv.modules + (full -> inner.members)
+        privates = outer.privates,
+        modules = sealedEnv.modules + (full -> inner.members),
+        modulePrivates = sealedEnv.modulePrivates + (full -> inner.privates)
       ),
       topModuleT(name, typedDecls)
     )
@@ -1573,7 +1687,7 @@ object TAnalyser {
     typed <- checkDecl(inner)
     _ <- StateT.modify[EitherS, Env] { after =>
       (modifier, typed.project) match {
-        case (Modifier.Private, _) => after.copy(members = before.members)
+        case (Modifier.Private, _) => after.copy(members = before.members, privates = after.privates ++ after.members.since(before.members))
         // opaque data は型の名前だけを公開する
         case (Modifier.Opaque, AST.TopData(_, _, _) | AST.TopRec(_)) =>
           val hidden = dataConstructors(typed).toSet

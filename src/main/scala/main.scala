@@ -5,11 +5,11 @@ import java.nio.file.{Files, Path, Paths}
 object Compiler {
 
   /** 型検査の後の脱糖。順序に意味がある: context の束縛のパターンは ContextDesugar が match にするので、
-   * PatternDesugar はその後に走る。演算子は制約の根拠を含む関数呼び出しになるので、TraitEncoder より前 */
+   * PatternDesugar はその後に走る。演算子とドット記法は制約の根拠を含む関数呼び出しになるので、TraitEncoder より前 */
   def desugar(typed: TypeRec[AST.Program.type]): TypeRec[AST.Program.type] =
-    ChurchEncoder.encode(TraitEncoder.encode(OperatorDesugar.desugar(
+    ChurchEncoder.encode(TraitEncoder.encode(OperatorDesugar.desugar(SelectDesugar.desugar(
       PatternDesugar.desugar(ContextDesugar.desugar(Deriver.desugar(ModuleDesugar.desugar(typed))))
-    )))
+    ))))
 
   /** ソースをアセンブリへコンパイルする。trace には脱糖前後のプログラムの表示が渡される */
   def compile(src: String, srcPath: Path, trace: String => Unit = _ => ()): Either[CompileError, String] = for {

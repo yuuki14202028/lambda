@@ -27,6 +27,7 @@ ParserAST (cats-parse) → ImportResolver → TAnalyser (型検査)
   → ModuleDesugar (module を平らな宣言列へ戻し、opaque type を表現へ読み替える)
   → Deriver (derive 宣言を型付き TopImpl へ合成) → ContextDesugar (context ブロックを bind/ret へ脱糖)
   → PatternDesugar (match と束縛のパターンを、構成子 1 段の分岐と if / let へ展開する)
+  → SelectDesugar (ドット記法 x.f を、型の module の関数の適用へ展開する)
   → OperatorDesugar (演算子を、宣言された関数の適用へ展開する。&& と || は if へ)
   → TraitEncoder (辞書渡しへ脱糖) → ChurchEncoder (data/match/fold を Church encoding 化)
   → Generator (ARM64 アセンブリ生成)
@@ -63,7 +64,13 @@ trait `C` は辞書のデータ型でもあり（`Env.dataTypes` に登録）、
 - `Env.scope` が「修飾なしで書ける module メンバー（短い名前 → 完全な名前）と、見えている module」、`Env.members` が検査中の module の公開メンバー、`Env.modules` が宣言済みの module の公開メンバー。局所的な束縛（λ・let・型変数・式の中の `type` / `data`）は同名のメンバーを隠す
 - `private` / `opaque` は宣言を包むノード `TopModified`。`private` は `members` に載せないだけ、`opaque data` は構成子を `members` から外すだけ
 - `opaque type` は module の中では通常の別名（展開される）。module を閉じるとき（`sealDecls`）に `Env.abstractTypes` へ移し、中の宣言が Env に足した定義（値の型・別名・データ型・trait）を、型付きの宣言の注釈から別名を展開しない形で読み直す。そのため宣言の検査は「型付きの宣言」と「Env に足す定義」（`aliasOf` / `dataOf` / `traitOf`）に分かれている。インスタンスは読み直さず、module の中で登録した形のまま全体で有効
+- 同じ名前の module はもう一度開ける（メンバーを足す）。前のブロックの公開メンバー（`Env.modules`）と private なメンバー（`Env.modulePrivates`）をスコープに戻して検査する。opaque type の表現が見えるのは、宣言したブロックの中だけ
 - ModuleDesugar は module / private / opaque / open を外して宣言を平らに並べ、抽象型を表現へ読み替える（注釈・型ノード・Env）。impl のターゲットだけはインスタンスを引く鍵なので抽象型の名前のまま残す。以降のフェーズに module と抽象型は残らない
+
+### ドット記法（x.f）
+
+`x.f[T]` は「`x` の型の module にある関数 `f`」の呼び出し（Lean 4 の一般化フィールド記法と同じ考え方）。型の module は型と同じ完全な名前の module で（`moduleOfType`。組み込みの型はその名前、`foreign.C.String` は `String`。型変数・関数の型にはない）、メンバーは `Env.moduleMember` で引く。関数の型 `∀ā. [制約]* → P → …` の `P` を受け手の型と見比べて（`matchType`。形を上から比べるだけで推論はしない）`P` に現れる型引数を決め、それが `ā` の先頭に並んでいることを確かめる。残りの型引数は名前の直後に書かれたもの（`Select.typeArgs`）で、数が合わなければエラー。全部を適用して制約を解決した関数を `Select.resolved` に記録し、SelectDesugar が受け手への適用に展開する。
+パーサは、式の続きの `.f[T]` を `Select` に、`.` を含む名前 `a.b.c[T]` を `Path` に読む。`Path` は型検査が「値を指すいちばん短い前半」を値として読み、残りを `Select` にする（`checkPath`。値は同名の module を隠す。前半のどれも値でなければ、全体を修飾された名前として扱う）。型検査後の AST に `Path` は残らない。
 
 ### match のパターン
 

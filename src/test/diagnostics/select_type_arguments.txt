@@ -1,0 +1,8 @@
+error: `List.convert` needs 1 type argument after its name
+ --> select_type_arguments.lam:6:22
+  |
+6 | let bs: List[bool] = numbers.convert(λn: i32. true)
+  |                      ^^^^^^^^^^^^^^^ found 0
+  |
+  = note: `List.convert` has type `∀a. ∀b. List[a] → a → b → List[b]`
+  = note: the type parameters that appear in the type of the first argument are read from the value before the dot; the remaining ones are written after the name: `x.f[T]`

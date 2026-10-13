@@ -1,0 +1,5 @@
+module i32 {
+  let twice(n: i32): i32 = n
+}
+let f[a](x: a): i32 = x.twice
+let main(): i32 = 0

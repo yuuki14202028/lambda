@@ -1,0 +1,92 @@
+// ドット記法: x.f は、x の型の module にある関数 f の呼び出し。
+// 期待する出力は EndToEndSuite に書いてある。
+
+import "std/operators"
+import "std/option"
+import "std/list"
+import "std/list_instances"
+import "std/functor"
+
+let printInt: i32 → i32 = foreign[i32 → i32] print_int
+
+// 型と同じ名前の module に関数を置く。module は何度でも開ける
+module List {
+  rec let size[a](xs: List[a]): i32 = match xs {
+    Nil => 0
+    Cons(_)(rest) => 1 + size[a](rest)
+  }
+
+  // 残りの型引数（b）は、名前の後に書く
+  let mapped[a][b](xs: List[a])(f: a → b): List[b] = map[List][a][b](f)(xs)
+
+  rec let total(xs: List[i32]): i32 = match xs {
+    Nil => 0
+    Cons(x)(rest) => x + total(rest)
+  }
+}
+
+module List {
+  private rec let insert[a](x: a)(sorted: List[a]): List[a] with Ord[a] = match sorted {
+    Nil => Cons[a](x)(Nil[a])
+    Cons(y)(rest) => if x < y then Cons[a](x)(sorted) else Cons[a](y)(insert[a](x)(rest))
+  }
+
+  // 制約は、受け手の型から読んだ型引数で解決される
+  rec let sorted[a](xs: List[a]): List[a] with Ord[a] = match xs {
+    Nil => Nil[a]
+    Cons(x)(rest) => insert[a](x)(sorted[a](rest))
+  }
+
+  // 前のブロックのメンバーは、そのまま見える
+  let first[a](xs: List[a])(fallback: a): a = if size[a](xs) == 0 then fallback else match xs {
+    Nil => fallback
+    Cons(x)(_) => x
+  }
+}
+
+module Option {
+  let orElse[a](o: Option[a])(fallback: a): a = match o {
+    Some(x) => x
+    None => fallback
+  }
+}
+
+// 組み込みの型の module は、その型の名前
+module i32 {
+  let double(n: i32): i32 = n * 2
+  let isEven(n: i32): bool = n % 2 == 0
+}
+
+module bool {
+  let toInt(b: bool): i32 = if b then 1 else 0
+}
+
+// module の中の型の module は、その型の完全な名前（Shape.T の module は Shape.T）
+module Shape {
+  data T = { Rect(i32)(i32) }
+  module T {
+    let area(s: T): i32 = match s { Rect(w)(h) => w * h }
+    let scale(s: T)(k: i32): T = match s { Rect(w)(h) => Rect(w * k)(h * k) }
+  }
+  let unit: T = Rect(1)(1)
+}
+
+let numbers: List[i32] = Cons[i32](3)(Cons[i32](1)(Cons[i32](2)(Nil[i32])))
+
+let main(): i32 = {
+  printInt(numbers.size);
+  printInt(numbers.sorted.first(0));
+  printInt(numbers.mapped[i32](λn: i32. n * 10).total);
+  // 式の続きにも書ける。行を変えてもよい
+  printInt(Cons[i32](5)(numbers)
+    .sorted
+    .mapped[bool](λn: i32. n.isEven)
+    .mapped[i32](λb: bool. b.toInt)
+    .total);
+  printInt(head[i32](numbers).orElse(0).double);
+  printInt((1 + 2).double);
+  // 修飾された名前の後にも続けられる
+  printInt(Shape.unit.scale(3).area);
+  printInt(List.size[i32](numbers));
+  0
+}

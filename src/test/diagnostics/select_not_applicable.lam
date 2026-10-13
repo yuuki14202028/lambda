@@ -1,0 +1,7 @@
+rec data List[a] = { Nil, Cons(a)(List[a]) }
+module List {
+  let repeat(count: i32)(xs: List[i32]): List[i32] = xs
+}
+let numbers: List[i32] = Nil[i32]
+let more: List[i32] = numbers.repeat(2)
+let main(): i32 = 0

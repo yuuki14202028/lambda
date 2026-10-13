@@ -96,6 +96,7 @@ enum Hint {
   case SuperclassDeclaredLater(constraint: String)                                     // スーパークラスのインスタンスが rec の組の後ろにある
   case ImportOperators                                                                 // 演算子の宣言がスコープに 1 つもない
   case SplitOperator(binary: String, prefix: String)                                   // 二項と前置の演算子が続けて書かれ、1 つの記号と読まれた
+  case ModuleMembers(module: String, members: Seq[String])                              // その module の公開メンバー
   case ProvideWithUsing(constraint: String)                                            // impl の式のスーパークラスは using で入れられる
 }
 
@@ -126,6 +127,11 @@ enum CompileError {
   case UndefinedPrimitive(name: String)
   case UndefinedTrait(name: TypeVariable, site: Option[DeclRef])
   case UndefinedModule(path: Seq[String])
+  // x.f: 受け手の型に module がない / module に f がない / f の最初の引数が受け手の型でない / f の残りの型引数の数が合わない
+  case SelectWithoutModule(member: String, receiverType: TypeRec[Type])
+  case SelectUndefined(member: String, module: String, receiverType: TypeRec[Type])
+  case SelectNotApplicable(function: Variable, fnType: TypeRec[Type], receiverType: TypeRec[Type])
+  case SelectTypeArguments(function: Variable, fnType: TypeRec[Type], expected: Int, actual: Int)
   case ModifierOutsideModule(modifier: Modifier)
   case MixedRecursiveGroup
   case NoConstraintToSatisfy(actual: TypeRec[Type])
@@ -315,6 +321,11 @@ enum CompileError {
     case UndefinedTrait(name, site) =>
       site.fold(s"Trait ${name.name} is not defined")(s => s"${s.shown}: trait ${name.name} is not defined")
     case UndefinedModule(path) => s"Module ${path.mkString(".")} is not defined"
+    case SelectWithoutModule(member, receiverType) => s"Cannot use .$member on a value of type ${receiverType.show}: the type has no module"
+    case SelectUndefined(member, module, receiverType) => s"Module $module has no member $member (for a value of type ${receiverType.show})"
+    case SelectNotApplicable(function, fnType, receiverType) =>
+      s"${function.name} cannot be called with dot notation on a value of type ${receiverType.show}: its type is ${fnType.show}"
+    case SelectTypeArguments(function, _, expected, actual) => s"${function.name} needs $expected type argument(s) after the name, got $actual"
     case DefaultMethodTypeMismatch(traitName, method, expected, actual, _) =>
       s"Trait ${traitName.name}: the default of method ${method.name} has type ${actual.show}, expected ${expected.show}"
     case QuantifiedParamUnused(traitName, param) =>

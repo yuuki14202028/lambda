@@ -516,23 +516,28 @@ object ParserAST {
       case Value(argument: IndexedRec[Expr])
       case Types(argument: IndexedRec[Type])
       case Dictionary(argument: IndexedRec[Expr]) // f(with d): 制約を解決せず、辞書を直接渡す
+      case Member(name: String, typeArgs: Seq[IndexedRec[Type]]) // e.f[T]: e の型の module にある関数 f
     }
+    // 式の続きの .f は、行を変えて書ける
+    val member: Parser[Postfix] =
+      (((sp.with1 *> Parser.char('.')).backtrack *> identifier) ~ Parser.defer(typeP).brackets.rep0).map { case (name, typeArgs) => Postfix.Member(name, typeArgs) }
     val unitArg: Parser[Postfix] = unitParens.spanned.map { case (span, _) => Postfix.Value(at(span, AST.UnitLit())) }.backtrack
     val dictArg: Parser[Postfix] =
       ((Parser.char('(') *> sp *> Parser.string("with") *> gap).backtrack *> Parser.defer(expr) <*- ')').map(Postfix.Dictionary.apply)
     val exprArg: Parser[Postfix] = Parser.defer(expr).parens.map(Postfix.Value.apply)
     val typeArg: Parser[Postfix] = Parser.defer(typeP).brackets.map(Postfix.Types.apply)
-    (atom ~ (unitArg | dictArg | exprArg | typeArg).spanned.rep0).map { case (f, args) =>
+    (atom ~ (unitArg | dictArg | exprArg | typeArg | member).spanned.rep0).map { case (f, args) =>
       args.foldLeft(f) {
         case (acc, (span, Postfix.Value(a))) => at(acc.extract.to(span), AST.App(acc, a))
         case (acc, (span, Postfix.Types(t))) => at(acc.extract.to(span), AST.TyApp(acc, t))
         case (acc, (span, Postfix.Dictionary(d))) => at(acc.extract.to(span), AST.InstApp(acc, Evidence.Explicit(d)))
+        case (acc, (span, Postfix.Member(name, typeArgs))) => at(acc.extract.to(span), AST.Select(acc, name, typeArgs, None))
       }
     }
   }
 
   lazy val atom: Parser[IndexedRec[Expr]] =
-    Parser.defer(blockP | unitP.backtrack | numP | charP | stringP | interpStringP | boolP | foreignP | intrinsicP | summonP | varP | Parser.defer(expr).parens)
+    Parser.defer(blockP | unitP.backtrack | numP | charP | stringP | interpStringP | boolP | foreignP | intrinsicP | summonP | pathP | varP | Parser.defer(expr).parens)
 
   // using d in e: e の中では、辞書 d をインスタンスとして解決に使う
   lazy val usingP: Parser[IndexedRec[Expr]] =
@@ -565,7 +570,13 @@ object ParserAST {
 
   // キーワードは変数として読まない（`1 +` の後の `let` を式の続きと読んで、離れた位置でエラーにしないため）
   lazy val varP: Parser[IndexedRec[Expr]] =
-    qualifiedIdentifier.filter(n => !exprKeywords(n)).backtrack.map(n => AST.Var[IndexedRec, Expr](Variable(n))).indexed
+    identifier.filter(n => !exprKeywords(n)).backtrack.map(n => AST.Var[IndexedRec, Expr](Variable(n))).indexed
+
+  // . を含む名前 a.b.c と、その直後の型引数。module の修飾か値へのドット記法かは、型検査が決める
+  lazy val pathP: Parser[IndexedRec[Expr]] = {
+    val dotted = (identifier.filter(n => !exprKeywords(n)) ~ ('.' *> identifier).backtrack.rep).backtrack.map { case (head, rest) => (head :: rest.toList).mkString(".") }
+    (dotted ~ Parser.defer(typeP).brackets.rep0).map { case (name, typeArgs) => AST.Path[IndexedRec, Expr](Variable(name), typeArgs) }.indexed
+  }
 
   private val intSuffixP: Parser[String] =
     Parser.string("isize").as("isize") |
