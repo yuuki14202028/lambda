@@ -102,7 +102,7 @@ PatternDesugar は行列から決定木を作り、構成子 1 段の `Match`（
 
 ### その他
 
-- `stdlib/*.lam` — `import std/...` で解決される標準ライブラリ。`StandardLibrary.scala` が演算子名（`add` 等）を組み込み演算へ対応付ける
+- `stdlib/*.lam` — `import std/...` で解決される標準ライブラリ。`StandardLibrary.scala` が演算子名（`add` 等）を組み込み演算へ対応付ける。演算子 `a + b` は左の被演算子の型から関数 `__add_型名` を引く（型の名前の `.` は `_` にする。文字列は `__add_foreign_C_String`）。文字と文字列の関数は `std/char`（module `Char`）と `std/string`（module `Str`）にある
 - `runtime/ffi.c` — `foreign` で参照する C 関数の実装。関数値はコードポインタ + 環境ポインタのクロージャ
 - Generator: 束縛はすべてヒープの環境フレームに置き、`[x29, -16]` が現在のフレームを指す。関数本体の末尾位置の呼び出し（`Env.tail`）はフレームを畳んでジャンプにするので、末尾再帰はスタックを消費しない。メモリは `malloc` するだけで解放しない
 - `src/test/lam/*.lam` — EndToEndSuite が実行するプログラム（期待する出力はスイート側に書く）

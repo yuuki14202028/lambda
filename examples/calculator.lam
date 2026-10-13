@@ -9,42 +9,9 @@
 
 import "std/prelude"
 
-type String = foreign.C.String
-
 let printStr: String → i32 = foreign[String → i32] print_string_inline
-let putChar: i32 → i32 = foreign[i32 → i32] put_char
-let charAt: String → i32 → i32 = foreign[String → i32 → i32] char_at
-let intToStr: i32 → String = foreign[i32 → String] int_to_string
-let letter: i32 → String = foreign[i32 → String] char_to_string
 
-// ---- 文字と名前 ----
-// 文字は文字コード（i32）で扱い、名前は文字コードのリストにする。
-
-type Name = List[i32]
-
-let isDigit(c: i32): bool = c >= 48 && c <= 57
-let isLetter(c: i32): bool = c >= 97 && c <= 122
-let isSpace(c: i32): bool = c == 32
-
-// 文字列を文字コードのリストにする（文字列の終わりは 0）
-let letters(text: String): Name =
-  rec let from(at: i32): Name = match charAt(text)(at) {
-    0 => Nil[i32]
-    c => Cons[i32](c)(from(at + 1))
-  } in from(0)
-
-rec let printName(name: Name): i32 = match name {
-  Nil => 0
-  Cons(c)(rest) => { putChar(c); printName(rest) }
-}
-
-rec impl[a] Eq[List[a]] with Eq[a] {
-  def eq = λxs: List[a]. λys: List[a]. match Pair[List[a]][List[a]](xs)(ys) {
-    Pair(Nil)(Nil) => true
-    Pair(Cons(x)(xt))(Cons(y)(yt)) if eq[a](x)(y) => eq[List[a]](xt)(yt)
-    _ => false
-  }
-}
+type Name = String
 
 // ---- 構文解析器 ----
 
@@ -67,10 +34,10 @@ module Parsing {
   let parse[a](p: Parser[a])(text: String): Reply[a] = step[a](p)(MkInput(text)(0))
 
   // 条件を満たす 1 文字を読む
-  let satisfy(expected: String)(test: i32 → bool): Parser[i32] = MkParser[i32](λinput: Input. match input {
-    MkInput(text)(at) => match charAt(text)(at) {
-      c if test(c) => Parsed[i32](c)(MkInput(text)(at + 1))
-      _ => Failed[i32](at)(expected)
+  let satisfy(expected: String)(test: char → bool): Parser[char] = MkParser[char](λinput: Input. match input {
+    MkInput(text)(at) => match Str.charAt(text)(at) {
+      Some(c) if test(c) => Parsed[char](c)(MkInput(text)(at + 1))
+      _ => Failed[char](at)(expected)
     }
   })
 
@@ -80,7 +47,7 @@ module Parsing {
 
   // 入力の終わり
   let end: Parser[unit] = MkParser[unit](λinput: Input. match input {
-    MkInput(text)(at) => if charAt(text)(at) == 0 then Parsed[unit](())(input) else Failed[unit](at)("the end of the input")
+    MkInput(text)(at) => if at == Str.length(text) then Parsed[unit](())(input) else Failed[unit](at)("the end of the input")
   })
 
   // p を試し、何も読まずに失敗したら q を試す
@@ -139,27 +106,27 @@ open Parsing
 
 // ---- 字句 ----
 
-let spaces: Parser[List[i32]] = many[i32](satisfy("a space")(isSpace))
+let spaces: Parser[List[char]] = many[char](satisfy("a space")(Char.isSpace))
 
 // p を読み、後ろの空白を読み飛ばす
 let token[a](p: Parser[a]): Parser[a] = context[Parser] {
   x: a = p;
-  skipped: List[i32] = spaces;
+  skipped: List[char] = spaces;
   x
 }
 
-let symbol(expected: String)(code: i32): Parser[i32] = token[i32](satisfy(expected)(λc: i32. c == code))
+let symbol(c: char): Parser[char] = token[char](satisfy(`\`{Str.fromChar(c)}\``)(λfound: char. found == c))
 
 let number: Parser[i32] = token[i32](
-  map[Parser][List[i32]][i32](foldLeft[List][i32][i32](λacc: i32. λc: i32. acc * 10 + (c - 48))(0))(some[i32](satisfy("a number")(isDigit)))
+  map[Parser][List[char]][i32](λdigits: List[char]. Str.toInt(Str.fromList(digits)))(some[char](satisfy("a number")(Char.isDigit)))
 )
 
-let word: Parser[Name] = token[Name](some[i32](satisfy("a name")(isLetter)))
+let word: Parser[Name] = token[Name](map[Parser][List[char]][Name](Str.fromList)(some[char](satisfy("a name")(Char.isLower))))
 
 // 決まった単語。別の単語だったら、読まなかったことにする
 let keyword(text: String): Parser[Name] = attempt[Name](context[Parser] {
   name: Name = word;
-  found: Name = if eq[Name](name)(letters(text)) then pure[Parser][Name](name) else failure[Name](`\`{text}\``);
+  found: Name = if name == text then pure[Parser][Name](name) else failure[Name](`\`{text}\``);
   found
 })
 
@@ -186,8 +153,8 @@ let chain(operand: Parser[Expr])(operator: Parser[Operator]): Parser[Expr] =
     })(pure[Parser][Expr](left))
   in flatMap[Parser][Expr][Expr](operand)(rest)
 
-let operatorOf(expected: String)(code: i32)(op: Operator): Parser[Operator] =
-  map[Parser][i32][Operator](λc: i32. op)(symbol(expected)(code))
+let operatorOf(c: char)(op: Operator): Parser[Operator] =
+  map[Parser][char][Operator](λfound: char. op)(symbol(c))
 
 // 互いを呼ぶ構文解析器。値のままでは初期化前の相手を読むことになるので、unit を取る関数にする
 rec {
@@ -196,7 +163,7 @@ rec {
   let letIn(u: unit): Parser[Expr] = context[Parser] {
     start: Name = keyword("let");
     name: Name = word;
-    equals: i32 = symbol("`=`")(61);
+    equals: char = symbol('=');
     bound: Expr = expr(());
     separator: Name = keyword("in");
     body: Expr = expr(());
@@ -204,27 +171,27 @@ rec {
   }
 
   let sum(u: unit): Parser[Expr] =
-    chain(product(()))(orElse[Operator](operatorOf("`+`")(43)(Plus))(operatorOf("`-`")(45)(Minus)))
+    chain(product(()))(orElse[Operator](operatorOf('+')(Plus))(operatorOf('-')(Minus)))
 
   let product(u: unit): Parser[Expr] =
-    chain(unary(()))(orElse[Operator](operatorOf("`*`")(42)(Times))(operatorOf("`/`")(47)(Divide)))
+    chain(unary(()))(orElse[Operator](operatorOf('*')(Times))(operatorOf('/')(Divide)))
 
   let unary(u: unit): Parser[Expr] =
     orElse[Expr](context[Parser] {
-      minus: i32 = symbol("`-`")(45);
+      minus: char = symbol('-');
       operand: Expr = unary(());
       Negate(operand)
     })(orElse[Expr](map[Parser][i32][Expr](Number)(number))(
       orElse[Expr](map[Parser][Name][Expr](Variable)(word))(context[Parser] {
-        open: i32 = symbol("`(`")(40);
+        opening: char = symbol('(');
         inner: Expr = expr(());
-        close: i32 = symbol("`)`")(41);
+        closing: char = symbol(')');
         inner
       })))
 }
 
 let program: Parser[Expr] = context[Parser] {
-  skipped: List[i32] = spaces;
+  skipped: List[char] = spaces;
   e: Expr = expr(());
   finished: unit = end;
   e
@@ -239,8 +206,12 @@ trait Show[a] {
 }
 
 impl Show[i32] {
-  def show = intToStr
-  def showNested = intToStr
+  def show = Str.fromInt
+  def showNested = Str.fromInt
+}
+
+impl Show[String] {
+  def show = λs: String. s
 }
 
 impl Show[Operator] {
@@ -252,17 +223,13 @@ impl Show[Operator] {
   }
 }
 
-impl Show[Name] {
-  def show = λname: Name. foldLeft[List][i32][String](λacc: String. λc: i32. `{acc}{letter(c)}`)("")(name)
-}
-
 rec impl Show[Expr] {
   def show = λe: Expr. match e {
     Number(n) => show[i32](n)
-    Variable(name) => show[Name](name)
+    Variable(name) => name
     Negate(inner) => `-{showNested[Expr](inner)}`
     Binary(op)(left)(right) => `{showNested[Expr](left)} {show[Operator](op)} {showNested[Expr](right)}`
-    LetIn(name)(bound)(body) => `let {show[Name](name)} = {show[Expr](bound)} in {show[Expr](body)}`
+    LetIn(name)(bound)(body) => `let {name} = {show[Expr](bound)} in {show[Expr](body)}`
   }
   // 数と名前は括弧なしで置く
   def showNested = λe: Expr. match e {
@@ -311,7 +278,7 @@ type Bindings = List[Pair[Name][i32]]
 
 rec let lookup(name: Name)(bindings: Bindings): Result[i32] = match bindings {
   Nil => Left[Failure][i32](Unbound(name))
-  Cons(Pair(bound)(value))(_) if eq[Name](bound)(name) => Right[Failure][i32](value)
+  Cons(Pair(bound)(value))(_) if bound == name => Right[Failure][i32](value)
   Cons(_)(rest) => lookup(name)(rest)
 }
 
@@ -340,19 +307,19 @@ rec let evaluate(bindings: Bindings)(e: Expr): Result[i32] = match e {
 impl Show[Failure] {
   def show = λf: Failure. match f {
     DivisionByZero => "division by zero"
-    Unbound(name) => `unbound name {show[Name](name)}`
+    Unbound(name) => `unbound name {name}`
   }
 }
 
 // ---- 実行 ----
 
 let calculate(text: String): i32 = match parse[Expr](program)(text) {
-  Failed(at)(expected) => printStr(`{text}\n  syntax error at {show[i32](at)}: expected {expected}\n`)
+  Failed(at)(expected) => printStr(`{text}\n  syntax error at {at}: expected {expected}\n`)
   Parsed(e)(_) => {
-    printStr(`{text}\n  parsed:     {show[Expr](e)}\n  simplified: {show[Expr](simplify(e))}\n`);
+    printStr(`{text}\n  parsed:     {e}\n  simplified: {simplify(e)}\n`);
     match evaluate(Nil[Pair[Name][i32]])(e) {
-      Right(value) => printStr(`  value:      {show[i32](value)}\n`)
-      Left(failure) => printStr(`  error:      {show[Failure](failure)}\n`)
+      Right(value) => printStr(`  value:      {value}\n`)
+      Left(failure) => printStr(`  error:      {failure}\n`)
     }
   }
 }

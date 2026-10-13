@@ -1,0 +1,40 @@
+// 文字。char と文字コード（i32）の変換、分類、大文字・小文字。
+// 関数は module Char にまとめてある（Char.isDigit(c) のように使う）。
+
+import "std/operators"
+import "std/option"
+import "std/eq"
+import "std/eq_instances"
+import "std/ord"
+
+module Char {
+  let code: char → i32 = foreign[char → i32] char_code
+  let fromCode: i32 → char = foreign[i32 → char] char_from_code
+
+  private let between(low: char)(high: char)(c: char): bool = code(low) <= code(c) && code(c) <= code(high)
+
+  let isDigit(c: char): bool = between('0')('9')(c)
+  let isLower(c: char): bool = between('a')('z')(c)
+  let isUpper(c: char): bool = between('A')('Z')(c)
+  let isLetter(c: char): bool = isLower(c) || isUpper(c)
+  let isAlphaNumeric(c: char): bool = isLetter(c) || isDigit(c)
+  let isSpace(c: char): bool = match c {
+    ' ' | '\t' | '\n' | '\r' => true
+    _ => false
+  }
+
+  // 数字の表す値（'7' なら 7）。数字でなければ None
+  let digit(c: char): Option[i32] = if isDigit(c) then Some[i32](code(c) - code('0')) else None[i32]
+
+  let toUpper(c: char): char = if isLower(c) then fromCode(code(c) - 32) else c
+  let toLower(c: char): char = if isUpper(c) then fromCode(code(c) + 32) else c
+}
+
+impl Ord[char] {
+  def lt(x: char)(y: char): bool = Char.code(x) < Char.code(y)
+}
+
+let __lt_char(x: char)(y: char): bool = Char.code(x) < Char.code(y)
+let __leq_char(x: char)(y: char): bool = Char.code(x) <= Char.code(y)
+let __gt_char(x: char)(y: char): bool = Char.code(x) > Char.code(y)
+let __geq_char(x: char)(y: char): bool = Char.code(x) >= Char.code(y)

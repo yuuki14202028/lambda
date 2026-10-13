@@ -17,6 +17,8 @@ import "std/list"
 import "std/id"
 
 import "std/function"
+import "std/char"
+import "std/string"
 
 import "std/option_instances"
 import "std/either_instances"

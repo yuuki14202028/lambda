@@ -47,11 +47,14 @@ object StandardLibrary {
     case UnaryOps.Not => "not"
   }
 
+  // 型の名前の `.`（foreign.C.String、module の中の型 M.T）は、関数名に書けるよう `_` にする
+  private def operatorSuffix(typeName: String): String = typeName.replace('.', '_')
+
   def binaryOperatorName(op: BinOps, typeName: String): Variable =
-    Variable(s"__${opName(op)}_$typeName")
+    Variable(s"__${opName(op)}_${operatorSuffix(typeName)}")
 
   def unaryOperatorName(op: UnaryOps, typeName: String): Variable =
-    Variable(s"__${opName(op)}_$typeName")
+    Variable(s"__${opName(op)}_${operatorSuffix(typeName)}")
 
   def intrinsicOp(name: String): Option[IntrinsicOps] = {
     val parts = name.split("_", 2)

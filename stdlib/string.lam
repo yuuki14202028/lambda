@@ -1,0 +1,70 @@
+// 文字列。関数は module Str にまとめてある（Str.length(s) のように使う）。
+// 文字列どうしは ==・<・+（連結）などの演算子で扱え、Eq / Ord / Semigroup / Monoid のインスタンスがある。
+
+import "std/operators"
+import "std/option"
+import "std/list"
+import "std/char"
+import "std/eq"
+import "std/ord"
+import "std/semigroup"
+import "std/monoid"
+
+type String = foreign.C.String
+
+module Str {
+  let length: String → i32 = foreign[String → i32] string_length
+  let append: String → String → String = foreign[String → String → String] concat
+  let equal: String → String → bool = foreign[String → String → bool] string_equal
+  // 辞書順の比較: 負・0・正
+  let compare: String → String → i32 = foreign[String → String → i32] string_compare
+  // start 文字目から count 文字（範囲の外は切り詰める）
+  let slice: String → i32 → i32 → String = foreign[String → i32 → i32 → String] substring
+  let fromChar: char → String = foreign[char → String] char_to_string
+  let fromInt: i32 → String = foreign[i32 → String] int_to_string
+  // 先頭の整数を読む（読めなければ 0）
+  let toInt: String → i32 = foreign[String → i32] string_to_int
+
+  private let unsafeCharAt: String → i32 → char = foreign[String → i32 → char] char_at
+
+  let isEmpty(s: String): bool = length(s) == 0
+
+  let charAt(s: String)(index: i32): Option[char] =
+    if index >= 0 && index < length(s) then Some[char](unsafeCharAt(s)(index)) else None[char]
+
+  let toList(s: String): List[char] =
+    rec let from(index: i32)(acc: List[char]): List[char] =
+      if index < 0 then acc else from(index - 1)(Cons[char](unsafeCharAt(s)(index))(acc))
+    in from(length(s) - 1)(Nil[char])
+
+  rec let fromList(chars: List[char]): String = match chars {
+    Nil => ""
+    Cons(c)(rest) => append(fromChar(c))(fromList(rest))
+  }
+
+  let startsWith(prefix: String)(s: String): bool = equal(slice(s)(0)(length(prefix)))(prefix)
+}
+
+let __eq_foreign_C_String(x: String)(y: String): bool = Str.equal(x)(y)
+let __neq_foreign_C_String(x: String)(y: String): bool = !Str.equal(x)(y)
+let __lt_foreign_C_String(x: String)(y: String): bool = Str.compare(x)(y) < 0
+let __leq_foreign_C_String(x: String)(y: String): bool = Str.compare(x)(y) <= 0
+let __gt_foreign_C_String(x: String)(y: String): bool = Str.compare(x)(y) > 0
+let __geq_foreign_C_String(x: String)(y: String): bool = Str.compare(x)(y) >= 0
+let __add_foreign_C_String(x: String)(y: String): String = Str.append(x)(y)
+
+impl Eq[String] {
+  def eq(x: String)(y: String): bool = Str.equal(x)(y)
+}
+
+impl Ord[String] {
+  def lt(x: String)(y: String): bool = Str.compare(x)(y) < 0
+}
+
+impl Semigroup[String] {
+  def append(x: String)(y: String): String = Str.append(x)(y)
+}
+
+impl Monoid[String] {
+  def empty: String = ""
+}

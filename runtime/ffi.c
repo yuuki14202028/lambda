@@ -56,6 +56,39 @@ char *char_to_string(int value) {
     return buffer;
 }
 
+int char_code(int value) {
+    return value;
+}
+
+int char_from_code(int value) {
+    return value;
+}
+
+int string_length(const char *value) {
+    return (int) strlen(value);
+}
+
+int string_compare(const char *left, const char *right) {
+    int result = strcmp(left, right);
+    return (result > 0) - (result < 0);
+}
+
+char *substring(const char *value, int start, int length) {
+    int total = (int) strlen(value);
+    if (start < 0) start = 0;
+    if (start > total) start = total;
+    if (length < 0) length = 0;
+    if (start + length > total) length = total - start;
+    char *buffer = malloc((size_t) length + 1);
+    memcpy(buffer, value + start, (size_t) length);
+    buffer[length] = '\0';
+    return buffer;
+}
+
+int string_to_int(const char *value) {
+    return atoi(value);
+}
+
 int string_equal(const char *left, const char *right) {
     return strcmp(left, right) == 0;
 }

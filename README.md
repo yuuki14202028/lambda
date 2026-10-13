@@ -15,6 +15,7 @@ Scala 3 で実装した、小さな型付きラムダ計算系言語（System F�
 - **コメント**: `// …`（行末まで）と `/* … */`（入れ子にできる）
 - **import**: `import "std/operators"` は同梱の `stdlib/` を、それ以外のパスはソースファイルからの相対で解決し、ファイルの宣言をその場に展開します（module の中に書けば、その module の中に展開します）
 - **module**: `module M { 宣言… }` で名前空間を作ります（入れ子可）。外からは `M.x` / `M.T` と修飾して参照し、`open M` で修飾なしでも書けるようになります。`private` を付けた宣言は外から見えません。`opaque type T = i32` は module の中では `i32` と同じ型、外では中身のわからない型になり、`opaque data` は型の名前だけを公開して構成子を隠します。module の中からは、自身や外側の module を修飾子にした名前（`M` の中の `M.x`）も書けます。インスタンス（`impl` / `derive`）は module の中に書いてもプログラム全体で有効です。`opaque type` に対する `impl` は、書いた場所での型に対するインスタンスになります（module の中では表現の型、外では抽象型）
+- **文字と文字列**: 文字リテラルは `'a'` / `'0'` / `' '` / `'\n'`。`std/char`（`Char.isDigit` / `Char.toUpper` / `Char.code` など）と `std/string`（`Str.length` / `Str.charAt` / `Str.slice` / `Str.toList` / `Str.toInt` など）があり、文字列は `==`・`<`・`+`（連結）で扱えます。演算子は関数 `__add_型名` などで定義でき、型の名前の `.` は `_` にします（`__add_foreign_C_String`）
 - **C FFI**: `foreign[T → U] name` で C 関数を参照。実装は `runtime/ffi.c`
 - 関数値はコードポインタ + 環境ポインタのクロージャとしてコンパイルされます。末尾位置の呼び出しはジャンプになるので、末尾再帰でループを書けます（メモリは確保するだけで解放しません）
 

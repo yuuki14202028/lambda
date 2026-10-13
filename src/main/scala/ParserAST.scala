@@ -384,7 +384,7 @@ object ParserAST {
     val string: Parser[Pattern[IndexedRec]] = stringP.map(_.project).collect {
       case AST.StringLit(value) => Pattern.Literal[IndexedRec](LiteralValue.Str(value), None)
     }
-    val char: Parser[Pattern[IndexedRec]] = ('\'' *> alpha <* '\'').map(c => Pattern.Literal[IndexedRec](LiteralValue.Char(c), None))
+    val char: Parser[Pattern[IndexedRec]] = Parser.defer(charLiteral).map(c => Pattern.Literal[IndexedRec](LiteralValue.Char(c), None))
     val bool: Parser[Pattern[IndexedRec]] =
       (("true".as(true) | "false".as(false)) <* Parser.not(identChar)).backtrack.map(b => Pattern.Literal[IndexedRec](LiteralValue.Bool(b), None))
     val named: Parser[Pattern[IndexedRec]] = (qualifiedIdentifier ~ Parser.defer(patternP).parens.rep0).map {
@@ -562,13 +562,20 @@ object ParserAST {
     (floatLit.backtrack | intLit).indexed
   }
 
-  val charP: Parser[IndexedRec[Expr]] = ('\'' *> alpha.map(AST.Char[IndexedRec, Expr]) <* '\'').indexed
-
   private val commonStringEscape = Parser.char('\\').as('\\') |
     Parser.char('n').as('\n') |
     Parser.char('r').as('\r') |
     Parser.char('t').as('\t') |
     Parser.char('0').as('\u0000')
+
+  // 文字リテラル: 'a' / '0' / ' ' / '\n' / '\''
+  private val charLiteral: Parser[Char] = {
+    val escaped = Parser.char('\\') *> (Parser.char('\'').as('\'') | commonStringEscape)
+    val plain = Parser.charWhere(ch => ch != '\'' && ch != '\\' && ch != '\n' && ch != '\r')
+    '\'' *> (escaped | plain) <* '\''
+  }
+
+  lazy val charP: Parser[IndexedRec[Expr]] = charLiteral.map(AST.Char[IndexedRec, Expr]).indexed
 
   val stringP: Parser[IndexedRec[Expr]] = {
     val escaped = Parser.char('\\') *> (
