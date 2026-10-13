@@ -48,6 +48,16 @@ class EndToEndSuite extends munit.FunSuite {
       assertEquals(run(source), (exitCode, stdout))
     }
 
+  // examples/ のサンプルは、期待する出力を同名の .expected に置く
+  private def example(name: String)(using munit.Location): Unit =
+    test(s"examples/$name.lam") {
+      assume(supported, "requires ARM64 macOS")
+      assertEquals(run(s"examples/$name.lam"), (0, Files.readString(Paths.get(s"examples/$name.expected"))))
+    }
+
+  example("calculator")
+  example("transformer")
+
   program("main.lam", "result = Just(9)\n")
   // 失敗したテストの番号が終了コードになる
   program("stdlib_test.lam", "")

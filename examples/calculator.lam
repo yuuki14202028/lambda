@@ -1,0 +1,372 @@
+// 式の電卓: 文字列を構文解析し、簡約して、評価する。
+//
+//   式   := let 名前 = 式 in 式 | 和
+//   和   := 積 (("+" | "-") 積)*
+//   積   := 単項 (("*" | "/") 単項)*
+//   単項 := "-" 単項 | 数 | 名前 | "(" 式 ")"
+//
+// 構文解析器は module の中の抽象型で、Monad のインスタンスなので context ブロックで組み立てる。
+
+import "std/prelude"
+
+type String = foreign.C.String
+
+let printStr: String → i32 = foreign[String → i32] print_string_inline
+let putChar: i32 → i32 = foreign[i32 → i32] put_char
+let charAt: String → i32 → i32 = foreign[String → i32 → i32] char_at
+let intToStr: i32 → String = foreign[i32 → String] int_to_string
+let letter: i32 → String = foreign[i32 → String] char_to_string
+
+// ---- 文字と名前 ----
+// 文字は文字コード（i32）で扱い、名前は文字コードのリストにする。
+
+type Name = List[i32]
+
+let isDigit(c: i32): bool = c >= 48 && c <= 57
+let isLetter(c: i32): bool = c >= 97 && c <= 122
+let isSpace(c: i32): bool = c == 32
+
+// 文字列を文字コードのリストにする（文字列の終わりは 0）
+let letters(text: String): Name =
+  rec let from(at: i32): Name = match charAt(text)(at) {
+    0 => Nil[i32]
+    c => Cons[i32](c)(from(at + 1))
+  } in from(0)
+
+rec let printName(name: Name): i32 = match name {
+  Nil => 0
+  Cons(c)(rest) => { putChar(c); printName(rest) }
+}
+
+rec impl[a] Eq[List[a]] with Eq[a] {
+  def eq = λxs: List[a]. λys: List[a]. match Pair[List[a]][List[a]](xs)(ys) {
+    Pair(Nil)(Nil) => true
+    Pair(Cons(x)(xt))(Cons(y)(yt)) if eq[a](x)(y) => eq[List[a]](xt)(yt)
+    _ => false
+  }
+}
+
+// ---- 構文解析器 ----
+
+module Parsing {
+  // 入力: 文字列と、読んでいる位置
+  data Input = { MkInput(String)(i32) }
+
+  // 結果: 失敗（位置と、そこに期待したもの）か、値と残りの入力
+  data Reply[a] = { Failed(i32)(String), Parsed(a)(Input) }
+
+  derive Functor[Reply]
+
+  // 構文解析器の中身（入力から結果への関数）は、module の外からは見えない
+  opaque data Parser[a] = { MkParser(Input → Reply[a]) }
+
+  private let step[a](p: Parser[a])(input: Input): Reply[a] = match p {
+    MkParser(f) => f(input)
+  }
+
+  let parse[a](p: Parser[a])(text: String): Reply[a] = step[a](p)(MkInput(text)(0))
+
+  // 条件を満たす 1 文字を読む
+  let satisfy(expected: String)(test: i32 → bool): Parser[i32] = MkParser[i32](λinput: Input. match input {
+    MkInput(text)(at) => match charAt(text)(at) {
+      c if test(c) => Parsed[i32](c)(MkInput(text)(at + 1))
+      _ => Failed[i32](at)(expected)
+    }
+  })
+
+  let failure[a](expected: String): Parser[a] = MkParser[a](λinput: Input. match input {
+    MkInput(_)(at) => Failed[a](at)(expected)
+  })
+
+  // 入力の終わり
+  let end: Parser[unit] = MkParser[unit](λinput: Input. match input {
+    MkInput(text)(at) => if charAt(text)(at) == 0 then Parsed[unit](())(input) else Failed[unit](at)("the end of the input")
+  })
+
+  // p を試し、何も読まずに失敗したら q を試す
+  let orElse[a](p: Parser[a])(q: Parser[a]): Parser[a] = MkParser[a](λinput: Input. match input {
+    MkInput(_)(start) => match step[a](p)(input) {
+      Failed(at)(_) if at == start => step[a](q)(input)
+      reply => reply
+    }
+  })
+
+  // p が失敗したら、何も読まなかったことにする（orElse で次の候補を試せるようにする）
+  let attempt[a](p: Parser[a]): Parser[a] = MkParser[a](λinput: Input. match input {
+    MkInput(_)(start) => match step[a](p)(input) {
+      Failed(_)(expected) => Failed[a](start)(expected)
+      reply => reply
+    }
+  })
+
+  impl Functor[Parser] {
+    def map[a][b](f: a → b): Parser[a] → Parser[b] =
+      λp: Parser[a]. MkParser[b](λinput: Input. map[Reply][a][b](f)(step[a](p)(input)))
+  }
+
+  // apply は flatMap で書き、Monad は Applicative をスーパークラスに持つので、2 つのインスタンスは互いを必要とする
+  rec {
+    impl Applicative[Parser] {
+      def pure[a](x: a): Parser[a] = MkParser[a](λinput: Input. Parsed[a](x)(input))
+      def apply[a][b](pf: Parser[a → b]): Parser[a] → Parser[b] =
+        λp: Parser[a]. flatMap[Parser][a → b][b](pf)(λf: a → b. map[Parser][a][b](f)(p))
+    }
+
+    impl Monad[Parser] {
+      def flatMap[a][b](p: Parser[a])(f: a → Parser[b]): Parser[b] = MkParser[b](λinput: Input. match step[a](p)(input) {
+        Failed(at)(expected) => Failed[b](at)(expected)
+        Parsed(x)(rest) => step[b](f(x))(rest)
+      })
+    }
+  }
+
+  // p を 0 回以上くり返す
+  rec let many[a](p: Parser[a]): Parser[List[a]] =
+    orElse[List[a]](context[Parser] {
+      x: a = p;
+      xs: List[a] = many[a](p);
+      Cons[a](x)(xs)
+    })(pure[Parser][List[a]](Nil[a]))
+
+  let some[a](p: Parser[a]): Parser[List[a]] = context[Parser] {
+    x: a = p;
+    xs: List[a] = many[a](p);
+    Cons[a](x)(xs)
+  }
+}
+
+open Parsing
+
+// ---- 字句 ----
+
+let spaces: Parser[List[i32]] = many[i32](satisfy("a space")(isSpace))
+
+// p を読み、後ろの空白を読み飛ばす
+let token[a](p: Parser[a]): Parser[a] = context[Parser] {
+  x: a = p;
+  skipped: List[i32] = spaces;
+  x
+}
+
+let symbol(expected: String)(code: i32): Parser[i32] = token[i32](satisfy(expected)(λc: i32. c == code))
+
+let number: Parser[i32] = token[i32](
+  map[Parser][List[i32]][i32](foldLeft[List][i32][i32](λacc: i32. λc: i32. acc * 10 + (c - 48))(0))(some[i32](satisfy("a number")(isDigit)))
+)
+
+let word: Parser[Name] = token[Name](some[i32](satisfy("a name")(isLetter)))
+
+// 決まった単語。別の単語だったら、読まなかったことにする
+let keyword(text: String): Parser[Name] = attempt[Name](context[Parser] {
+  name: Name = word;
+  found: Name = if eq[Name](name)(letters(text)) then pure[Parser][Name](name) else failure[Name](`\`{text}\``);
+  found
+})
+
+// ---- 式 ----
+
+data Operator = { Plus, Minus, Times, Divide }
+
+rec data Expr = {
+  Number(i32),
+  Variable(Name),
+  Negate(Expr),
+  Binary(Operator)(Expr)(Expr),
+  LetIn(Name)(Expr)(Expr)
+}
+
+// 左結合の二項演算: operand (operator operand)*
+let chain(operand: Parser[Expr])(operator: Parser[Operator]): Parser[Expr] =
+  rec let rest(left: Expr): Parser[Expr] =
+    orElse[Expr](context[Parser] {
+      op: Operator = operator;
+      right: Expr = operand;
+      more: Expr = rest(Binary(op)(left)(right));
+      more
+    })(pure[Parser][Expr](left))
+  in flatMap[Parser][Expr][Expr](operand)(rest)
+
+let operatorOf(expected: String)(code: i32)(op: Operator): Parser[Operator] =
+  map[Parser][i32][Operator](λc: i32. op)(symbol(expected)(code))
+
+// 互いを呼ぶ構文解析器。値のままでは初期化前の相手を読むことになるので、unit を取る関数にする
+rec {
+  let expr(u: unit): Parser[Expr] = orElse[Expr](letIn(()))(sum(()))
+
+  let letIn(u: unit): Parser[Expr] = context[Parser] {
+    start: Name = keyword("let");
+    name: Name = word;
+    equals: i32 = symbol("`=`")(61);
+    bound: Expr = expr(());
+    separator: Name = keyword("in");
+    body: Expr = expr(());
+    LetIn(name)(bound)(body)
+  }
+
+  let sum(u: unit): Parser[Expr] =
+    chain(product(()))(orElse[Operator](operatorOf("`+`")(43)(Plus))(operatorOf("`-`")(45)(Minus)))
+
+  let product(u: unit): Parser[Expr] =
+    chain(unary(()))(orElse[Operator](operatorOf("`*`")(42)(Times))(operatorOf("`/`")(47)(Divide)))
+
+  let unary(u: unit): Parser[Expr] =
+    orElse[Expr](context[Parser] {
+      minus: i32 = symbol("`-`")(45);
+      operand: Expr = unary(());
+      Negate(operand)
+    })(orElse[Expr](map[Parser][i32][Expr](Number)(number))(
+      orElse[Expr](map[Parser][Name][Expr](Variable)(word))(context[Parser] {
+        open: i32 = symbol("`(`")(40);
+        inner: Expr = expr(());
+        close: i32 = symbol("`)`")(41);
+        inner
+      })))
+}
+
+let program: Parser[Expr] = context[Parser] {
+  skipped: List[i32] = spaces;
+  e: Expr = expr(());
+  finished: unit = end;
+  e
+}
+
+// ---- 表示 ----
+
+trait Show[a] {
+  def show(x: a): String
+  // 括弧で囲んだ表示。式の中に式を置くときに使う
+  def showNested(x: a): String = `({show(x)})`
+}
+
+impl Show[i32] {
+  def show = intToStr
+  def showNested = intToStr
+}
+
+impl Show[Operator] {
+  def show = λop: Operator. match op {
+    Plus => "+"
+    Minus => "-"
+    Times => "*"
+    Divide => "/"
+  }
+}
+
+impl Show[Name] {
+  def show = λname: Name. foldLeft[List][i32][String](λacc: String. λc: i32. `{acc}{letter(c)}`)("")(name)
+}
+
+rec impl Show[Expr] {
+  def show = λe: Expr. match e {
+    Number(n) => show[i32](n)
+    Variable(name) => show[Name](name)
+    Negate(inner) => `-{showNested[Expr](inner)}`
+    Binary(op)(left)(right) => `{showNested[Expr](left)} {show[Operator](op)} {showNested[Expr](right)}`
+    LetIn(name)(bound)(body) => `let {show[Name](name)} = {show[Expr](bound)} in {show[Expr](body)}`
+  }
+  // 数と名前は括弧なしで置く
+  def showNested = λe: Expr. match e {
+    Number(_) | Variable(_) => show[Expr](e)
+    _ => `({show[Expr](e)})`
+  }
+}
+
+// ---- 簡約 ----
+// 0 や 1 との演算と、数どうしの演算をあらかじめ計算する。
+
+rec let simplify(e: Expr): Expr = match e {
+  Negate(inner) => match simplify(inner) {
+    Number(n) => Number(0 - n)
+    Negate(twice) => twice
+    other => Negate(other)
+  }
+  Binary(op)(left)(right) => match Binary(op)(simplify(left))(simplify(right)) {
+    Binary(Plus)(Number(0))(x) | Binary(Plus)(x)(Number(0)) | Binary(Minus)(x)(Number(0)) => x
+    Binary(Times)(Number(1))(x) | Binary(Times)(x)(Number(1)) | Binary(Divide)(x)(Number(1)) => x
+    Binary(Times)(Number(0))(_) | Binary(Times)(_)(Number(0)) => Number(0)
+    Binary(Plus)(Number(a))(Number(b)) => Number(a + b)
+    Binary(Minus)(Number(a))(Number(b)) => Number(a - b)
+    Binary(Times)(Number(a))(Number(b)) => Number(a * b)
+    Binary(Divide)(Number(a))(Number(b)) if b != 0 => Number(a / b)
+    other => other
+  }
+  LetIn(name)(bound)(body) => LetIn(name)(simplify(bound))(simplify(body))
+  Number(_) | Variable(_) => e
+}
+
+// ---- 評価 ----
+
+data Failure = { DivisionByZero, Unbound(Name) }
+
+type Result = Either[Failure]
+
+impl[e] Monad[Either[e]] {
+  def flatMap[a][b](v: Either[e][a])(f: a → Either[e][b]): Either[e][b] = match v {
+    Left(err) => Left[e][b](err)
+    Right(x) => f(x)
+  }
+}
+
+type Bindings = List[Pair[Name][i32]]
+
+rec let lookup(name: Name)(bindings: Bindings): Result[i32] = match bindings {
+  Nil => Left[Failure][i32](Unbound(name))
+  Cons(Pair(bound)(value))(_) if eq[Name](bound)(name) => Right[Failure][i32](value)
+  Cons(_)(rest) => lookup(name)(rest)
+}
+
+rec let evaluate(bindings: Bindings)(e: Expr): Result[i32] = match e {
+  Number(n) => Right[Failure][i32](n)
+  Variable(name) => lookup(name)(bindings)
+  Negate(inner) => map[Result][i32][i32](λv: i32. 0 - v)(evaluate(bindings)(inner))
+  Binary(op)(left)(right) => context[Result] {
+    a: i32 = evaluate(bindings)(left);
+    b: i32 = evaluate(bindings)(right);
+    v: i32 = match op {
+      Plus => Right[Failure][i32](a + b)
+      Minus => Right[Failure][i32](a - b)
+      Times => Right[Failure][i32](a * b)
+      Divide => if b == 0 then Left[Failure][i32](DivisionByZero) else Right[Failure][i32](a / b)
+    };
+    v
+  }
+  LetIn(name)(bound)(body) => context[Result] {
+    value: i32 = evaluate(bindings)(bound);
+    result: i32 = evaluate(Cons[Pair[Name][i32]](Pair[Name][i32](name)(value))(bindings))(body);
+    result
+  }
+}
+
+impl Show[Failure] {
+  def show = λf: Failure. match f {
+    DivisionByZero => "division by zero"
+    Unbound(name) => `unbound name {show[Name](name)}`
+  }
+}
+
+// ---- 実行 ----
+
+let calculate(text: String): i32 = match parse[Expr](program)(text) {
+  Failed(at)(expected) => printStr(`{text}\n  syntax error at {show[i32](at)}: expected {expected}\n`)
+  Parsed(e)(_) => {
+    printStr(`{text}\n  parsed:     {show[Expr](e)}\n  simplified: {show[Expr](simplify(e))}\n`);
+    match evaluate(Nil[Pair[Name][i32]])(e) {
+      Right(value) => printStr(`  value:      {show[i32](value)}\n`)
+      Left(failure) => printStr(`  error:      {show[Failure](failure)}\n`)
+    }
+  }
+}
+
+let main(): i32 = {
+  calculate("1 + 2 * 3");
+  calculate("(1 + 2) * 3");
+  calculate("10 - 4 - 3");
+  calculate("-(2 + 3) * 1 + 0");
+  calculate("let x = 6 in x * (x + 1)");
+  calculate("let x = 2 in let y = x * x in y * y - x");
+  calculate("8 / (4 - 2 * 2)");
+  calculate("width * 2");
+  calculate("1 + * 2");
+  calculate("(1 + 2");
+  0
+}

@@ -49,6 +49,13 @@ int put_char(int value) {
     return value;
 }
 
+char *char_to_string(int value) {
+    char *buffer = malloc(2);
+    buffer[0] = (char) value;
+    buffer[1] = '\0';
+    return buffer;
+}
+
 int string_equal(const char *left, const char *right) {
     return strcmp(left, right) == 0;
 }

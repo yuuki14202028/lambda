@@ -159,6 +159,20 @@ class QuantifiedConstraintSuite extends munit.FunSuite {
     assertRight(encode(src + main))
   }
 
+  test("量化されたスーパークラスから得た制約の、さらにスーパークラスも使える") {
+    val src =
+      """trait Base[f: * → *] { def base[a](x: a): f[a] }
+        |trait Derived[f: * → *] with Base[f] { def derived[a](x: f[a]): f[a] }
+        |trait Lifting[t: (* → *) → * → *] with ∀(m: * → *). Derived[m] ⇒ Derived[t[m]] {
+        |  def lift[m: * → *][a](x: m[a]): t[m][a] with Derived[m]
+        |}
+        |let viaBase[t: (* → *) → * → *][m: * → *](x: i32): t[m][i32] with Lifting[t], Derived[m] = base[t[m]][i32](x)
+        |let viaDerived[t: (* → *) → * → *][m: * → *](x: t[m][i32]): t[m][i32] with Lifting[t], Derived[m] = derived[t[m]][i32](x)
+        |""".stripMargin
+    val shown = encode(src + main).fold(fail(_), _.show)
+    assert(shown.contains("$super_Derived_0"), clue(shown))
+  }
+
   // ---- 前提の入れ子 ----
 
   private val compose = prelude +

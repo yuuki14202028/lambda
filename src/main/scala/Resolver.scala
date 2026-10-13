@@ -94,9 +94,9 @@ object Resolver {
 
   // スコープ中の量化された制約 ∀ā. P̄ ⇒ C[τ̄] のヘッドが合えば、前提 P̄ の解決結果を返す
   private def resolveViaQuantifiedGiven(env: Env, constraint: TypeConstraint, depth: Int): Option[EitherS[Evidence[TypeRec]]] =
-    (env.givens.map(g => (g, Evidence.Given(g): Evidence[TypeRec])) ++ superClosure(env)).iterator.filter { case (g, _) =>
-      g.quantified && g.name == constraint.name && g.arg.length == constraint.arg.length
-    }.flatMap { case (assumed, evidence) =>
+    quantifiedGivens(env).iterator.filter { case (g, _, _) =>
+      g.name == constraint.name && g.arg.length == constraint.arg.length
+    }.flatMap { case (assumed, evidence, project) =>
       val paramVars = assumed.params.map(_._1)
       assumed.arg.zip(constraint.arg).toList
         .foldLeftM(Map.empty[TypeVariable, TypeRec[Type]]) { case (acc, (pattern, actual)) => matchTypes(pattern, actual, paramVars.toSet, acc) }
@@ -105,9 +105,37 @@ object Resolver {
           val typeArgs = paramVars.map(subst)
           assumed.premises
             .traverse(premise => resolveIn(env, instantiate(premise, paramVars, typeArgs), depth + 1))
-            .map(Evidence.Apply(evidence, typeArgs, _))
+            .map(premises => project(Evidence.Apply(evidence, typeArgs, premises)))
         }
     }.nextOption()
+
+  /** インスタンスのように使える、スコープ中の量化された制約。
+   * ∀ā. P̄ ⇒ C[τ̄] からは C のスーパークラスも得られるので、∀ā. P̄ ⇒ S[…] も候補にする。
+   * 各候補は (照合する形, 元の量化された制約の根拠, 具体化した根拠からスーパークラスを射影する関数)
+   */
+  private def quantifiedGivens(env: Env): List[(TypeConstraint, Evidence[TypeRec], Evidence[TypeRec] => Evidence[TypeRec])] = {
+    type Candidate = (TypeConstraint, Evidence[TypeRec], Evidence[TypeRec] => Evidence[TypeRec])
+
+    def supers(candidate: Candidate): List[Candidate] = {
+      val (assumed, evidence, project) = candidate
+      env.traits.get(assumed.name).fold(List.empty[Candidate]) { traitDef =>
+        traitDef.supers.zipWithIndex.toList.filterNot(_._1.quantified).map { case (sup, index) =>
+          val reached = instantiate(sup, traitDef.paramVars, assumed.arg)
+          (assumed.copy(name = reached.name, arg = reached.arg), evidence, (applied: Evidence[TypeRec]) => Evidence.Super(assumed.name, index, project(applied)))
+        }
+      }
+    }
+
+    @tailrec
+    def collect(queue: List[Candidate], found: List[Candidate]): List[Candidate] = queue match {
+      case Nil => found.reverse
+      case candidate :: rest => collect(rest ++ supers(candidate), candidate :: found)
+    }
+
+    val direct = (env.givens.map(g => (g, Evidence.Given(g): Evidence[TypeRec])) ++ superClosure(env)).toList
+      .collect { case (g, evidence) if g.quantified => (g, evidence, (applied: Evidence[TypeRec]) => applied) }
+    collect(direct, Nil)
+  }
 
   // ヘッドが合うインスタンスがあれば、その文脈の解決結果を返す（文脈が解決できなければエラーで確定する）
   private def resolveViaInstance(env: Env, constraint: TypeConstraint, depth: Int): Option[EitherS[Evidence[TypeRec]]] = for {

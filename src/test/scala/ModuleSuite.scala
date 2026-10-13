@@ -357,6 +357,19 @@ class ModuleSuite extends munit.FunSuite {
     assertLeftContains(validate(withMain(src + "impl Weight[M.Box] { def weight = λb: M.Box. 2 }")), "Weight")
   }
 
+  test("型構成子の別名（本体のカインドが * でない別名）") {
+    val src =
+      """data Either[e][a] = { Left(e), Right(a) }
+        |trait Functor[f: * → *] { def map[a][b](g: a → b)(x: f[a]): f[b] }
+        |impl[e] Functor[Either[e]] { def map[a][b](g: a → b)(x: Either[e][a]): Either[e][b] = match x { Left(err) => Left[e][b](err)  Right(v) => Right[e][b](g(v)) } }
+        |type Result = Either[bool]
+        |let ok: Result[i32] = Right[bool][i32](1)
+        |let mapped: Result[i32] = map[Result][i32][i32](λn: i32. n)(ok)
+        |""".stripMargin
+    assertRight(encode(withMain(src)))
+    assertLeftContains(validate(withMain(src + "let bad: Result = ok")), "Type Either[bool] has kind * → *, expected *")
+  }
+
   // ---- 検査中の module を修飾子にした参照 ----
 
   test("module の中から、自身を修飾子にして参照できる（private も含む）") {

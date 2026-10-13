@@ -1,0 +1,36 @@
+1 + 2 * 3
+  parsed:     1 + (2 * 3)
+  simplified: 7
+  value:      7
+(1 + 2) * 3
+  parsed:     (1 + 2) * 3
+  simplified: 9
+  value:      9
+10 - 4 - 3
+  parsed:     (10 - 4) - 3
+  simplified: 3
+  value:      3
+-(2 + 3) * 1 + 0
+  parsed:     ((-(2 + 3)) * 1) + 0
+  simplified: -5
+  value:      -5
+let x = 6 in x * (x + 1)
+  parsed:     let x = 6 in x * (x + 1)
+  simplified: let x = 6 in x * (x + 1)
+  value:      42
+let x = 2 in let y = x * x in y * y - x
+  parsed:     let x = 2 in let y = x * x in (y * y) - x
+  simplified: let x = 2 in let y = x * x in (y * y) - x
+  value:      14
+8 / (4 - 2 * 2)
+  parsed:     8 / (4 - (2 * 2))
+  simplified: 8 / 0
+  error:      division by zero
+width * 2
+  parsed:     width * 2
+  simplified: width * 2
+  error:      unbound name width
+1 + * 2
+  syntax error at 4: expected `(`
+(1 + 2
+  syntax error at 6: expected `)`

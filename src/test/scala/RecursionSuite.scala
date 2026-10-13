@@ -383,6 +383,43 @@ class RecursionSuite extends munit.FunSuite {
     assertLeftContains(validate(src + main), "Functor")
   }
 
+  private val hierarchy =
+    """trait Base[f: * → *] { def base[a](x: a): f[a] }
+      |trait Derived[f: * → *] with Base[f] { def derived[a](x: f[a]): f[a] }
+      |data Box[a] = { MkBox(a) }
+      |""".stripMargin
+
+  test("rec { impl }: スーパークラスのインスタンスは、組の中で先に宣言したものを使える") {
+    val src = hierarchy +
+      """rec {
+        |  impl Base[Box] { def base[a](x: a): Box[a] = derived[Box][a](MkBox[a](x)) }
+        |  impl Derived[Box] { def derived[a](x: Box[a]): Box[a] = x }
+        |}
+        |""".stripMargin
+    assertRight(encode(src + main))
+  }
+
+  test("rec { impl }: 文脈のないインスタンスは、後で宣言したものをスーパークラスにできない") {
+    val src = hierarchy +
+      """rec {
+        |  impl Derived[Box] { def derived[a](x: Box[a]): Box[a] = x }
+        |  impl Base[Box] { def base[a](x: a): Box[a] = derived[Box][a](MkBox[a](x)) }
+        |}
+        |""".stripMargin
+    assertLeftContains(validate(src + main), "No instance for Base[Box]")
+  }
+
+  test("rec { impl }: 文脈のあるインスタンスは、組のどれでもスーパークラスにできる") {
+    val src = hierarchy +
+      """data Wrap[f: * → *][a] = { MkWrap(f[a]) }
+        |rec {
+        |  impl[f: * → *] Derived[Wrap[f]] with Derived[f] { def derived[a](x: Wrap[f][a]): Wrap[f][a] = x }
+        |  impl[f: * → *] Base[Wrap[f]] with Derived[f] { def base[a](x: a): Wrap[f][a] = MkWrap[f][a](base[f][a](x)) }
+        |}
+        |""".stripMargin
+    assertRight(encode(src + main))
+  }
+
   test("rec { }: 種類の違う宣言は混ぜられない") {
     assertLeftContains(validate("rec { let f(x: i32): i32 = x; data A = { MkA } }\n" + main), "one kind")
   }

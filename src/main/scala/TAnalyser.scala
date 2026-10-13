@@ -486,8 +486,9 @@ object TAnalyser {
   // 以下の宣言の検査は「型付きの宣言」と「その宣言が Env に足す定義」を返す。
   // 後者は型付きの宣言だけから決まり（aliasOf / dataOf / traitOf）、module を封印するときに読み直す
 
+  // 別名の本体は型構成子でもよい（`type Result = Either[Failure]`）
   private def aliasOf(params: Seq[(TypeVariable, Kind)], alias: TypeRec[Type]): Check[TypeAlias] =
-    expandChecked(alias).local((e: Env) => e.withTypeVars(params)).map(TypeAlias(params, _))
+    expandWellKinded(alias).local((e: Env) => e.withTypeVars(params)).map { case (expanded, _) => TypeAlias(params, expanded) }
 
   // type: (型付きの別名本体, 別名を登録する Env の拡張)
   private def checkAlias(variable: TypeVariable, params: Seq[(TypeVariable, Kind)], alias: TC[Type]): Check[(TypeRec[Type], Env => Env)] = for {
@@ -1187,7 +1188,14 @@ object TAnalyser {
   }
 
   // メソッド本体の検査。group は rec で一緒に宣言されたインスタンス（自身を含む）で、メソッド本体から見える
-  private def implBody(head: ImplHead, writtenMethods: Seq[MethodImpl[TC]], group: Map[(TypeVariable, Seq[Variable]), InstanceDef]): Check[TypeRec[Decl]] = {
+  // supers はスーパークラスの解決に使える組のインスタンス。スーパークラスの辞書は、この辞書を作るときに読まれるので、
+  // 文脈のない（すぐに作られる）インスタンスでは、組の中で先に宣言されたものに限る
+  private def implBody(
+      head: ImplHead,
+      writtenMethods: Seq[MethodImpl[TC]],
+      group: Map[(TypeVariable, Seq[Variable]), InstanceDef],
+      supers: Map[(TypeVariable, Seq[Variable]), InstanceDef] = Map.empty
+  ): Check[TypeRec[Decl]] = {
     val traitDef = head.traitDef
     val implRef = head.ref
     val implScope = (e: Env) => e.withTypeVars(head.params)
@@ -1240,7 +1248,12 @@ object TAnalyser {
           }
         } yield MethodImpl[TypeRec](m.name, typedSig, typedBody)
       }
-      superEvidence <- Resolver.superConstraints(traitDef, head.targets).traverse(Resolver.resolve).local(contextScope)
+      superEvidence <- Resolver.superConstraints(traitDef, head.targets).traverse { constraint =>
+        // どの trait のスーパークラスとして必要になったかを残す
+        ReaderT((e: Env) => Resolver.resolve(constraint).run(e).left.map(
+          CompileError.RequiredBy(_, showTypeConstraint(head.inst.targets.foldLeft(TypeConstraint(head.traitName, Seq.empty))((c, t) => c.copy(arg = c.arg :+ t))),
+            s"trait ${head.traitName.name}${traitDef.supers.map(showTypeConstraint).mkString(" with ", ", ", "")}")))
+      }.local((e: Env) => contextScope(e).copy(instances = e.instances ++ supers))
       // 後段がインスタンスを引けるよう、ターゲットは展開済みの型で持つ
     } yield topImplT(head.traitName, head.params, head.targets, head.typedContext, typedMethods, superEvidence)
   }
@@ -1297,10 +1310,12 @@ object TAnalyser {
       }).local(visible).map(done :+ _)
     }
     group = heads.map { case (key, inst, _) => key -> inst }.toMap
-    typed <- heads.zip(members).traverse {
-      case ((_, _, Some(head)), RecInstance.Impl(_, _, _, _, methods)) => implBody(head, methods, group)
+    typed <- heads.zip(members).zipWithIndex.traverse {
+      case (((_, _, Some(head)), RecInstance.Impl(_, _, _, _, methods)), index) =>
+        val earlier = heads.take(index).map { case (key, inst, _) => key -> inst }.toMap
+        implBody(head, methods, group, supers = if (head.inst.context.nonEmpty) group else earlier)
       // derive の検査は、組の他のインスタンスが見える環境で行う
-      case ((key, inst, _), _) =>
+      case (((key, inst, _), _), _) =>
         lift(Deriver.check(inst.name, TypeVariable(key._2.head.name), env.copy(instances = env.instances ++ (group - key))))
           .as(topDeriveT(inst.name, TypeVariable(key._2.head.name)))
     }

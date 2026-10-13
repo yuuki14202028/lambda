@@ -1,0 +1,100 @@
+// モナド変換子: 状態を持つ計算を、別のモナドの上に積む。
+//
+// StateT[s][m] は「状態 s を読み書きしながら、モナド m の中で動く計算」。
+// 変換子の trait MonadTrans は、スーパークラスに量化された制約を持つ:
+// 下の m がモナドなら、積んだ t[m] もモナドである。
+
+import "std/prelude"
+
+let printInt: i32 → i32 = foreign[i32 → i32] print_int
+
+// ---- StateT ----
+
+data StateT[s][m: * → *][a] = { MkStateT(s → m[Pair[a][s]]) }
+
+let runStateT[s][m: * → *][a](c: StateT[s][m][a])(initial: s): m[Pair[a][s]] = match c {
+  MkStateT(f) => f(initial)
+}
+
+impl[s][m: * → *] Functor[StateT[s][m]] with Functor[m] {
+  def map[a][b](f: a → b): StateT[s][m][a] → StateT[s][m][b] =
+    λc: StateT[s][m][a]. MkStateT[s][m][b](λstate: s.
+      map[m][Pair[a][s]][Pair[b][s]](λp: Pair[a][s]. match p {
+        Pair(x)(next) => Pair[b][s](f(x))(next)
+      })(runStateT[s][m][a](c)(state)))
+}
+
+// apply は flatMap で書くので、2 つのインスタンスは互いを必要とする
+rec {
+  impl[s][m: * → *] Applicative[StateT[s][m]] with Monad[m] {
+    def pure[a](x: a): StateT[s][m][a] = MkStateT[s][m][a](λstate: s. pure[m][Pair[a][s]](Pair[a][s](x)(state)))
+    def apply[a][b](cf: StateT[s][m][a → b]): StateT[s][m][a] → StateT[s][m][b] =
+      λc: StateT[s][m][a]. flatMap[StateT[s][m]][a → b][b](cf)(λf: a → b. map[StateT[s][m]][a][b](f)(c))
+  }
+
+  impl[s][m: * → *] Monad[StateT[s][m]] with Monad[m] {
+    def flatMap[a][b](c: StateT[s][m][a])(f: a → StateT[s][m][b]): StateT[s][m][b] = MkStateT[s][m][b](λstate: s.
+      flatMap[m][Pair[a][s]][Pair[b][s]](runStateT[s][m][a](c)(state))(λp: Pair[a][s]. match p {
+        Pair(x)(next) => runStateT[s][m][b](f(x))(next)
+      }))
+  }
+}
+
+let get[s][m: * → *]: StateT[s][m][s] with Monad[m] = MkStateT[s][m][s](λstate: s. pure[m][Pair[s][s]](Pair[s][s](state)(state)))
+
+let put[s][m: * → *](next: s): StateT[s][m][unit] with Monad[m] =
+  MkStateT[s][m][unit](λstate: s. pure[m][Pair[unit][s]](Pair[unit][s](())(next)))
+
+// ---- 変換子 ----
+
+// 下のモナドの計算を持ち上げられ、下がモナドなら積んだものもモナド
+trait MonadTrans[t: (* → *) → * → *] with ∀(m: * → *). Monad[m] ⇒ Monad[t[m]] {
+  def lift[m: * → *][a](x: m[a]): t[m][a] with Monad[m]
+}
+
+impl[s] MonadTrans[StateT[s]] {
+  def lift[m: * → *][a](x: m[a]): StateT[s][m][a] with Monad[m] =
+    MkStateT[s][m][a](λstate: s. map[m][a][Pair[a][s]](λv: a. Pair[a][s](v)(state))(x))
+}
+
+// どの変換子でも使える: 下のモナドの計算を 2 回走らせて、結果を足す
+let twice[t: (* → *) → * → *][m: * → *](x: m[i32]): t[m][i32] with MonadTrans[t], Monad[m] = context[t[m]] {
+  a: i32 = lift[t][m][i32](x);
+  b: i32 = lift[t][m][i32](x);
+  a + b
+}
+
+// ---- 使う: 割り算の回数を数えながら、0 で割ったら失敗する ----
+
+type Counting = StateT[i32][Option]
+
+let tick: Counting[unit] = context[Counting] {
+  n: i32 = get[i32][Option];
+  done: unit = put[i32][Option](n + 1);
+  done
+}
+
+let divide(x: i32)(y: i32): Counting[i32] = context[Counting] {
+  counted: unit = tick;
+  q: i32 = lift[StateT[i32]][Option][i32](if y == 0 then None[i32] else Some[i32](x / y));
+  q
+}
+
+let compute(a: i32)(b: i32)(c: i32): Counting[i32] = context[Counting] {
+  x: i32 = divide(a)(b);
+  y: i32 = divide(x)(c);
+  x + y
+}
+
+// 結果と、割り算の回数を表示する（失敗なら -1）
+let report(c: Counting[i32]): i32 = match runStateT[i32][Option][i32](c)(0) {
+  Some(Pair(value)(steps)) => { printInt(value); printInt(steps) }
+  None => printInt(0 - 1)
+}
+
+let main(): i32 = {
+  report(compute(100)(5)(2));
+  report(compute(100)(0)(2));
+  report(twice[StateT[i32]][Option](Some[i32](21)));
+  0
+}
