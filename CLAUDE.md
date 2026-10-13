@@ -76,6 +76,7 @@ PatternDesugar は行列から決定木を作り、構成子 1 段の `Match`（
 - 位置は `Span(start, end, file)`。パーサが各ノードに範囲を付け（`IndexedRec` の注釈）、import されたファイルのノードにはそのファイルを記録する
 - 型検査の規則は親のノードで走るが、エラーは原因の子で報告する。型付きノードと元の範囲の対応を `Env.spans`（`SpanTable`、同一性で引く）に記録し、`failAt` / `expectAt` / `guardAt` が子の位置を引く。注釈つきの束縛は `blame` が λ・Λ の中へ進み、本体と結果の型の注釈を指す
 - エラーに付ける情報は包む case で表す（どれも `render` と `core` は中身のまま）: `At`（主な位置）、`RelatedTo`（関係する位置と理由 `Related`）、`Hinted`（Env から得た手がかり `Hint`: 似た名前・宣言済みのインスタンス・`rec` の案内など。エラーが起きたノードの Env で一度だけ付ける。`TAnalyser.enrich`）、`RequiredBy`（どのインスタンスの文脈として必要になったか）
+- 宣言の検査に失敗しても後続の宣言の検査を続け（`TAnalyser.checkAll`。top-level と module の中）、エラーを `CompileError.Multiple` にまとめる。失敗した宣言が定義するはずだった名前（`Env.failed` / `failedTraits`）を使ったことによるエラーは報告しない（`causedByFailure`）
 - 表示を変えたら `UPDATE_DIAGNOSTICS=1 sbt "testOnly *DiagnosticSuite"` で `src/test/diagnostics/*.txt` を書き直し、差分を確認する
 
 エラー処理は 3 層に分かれる（Effects.scala / CompileError.scala）:

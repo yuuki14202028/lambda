@@ -1395,7 +1395,7 @@ object TAnalyser {
     val full = outer.qualify(name)
     for {
       _ <- Either.cond(!outer.modules.contains(full), (), CompileError.AlreadyDefined(NameKind.ModuleName, full))
-      checked <- decls.traverse(checkDecl).run(outer.copy(path = outer.path :+ name, members = Names.empty))
+      checked <- checkAll(decls, outer.copy(path = outer.path :+ name, members = Names.empty))
       (inner, typedDecls) = checked
       sealedEnv <- sealDecls(typedDecls).run(inner)
     } yield (
@@ -1450,6 +1450,60 @@ object TAnalyser {
     StateT(env => checked.run(env).left.map(_.at(decl.extract)))
   }
 
+  // ---- 複数のエラー ----
+  // 宣言の検査に失敗しても、後続の宣言の検査を続ける。失敗した宣言の名前を使ったことによるエラーは報告しない
+
+  private def namesOf(decl: IndexedRec[Decl]): (Set[String], Set[String]) = decl.project match {
+    case AST.TopModule(name, _) => (Set(name), Set.empty)
+    case AST.TopImpl(traitName, _, _, _, _, _) => (Set.empty, Set(traitName.name))
+    case AST.TopDerive(traitName, _) => (Set.empty, Set(traitName.name))
+    case AST.TopRec(members) =>
+      val found = members.map(namesOf)
+      (found.flatMap(_._1).toSet, found.flatMap(_._2).toSet)
+    case AST.TopModified(_, inner) => namesOf(inner)
+    case _ => (declaredNames(Seq(decl)), Set.empty)
+  }
+
+  // エラーが、すでに失敗した宣言のせいで起きたものか
+  private def causedByFailure(env: Env, error: CompileError): Boolean = {
+    // 修飾された名前は、先頭の module が失敗していれば当たる
+    def failed(name: String): Boolean = env.failed(name) || env.failed(name.takeWhile(_ != '.'))
+    error.core match {
+      case CompileError.UndefinedVariable(name) => failed(name.name)
+      case CompileError.UndefinedTypeVariable(name) => failed(name.name)
+      case CompileError.UndefinedTrait(name, _) => failed(name.name)
+      case CompileError.UndefinedModule(path) => path.headOption.exists(failed)
+      case CompileError.NotAConstructor(name) => failed(name.name)
+      case CompileError.NoInstance(name, _) => env.failedTraits(name.name) || env.failedTraits(shortName(name.name))
+      case CompileError.OperatorUndefined(_, _, function) => failed(function.name)
+      case CompileError.ContextMethodMissing(name) => failed(name.name)
+      case CompileError.StrInterpShowMissing(_) => failed("show")
+      case CompileError.InContext(inner) => causedByFailure(env, inner)
+      case CompileError.Multiple(errors) => errors.forall(causedByFailure(env, _))
+      case _ => false
+    }
+  }
+
+  private def checkAll(decls: Seq[IndexedRec[Decl]], initial: Env): EitherS[(Env, Seq[TypeRec[Decl]])] = {
+    val (env, typed, errors) = decls.foldLeft((initial, Vector.empty[TypeRec[Decl]], Vector.empty[CompileError])) {
+      case ((current, done, found), decl) =>
+        checkDecl(decl).run(current) match {
+          case Right((next, typedDecl)) => (next, done :+ typedDecl, found)
+          case Left(error) =>
+            val (names, traits) = namesOf(decl)
+            val poisoned = current.copy(failed = current.failed ++ names, failedTraits = current.failedTraits ++ traits)
+            (poisoned, done, if (causedByFailure(current, error)) found else found ++ error.all)
+        }
+    }
+    errors match {
+      case Vector() if env.failed == initial.failed && env.failedTraits == initial.failedTraits => Right((env, typed))
+      // 報告するエラーが残らなくても、どこかで失敗している（原因は外側ですでに報告されている）
+      case Vector() => Left(CompileError.Multiple(Seq.empty))
+      case Vector(only) => Left(only)
+      case many => Left(CompileError.Multiple(many))
+    }
+  }
+
   private def checkMain(env: Env): EitherS[Unit] = env.values.get(Variable("main")) match {
     case Some(t) if Equivalence.alpha(t, arrowT(unitTypeT, intTypeT)) => Right(())
     case Some(t) => Left(CompileError.MainTypeInvalid(t))
@@ -1471,7 +1525,7 @@ object TAnalyser {
   }.toSet
 
   def validate(prog: IndexedRec[AST.Program.type]): Either[CompileError, TypeRec[AST.Program.type]] = prog.project match {
-    case AST.Program(decls) => decls.traverse(checkDecl).run(Env.empty.copy(spans = new SpanTable, declared = declaredNames(decls))).flatMap { case (env, typedDecls) =>
+    case AST.Program(decls) => checkAll(decls, Env.empty.copy(spans = new SpanTable, declared = declaredNames(decls))).flatMap { case (env, typedDecls) =>
       // main についてのエラーは、main の宣言の位置で報告する
       val mainSpan = decls.collectFirst { case decl if (decl.project match {
         case AST.TopLet(Variable("main"), _, _) => true

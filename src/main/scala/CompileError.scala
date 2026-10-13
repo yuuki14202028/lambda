@@ -107,6 +107,8 @@ enum CompileError {
   case Hinted(error: CompileError, found: Seq[Hint])
   // 制約 wanted を解決する途中で、インスタンス through の文脈として必要になった
   case RequiredBy(error: CompileError, wanted: String, through: String)
+  // 互いに無関係な宣言のエラーをまとめたもの（ソースの順）
+  case Multiple(errors: Seq[CompileError])
 
   // ---- 構文・モジュール ----
   case ParseFailure(error: cats.parse.Parser.Error)
@@ -221,7 +223,18 @@ enum CompileError {
   case MainMissing
   case MainTypeInvalid(actual: TypeRec[Type])
 
-  def at(span: Span): CompileError = if (position.isDefined) this else At(span, this)
+  def at(span: Span): CompileError = this match {
+    case Multiple(_) => this
+    case _ => if (position.isDefined) this else At(span, this)
+  }
+
+  // まとめられたエラーを 1 つずつに分ける
+  def all: Seq[CompileError] = this match {
+    case Multiple(errors) => errors.flatMap(_.all)
+    case At(_, inner @ Multiple(_)) => inner.all
+    case Hinted(inner @ Multiple(_), _) => inner.all
+    case other => Seq(other)
+  }
 
   // 位置・関係する位置・手がかりを外した、エラーそのもの
   def core: CompileError = this match {
@@ -271,6 +284,7 @@ enum CompileError {
     case RelatedTo(error, _) => error.hinted
     case Hinted(_, _) => true
     case RequiredBy(error, _, _) => error.hinted
+    case Multiple(_) => true
     case _ => false
   }
 
@@ -279,6 +293,7 @@ enum CompileError {
     case RelatedTo(error, _) => error.render
     case Hinted(error, _) => error.render
     case RequiredBy(error, _, _) => error.render
+    case Multiple(errors) => errors.map(_.render).mkString("\n")
 
     case ParseFailure(error) => s"Parse error: expected ${expectationsShown(error.expected)}"
     case ImportReadFailure(path, cause) => s"Import error: $path: ${cause.getMessage}"

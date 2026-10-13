@@ -1,0 +1,21 @@
+// 互いに無関係な宣言のエラーは、まとめて報告される。
+let __add_i32(a: i32)(b: i32): i32 = intrinsic[add_i32](a)(b)
+
+let first: i32 = true
+
+let second: bool = undefinedName
+
+// first は検査に失敗しているので、それを使うこの宣言のエラーは報告されない
+let usesFirst: i32 = first + 1
+
+module Shapes {
+  let area(w: i32)(h: i32): bool = w + h
+  let ok: i32 = 1
+}
+
+// module Shapes も失敗しているので、これも報告されない
+let usesModule: i32 = Shapes.ok
+
+let third(x: i32): i32 = x(1)
+
+let main(): i32 = third(usesFirst)

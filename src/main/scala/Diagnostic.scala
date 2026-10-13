@@ -64,7 +64,16 @@ object Diagnostic {
 
   // ---- 描画 ----
 
-  def render(error: CompileError, sources: Sources, color: Boolean = false): String = render(of(error, sources), sources, color)
+  // エラーが複数あれば、ソースの順に並べ、最後に件数を示す
+  def render(error: CompileError, sources: Sources, color: Boolean = false): String = {
+    val errors = error.all
+    val rendered = errors.map(single => render(of(single, sources), sources, color))
+    if (errors.length <= 1) rendered.headOption.getOrElse("")
+    else {
+      val summary = s"error: ${errors.length} errors"
+      (rendered :+ (if (color) s"\u001b[1;31m$summary\u001b[0m" else summary)).mkString("\n\n")
+    }
+  }
 
   def render(diagnostic: Diagnostic, sources: Sources, color: Boolean): String = {
     def paint(code: String, text: String): String = if (color) s"\u001b[${code}m$text\u001b[0m" else text
@@ -224,6 +233,7 @@ object Diagnostic {
       // ---- 構文・import ----
       case ParseFailure(_) | ImportParseFailure(_, _) => Description("syntax error")
       case RequiredBy(inner, _, _) => describe(inner)
+      case Multiple(errors) => Description(s"${errors.length} errors")
       case ImportReadFailure(path, cause) => Description(
         s"cannot read the imported file ${name(Sources.displayName(path))}",
         "imported here",

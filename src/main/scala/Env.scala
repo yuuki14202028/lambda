@@ -132,7 +132,9 @@ case class Env(
     spans: SpanTable = new SpanTable,                        // 型付きノードの位置（エラー表示用）
     declared: Set[String] = Set.empty,                       // プログラムのどこかで宣言される top-level の名前（「後で宣言されている」の案内用）
     defining: Set[String] = Set.empty,                       // rec なしで定義している途中の名前（「rec が要る」の案内用）
-    laterInstances: Set[String] = Set.empty                  // rec の組の中で後に宣言され、まだスーパークラスに使えないインスタンス（案内用）
+    laterInstances: Set[String] = Set.empty,                 // rec の組の中で後に宣言され、まだスーパークラスに使えないインスタンス（案内用）
+    failed: Set[String] = Set.empty,                         // 検査に失敗した宣言が定義するはずだった名前（それを使う側のエラーは報告しない）
+    failedTraits: Set[String] = Set.empty                    // 検査に失敗した impl / derive の trait（そのインスタンスがないというエラーは報告しない）
 ) {
   // 局所的な束縛は、同名の module メンバーを隠す
   def withValue(variable: Variable, t: TypeRec[Type]): Env =
