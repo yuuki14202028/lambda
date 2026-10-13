@@ -1,0 +1,10 @@
+trait Base[f: * → *] { def base[a](x: a): f[a] }
+trait Derived[f: * → *] with Base[f] { def derived[a](x: f[a]): f[a] }
+data Box[a] = { MkBox(a) }
+
+rec {
+  impl Derived[Box] { def derived[a](x: Box[a]): Box[a] = x }
+  impl Base[Box] { def base[a](x: a): Box[a] = derived[Box][a](MkBox[a](x)) }
+}
+
+let main(): i32 = 0

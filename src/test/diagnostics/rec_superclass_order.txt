@@ -1,0 +1,10 @@
+error: no instance for `Base[Box]`
+ --> rec_superclass_order.lam:5:1
+  |
+5 | rec {
+  | ^^^^^ this needs the instance
+  |
+  = note: required for `Derived[Box]` by `trait Derived with Base[f]`
+  = note: the instance `Base[Box]` is declared later in the same `rec { … }` group
+  = note: an instance without a `with` context is built immediately, and its dictionary holds the dictionaries of its superclasses, so those must already exist
+  = help: move the declaration of `Base[Box]` before this one

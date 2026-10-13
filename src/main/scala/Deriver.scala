@@ -103,15 +103,19 @@ object Deriver {
     InstanceDef(traitName, targets, Seq.empty, instanceDictionaryName(traitName, Seq(target.name)), prefix)
   }
 
-  def check(traitName: TypeVariable, target: TypeVariable, env: Env): EitherS[InstanceDef] = for {
+  /** supers は、スーパークラスの解決に使えるインスタンスの Env。導出したインスタンスは文脈を持たず辞書がすぐ作られるので、
+   * rec の組の中では、スーパークラスのインスタンスは先に宣言されたものに限る（フィールドの検査には組の全員を使う）。 */
+  def check(traitName: TypeVariable, target: TypeVariable, env: Env, supers: Option[Env] = None): EitherS[InstanceDef] = for {
     _ <- Either.cond(
       !env.instances.contains(instanceKey(traitName, Seq(target.name))), (),
       CompileError.OverlappingInstance(traitName, Seq(target.name))
     )
-    p <- plan(traitName, target, env)
+    p <- plan(traitName, target, env, supers.getOrElse(env))
   } yield p.inst
 
-  private def plan(traitName: TypeVariable, target: TypeVariable, env: Env): EitherS[Plan] = for {
+  private def plan(traitName: TypeVariable, target: TypeVariable, env: Env): EitherS[Plan] = plan(traitName, target, env, env)
+
+  private def plan(traitName: TypeVariable, target: TypeVariable, env: Env, supers: Env): EitherS[Plan] = for {
     traitDef <- env.traits.get(traitName).toRight(CompileError.UndefinedTrait(traitName, None))
     dataDef <- env.dataTypes.get(target).filter(_ => !env.traits.contains(target))
       .toRight(CompileError.DeriveTargetNotData(target))
@@ -147,7 +151,9 @@ object Deriver {
       c.fields.toList.traverse(field => classify(rule, traitName, target, dataDef, c.name, field, env))
     }
     inst <- instanceOf(traitName, target, env)
-    superEvidence <- Resolver.superConstraints(traitDef, inst.targets).traverse(Resolver.resolve).run(env.withTypeVars(inst.params))
+    superEvidence <- Resolver.superConstraints(traitDef, inst.targets).traverse(Resolver.resolve).run(supers.withTypeVars(inst.params))
+      .left.map(CompileError.RequiredBy(_, showTypeConstraint(TypeConstraint(traitName, inst.targets)),
+        s"trait ${traitName.name}${traitDef.supers.map(showTypeConstraint).mkString(" with ", ", ", "")}"))
   } yield Plan(rule, target, dataDef, fieldPlans, inst, superEvidence)
 
   // フィールドの入れ子コンテナ G[σ̄] に対するインスタンス traitName[G[σ̄]] の根拠

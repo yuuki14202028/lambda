@@ -131,7 +131,8 @@ case class Env(
     keepConstraints: Boolean = false,                        // 式の型に残った制約を解決しない（辞書を明示的に渡す適用 f(with d) の f の位置）
     spans: SpanTable = new SpanTable,                        // 型付きノードの位置（エラー表示用）
     declared: Set[String] = Set.empty,                       // プログラムのどこかで宣言される top-level の名前（「後で宣言されている」の案内用）
-    defining: Set[String] = Set.empty                        // rec なしで定義している途中の名前（「rec が要る」の案内用）
+    defining: Set[String] = Set.empty,                       // rec なしで定義している途中の名前（「rec が要る」の案内用）
+    laterInstances: Set[String] = Set.empty                  // rec の組の中で後に宣言され、まだスーパークラスに使えないインスタンス（案内用）
 ) {
   // 局所的な束縛は、同名の module メンバーを隠す
   def withValue(variable: Variable, t: TypeRec[Type]): Env =

@@ -420,6 +420,31 @@ class RecursionSuite extends munit.FunSuite {
     assertRight(encode(src + main))
   }
 
+  test("rec { derive }: スーパークラスのインスタンスは、組の中で先に宣言する") {
+    val traits =
+      """trait Functor[f: * → *] { def map[a][b](g: a → b): f[a] → f[b] }
+        |trait Mappable[f: * → *] with Functor[f] { def same[a](x: f[a]): f[a] }
+        |""".stripMargin
+    val data = forest
+    // 導出できる trait でスーパークラスを持つのは Traversable。ここでは順序の検査だけを、手書きの impl と混ぜて確かめる
+    val ok = traits + data +
+      """rec {
+        |  derive Functor[Tree]
+        |  derive Functor[Forest]
+        |  impl Mappable[Tree] { def same[a](x: Tree[a]): Tree[a] = map[Tree][a][a](λv: a. v)(x) }
+        |}
+        |""".stripMargin
+    assertRight(encode(ok + main))
+    val bad = traits + data +
+      """rec {
+        |  impl Mappable[Tree] { def same[a](x: Tree[a]): Tree[a] = map[Tree][a][a](λv: a. v)(x) }
+        |  derive Functor[Tree]
+        |  derive Functor[Forest]
+        |}
+        |""".stripMargin
+    assertLeftContains(validate(bad + main), "No instance for Functor[Tree]")
+  }
+
   test("rec { }: 種類の違う宣言は混ぜられない") {
     assertLeftContains(validate("rec { let f(x: i32): i32 = x; data A = { MkA } }\n" + main), "one kind")
   }

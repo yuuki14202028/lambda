@@ -123,6 +123,10 @@ object TAnalyser {
       case CompileError.UndefinedTrait(name, _) =>
         later(name.name).toSeq ++ similar(name.name, env.traits.keys.map(_.name).filter(c => env.resolveType(TypeVariable(c)).nonEmpty))
       case CompileError.UndefinedModule(path) => similar(path.mkString("."), env.modules.keys ++ env.scope.modules.keys)
+      case CompileError.NoInstance(name, args)
+          if args.flatMap(a => typeConstructorHead(a).map(_._1)).length == args.length &&
+            env.laterInstances(instanceDictionaryName(name, args.flatMap(a => typeConstructorHead(a).map(_._1))).name) =>
+        Seq(Hint.SuperclassDeclaredLater(showTypeConstraint(TypeConstraint(name, args))))
       case CompileError.NoInstance(name, args) =>
         val wanted = showTypeConstraint(TypeConstraint(name, args))
         val heads = args.flatMap(a => typeConstructorHead(a).map(_._1))
@@ -141,6 +145,10 @@ object TAnalyser {
 
   private def enrich(env: Env, error: CompileError): CompileError =
     if (error.hinted) error else CompileError.Hinted(error, hintsFor(env, error.core))
+
+  // check の中のエラーに、その場の Env から手がかりを付ける（宣言の規則が Env を局所的に変えているとき用）
+  private def withHints[A](check: Check[A]): Check[A] =
+    ReaderT((env: Env) => check.run(env).left.map(enrich(env, _)))
 
   private def expectNumeric(actual: TypeRec[Type]): Check[Unit] =
     guard(isNumericType(actual), CompileError.ExpectedNumeric(actual))
@@ -1248,12 +1256,15 @@ object TAnalyser {
           }
         } yield MethodImpl[TypeRec](m.name, typedSig, typedBody)
       }
-      superEvidence <- Resolver.superConstraints(traitDef, head.targets).traverse { constraint =>
+      superEvidence <- withHints(Resolver.superConstraints(traitDef, head.targets).traverse { constraint =>
         // どの trait のスーパークラスとして必要になったかを残す
         ReaderT((e: Env) => Resolver.resolve(constraint).run(e).left.map(
           CompileError.RequiredBy(_, showTypeConstraint(head.inst.targets.foldLeft(TypeConstraint(head.traitName, Seq.empty))((c, t) => c.copy(arg = c.arg :+ t))),
             s"trait ${head.traitName.name}${traitDef.supers.map(showTypeConstraint).mkString(" with ", ", ", "")}")))
-      }.local((e: Env) => contextScope(e).copy(instances = e.instances ++ supers))
+      }).local((e: Env) => contextScope(e).copy(
+        instances = e.instances ++ supers,
+        laterInstances = (group.keySet -- supers.keySet - head.key).map(key => group(key).dictName.name)
+      ))
       // 後段がインスタンスを引けるよう、ターゲットは展開済みの型で持つ
     } yield topImplT(head.traitName, head.params, head.targets, head.typedContext, typedMethods, superEvidence)
   }
@@ -1315,9 +1326,15 @@ object TAnalyser {
         val earlier = heads.take(index).map { case (key, inst, _) => key -> inst }.toMap
         implBody(head, methods, group, supers = if (head.inst.context.nonEmpty) group else earlier)
       // derive の検査は、組の他のインスタンスが見える環境で行う
-      case (((key, inst, _), _), _) =>
-        lift(Deriver.check(inst.name, TypeVariable(key._2.head.name), env.copy(instances = env.instances ++ (group - key))))
-          .as(topDeriveT(inst.name, TypeVariable(key._2.head.name)))
+      // 導出したインスタンスは文脈を持たないので、スーパークラスには先に宣言したものだけを使える
+      case (((key, inst, _), _), index) =>
+        val earlier = heads.take(index).map { case (k, i, _) => k -> i }.toMap
+        val later = (group.keySet -- earlier.keySet - key).map(k => group(k).dictName.name)
+        withHints(lift(Deriver.check(
+          inst.name, TypeVariable(key._2.head.name),
+          env.copy(instances = env.instances ++ (group - key)),
+          supers = Some(env.copy(instances = env.instances ++ earlier))
+        ))).local((e: Env) => e.copy(laterInstances = later)).as(topDeriveT(inst.name, TypeVariable(key._2.head.name)))
     }
   } yield (topRecT(typed), env.copy(instances = env.instances ++ group))
 

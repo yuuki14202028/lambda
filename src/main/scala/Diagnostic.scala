@@ -196,6 +196,11 @@ object Diagnostic {
       Seq(s"${name(opaque)} is an `opaque type`: outside its module it is a different type from its representation"),
       Seq("use the functions the module exports to create and inspect values of this type")
     )
+    case Hint.SuperclassDeclaredLater(wanted) => (
+      Seq(s"the instance `$wanted` is declared later in the same `rec { … }` group",
+        "an instance without a `with` context is built immediately, and its dictionary holds the dictionaries of its superclasses, so those must already exist"),
+      Seq(s"move the declaration of `$wanted` before this one")
+    )
     case Hint.AddConstraint(wanted) => (
       Nil,
       Seq(s"the type is a type parameter, so require the instance from the caller: add `with $wanted` to the enclosing definition")

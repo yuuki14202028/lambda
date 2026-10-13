@@ -93,6 +93,7 @@ enum Hint {
   case AddConstraint(constraint: String)                                               // 型変数についての制約なので with 節が要る
   case PrivateMember(name: String)                                                     // その名前は module の中にあるが、公開されていない
   case OpaqueType(name: String)                                                        // module の外では表現と別の型
+  case SuperclassDeclaredLater(constraint: String)                                     // スーパークラスのインスタンスが rec の組の後ろにある
 }
 
 /** ユーザー起因のコンパイルエラー。エラーの種類ごとに case を持ち、
