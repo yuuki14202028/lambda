@@ -86,14 +86,7 @@ ParserAST (cats-parse)
 ```
 
 全フェーズが単一の GADT 風 AST（`AST.scala`）を高階再帰スキーム（`HFix` / `HCofree`）で共有し、
-ユーザー起因のエラーは構造化された `CompileError` として型検査までに報告されます。各フェーズの設計はリポジトリ直下のドキュメントを参照してください。
-
-| ドキュメント | 内容 |
-| --- | --- |
-| [`TypeCheck.md`](TypeCheck.md) | TAnalyser（型注釈必須、HM 推論なし） |
-| [`SystemFOmega.md`](SystemFOmega.md) | カインドと型レベル計算 |
-| [`DataType.md`](DataType.md) / [`ChurchEncode.md`](ChurchEncode.md) | data / match の Church encoding 化 |
-| [`Trait.md`](Trait.md) | trait / impl の辞書渡し脱糖 |
+ユーザー起因のエラーは構造化された `CompileError` として型検査までに報告されます。各フェーズの設計（制約の表現、module、パターンの脱糖、エラー表示など）は [`CLAUDE.md`](CLAUDE.md) にまとめています。
 
 ## リポジトリ構成
 
