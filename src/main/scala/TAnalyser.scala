@@ -146,6 +146,17 @@ object TAnalyser {
   private def enrich(env: Env, error: CompileError): CompileError =
     if (error.hinted) error else CompileError.Hinted(error, hintsFor(env, error.core))
 
+  /** 互いに独立な部分（impl の各メソッド、rec の組の各メンバーなど）を、失敗しても残りを検査して、エラーをまとめる。
+   * 1 つの宣言の中でも、独立な部分のエラーは一度に報告される */
+  private def checkEach[A, B](items: Seq[A])(check: A => Check[B]): Check[Seq[B]] = ReaderT { (env: Env) =>
+    val results = items.map(item => check(item).run(env).left.map(enrich(env, _)))
+    results.collect { case Left(error) => error }.flatMap(_.all) match {
+      case Seq() => Right(results.collect { case Right(value) => value })
+      case Seq(only) => Left(only)
+      case many => Left(CompileError.Multiple(many))
+    }
+  }
+
   // check の中のエラーに、その場の Env から手がかりを付ける（宣言の規則が Env を局所的に変えているとき用）
   private def withHints[A](check: Check[A]): Check[A] =
     ReaderT((env: Env) => check.run(env).left.map(enrich(env, _)))
@@ -478,7 +489,7 @@ object TAnalyser {
         types.flatMap(typedTypes => expandChecked(typedTypes).map((variable, typedTypes, _)))
       }
       scope = (e: Env) => e.withValues(annotated.map { case (variable, _, declaredType) => variable -> declaredType })
-      checked <- bindings.zip(annotated).traverse { case ((_, _, value), (variable, typedTypes, declaredType)) =>
+      checked <- checkEach(bindings.zip(annotated)) { case ((_, _, value), (variable, typedTypes, declaredType)) =>
         for {
           typedValue <- value.local(scope)
           _ <- expectAnnotated(declaredType, typedValue, typedTypes)
@@ -623,6 +634,9 @@ object TAnalyser {
 
   // パターンを型 expected の値に対して検査する: (解決済みのパターン, 束縛される変数と型)
   private def checkPattern(pattern: Pattern[TC], expected: TypeRec[Type]): Check[(Pattern[TypeRec], Seq[(Variable, TypeRec[Type])])] = pattern match {
+    // 部分パターンについてのエラーは、その部分パターンの位置で報告する（型付きのパターンには位置を残さない）
+    case Pattern.Located(span, inner) => locatedAt(Some(span))(checkPattern(inner, expected))
+
     case Pattern.Wildcard() => Check.pure((Pattern.Wildcard[TypeRec](), Seq.empty))
     case Pattern.Bind(name) => Check.pure((Pattern.Bind[TypeRec](name), Seq(name -> expected)))
 
@@ -1081,12 +1095,12 @@ object TAnalyser {
          * スーパークラスの制約がスコープに入る。自身のインスタンスは見えないので、辞書は自分自身を参照しない */
         requiredShorts = methods.filter(_.body.isEmpty).map(_.name)
         defaultScope = (e: Env) => requiredShorts.foldLeft(scope(e).withValues(signature.required).withGivens(signature.supers))(_.exportValue(_))
-        typedMethods <- methods.zip(signature.methods).traverse { case (m, (method, sig)) =>
+        typedMethods <- checkEach(methods.zip(signature.methods)) { case (m, (method, sig)) =>
           m.body.traverse { body =>
             body.local(defaultScope).flatMap { typedBody =>
               (if (Equivalence.alpha(sig, typeOf(typedBody))) Check.pure(()) else {
                 val (wanted, culprit, _) = blame(sig, typedBody, None)
-                failAt[Unit](culprit, CompileError.DefaultMethodTypeMismatch(name, method, wanted, typeOf(culprit)))
+                failAt[Unit](culprit, CompileError.DefaultMethodTypeMismatch(name, method, sig, typeOf(typedBody), Some((wanted, typeOf(culprit)))))
               }).as(typedBody)
             }
           }.map(typedBody => MethodSig[TypeRec](method, typedSigs.find(_._1 == method).get._2, typedBody))
@@ -1231,13 +1245,13 @@ object TAnalyser {
       _ <- guard(missing.isEmpty, CompileError.MissingMethods(implRef, missing))
       extra = implMethodNames.filterNot(traitMethodNames.contains)
       _ <- guard(extra.isEmpty, CompileError.ExtraMethods(implRef, extra))
-      typedMethods <- methods.traverse { m =>
+      typedMethods <- checkEach(methods) { m =>
         val expected = Equivalence.normalize(substMany(traitDef.paramVars, head.targets, traitDef.methods.find(_._1 == m.name).get._2))
         for {
           typedBody <- m.body.local(bodyScope)
           _ <- if (Equivalence.alpha(expected, typeOf(typedBody))) Check.pure(()) else {
             val (wanted, culprit, _) = blame(expected, typedBody, None)
-            failAt[Unit](culprit, CompileError.MethodBodyTypeMismatch(implRef, m.name, wanted, typeOf(culprit)))
+            failAt[Unit](culprit, CompileError.MethodBodyTypeMismatch(implRef, m.name, expected, typeOf(typedBody), Some((wanted, typeOf(culprit)))))
           }
           // 文脈のない impl の辞書は関数ではないので、組のインスタンスを使うメソッドは関数でなければ初期化前の辞書を読む
           _ <- guard(
@@ -1248,7 +1262,8 @@ object TAnalyser {
           _ <- typedSig.traverse_ { s =>
             expandType(s).local(sigScope).flatMap { expandedSig =>
               val declared = Equivalence.normalize(substMany(sigParams.map(_._1._1), sigParams.map(_._2), expandedSig))
-              guard(
+              guardAt(
+                s,
                 Equivalence.alpha(expected, declared),
                 CompileError.MethodSigTypeMismatch(implRef, m.name, declared, expected)
               )
@@ -1321,7 +1336,7 @@ object TAnalyser {
       }).local(visible).map(done :+ _)
     }
     group = heads.map { case (key, inst, _) => key -> inst }.toMap
-    typed <- heads.zip(members).zipWithIndex.traverse {
+    typed <- checkEach(heads.zip(members).zipWithIndex) {
       case (((_, _, Some(head)), RecInstance.Impl(_, _, _, _, methods)), index) =>
         val earlier = heads.take(index).map { case (key, inst, _) => key -> inst }.toMap
         implBody(head, methods, group, supers = if (head.inst.context.nonEmpty) group else earlier)

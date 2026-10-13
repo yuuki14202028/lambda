@@ -1,0 +1,5 @@
+error: mismatched types
+ --> match_nested_literal.lam:4:8
+  |
+4 |   Some(1) => 1
+  |        ^ expected `bool`, found `i32`

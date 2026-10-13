@@ -56,6 +56,7 @@ private def showPattern(p: Pattern[ShowResult]): String = p match {
   case Pattern.Constructor(name, args, _) => s"${name.name}${args.map(a => s"(${showPattern(a)})").mkString}"
   case Pattern.Literal(value, _) => value.shown
   case Pattern.Or(alternatives) => alternatives.map(showPattern).mkString(" | ")
+  case Pattern.Located(_, inner) => showPattern(inner)
 }
 
 val showAlg: Algebra[AST, ShowResult] = [x] => node => node match {

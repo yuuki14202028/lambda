@@ -391,7 +391,8 @@ object ParserAST {
       case ("_", Nil) => Pattern.Wildcard[IndexedRec]()
       case (name, args) => Pattern.Constructor[IndexedRec](Variable(name), args, Nil)
     }
-    number | string | char | bool | named
+    // 部分パターンごとに位置を記録する
+    (number | string | char | bool | named).spanned.map { case (span, pattern) => Pattern.Located[IndexedRec](span, pattern) }
   }
 
   // `if 条件`: 分岐の条件

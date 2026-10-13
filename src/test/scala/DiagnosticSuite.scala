@@ -78,7 +78,7 @@ class DiagnosticSuite extends munit.FunSuite {
     assertEquals(errorsOf(src), Seq(
       "Type variable Missing is not defined",
       "Type variable Missing is not defined",
-      "Method type mismatch in impl Size[i32]: size must have type i32, actual bool",
+      "Method type mismatch in impl Size[i32]: size must have type i32 → i32, actual i32 → bool",
       "Type mismatch: expected i32, actual bool"
     ))
   }
@@ -91,6 +91,27 @@ class DiagnosticSuite extends munit.FunSuite {
         |let main(): i32 = 0
         |""".stripMargin
     assertEquals(errorsOf(src), Seq("Type mismatch: expected i32, actual bool", "Variable nowhere is not defined"))
+  }
+
+  test("1 つの宣言の中でも、独立な部分（impl のメソッド、rec の組のメンバー）のエラーはまとめて報告される") {
+    val src =
+      """trait Shape[a] { def area(x: a): i32  def sides(x: a): i32 }
+        |impl Shape[i32] {
+        |  def area = λx: i32. true
+        |  def sides = λx: i32. nowhere
+        |}
+        |rec {
+        |  let f(n: i32): bool = n
+        |  let g(n: i32): i32 = true
+        |}
+        |let main(): i32 = 0
+        |""".stripMargin
+    assertEquals(errorsOf(src), Seq(
+      "Method type mismatch in impl Shape[i32]: area must have type i32 → i32, actual i32 → bool",
+      "Variable nowhere is not defined",
+      "Type mismatch: expected bool, actual i32",
+      "Type mismatch: expected i32, actual bool"
+    ))
   }
 
   test("main が失敗していても、main がないとは報告しない") {

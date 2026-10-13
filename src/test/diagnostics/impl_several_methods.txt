@@ -1,0 +1,13 @@
+error: the method `area` of impl Shape[i32] has the wrong type
+ --> impl_several_methods.lam:9:23
+  |
+9 |   def area = λx: i32. true
+  |                       ^^^^ expected `i32`, found `bool`
+
+error: cannot find value `missing` in this scope
+  --> impl_several_methods.lam:11:23
+   |
+11 |   def name = λx: i32. missing
+   |                       ^^^^^^^ not found in this scope
+
+error: 2 errors

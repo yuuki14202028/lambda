@@ -1,0 +1,9 @@
+data Option[a] = { None, Some(a) }
+data Pair[a][b] = { MkPair(a)(b) }
+
+let f(p: Pair[Option[i32]][bool]): i32 = match p {
+  MkPair(Some(x)(y))(_) => x
+  MkPair(None)(_) => 0
+}
+
+let main(): i32 = 0

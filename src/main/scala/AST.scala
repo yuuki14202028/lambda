@@ -92,6 +92,7 @@ enum Pattern[R[_]] {
   case Constructor(name: Variable, args: Seq[Pattern[R]], siblings: Seq[ConstructorShape[R]]) // C(p)(q)。siblings は型検査が埋める
   case Literal(value: LiteralValue, equals: Option[R[Expr]])                                 // 1 / 'a' / true / "s"。equals は型検査が解決した ==
   case Or(alternatives: Seq[Pattern[R]])                                                     // p | q。どの選択肢も同じ変数を同じ型で束縛する
+  case Located(span: Span, pattern: Pattern[R])                                              // ソース上の位置（エラー表示用。型検査が外す）
 }
 
 // スクルーティニーのデータ型の構成子と、型引数を適用したフィールドの型（脱糖が Env なしで分岐を組み立てるため）
@@ -118,6 +119,7 @@ def patternVariables[R[_]](pattern: Pattern[R]): Seq[Variable] = pattern match {
   case Pattern.Bind(name) => Seq(name)
   case Pattern.Constructor(_, args, _) => args.flatMap(patternVariables)
   case Pattern.Or(alternatives) => alternatives.headOption.toSeq.flatMap(patternVariables)
+  case Pattern.Located(_, inner) => patternVariables(inner)
   case Pattern.Wildcard() | Pattern.Literal(_, _) => Seq.empty
 }
 // rec data / rec { data …  data … } のデータ型。フィールドからは組の全員が見える
@@ -513,6 +515,7 @@ def freeVars(expr: Rec[Expr]): Set[Variable] = {
         case Pattern.Constructor(_, args, _) => args.flatMap(inPattern).toSet
         case Pattern.Literal(_, equals) => equals.getOrElse(Set.empty)
         case Pattern.Or(alternatives) => alternatives.flatMap(inPattern).toSet
+        case Pattern.Located(_, inner) => inPattern(inner)
         case Pattern.Wildcard() | Pattern.Bind(_) => Set.empty
       }
       scrutinee ++ cases.foldLeft(Set.empty[Variable]) { (acc, c) =>

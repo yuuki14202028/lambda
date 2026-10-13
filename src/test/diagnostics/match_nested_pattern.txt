@@ -1,0 +1,7 @@
+error: wrong number of arguments in the pattern `Some`
+ --> match_nested_pattern.lam:5:10
+  |
+5 |   MkPair(Some(x)(y))(_) => x
+  |          ^^^^^^^^^^ `Some` has 1 field, but the pattern has 2
+  |
+  = help: write one sub-pattern per field; use `_` for the fields you do not need

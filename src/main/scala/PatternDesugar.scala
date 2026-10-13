@@ -63,7 +63,7 @@ object PatternDesugar {
                   row.patterns(column) match {
                     case Pattern.Constructor(name, args, _) => Option.when(name == shape.name)(refine(row, column, on, args.toList))
                     case Pattern.Literal(_, _) => invariant("a literal pattern cannot be matched against a data type")
-                    case Pattern.Or(_) => invariant("or-patterns must be expanded before compilation")
+                    case Pattern.Or(_) | Pattern.Located(_, _) => invariant("or-patterns and locations must be removed before compilation")
                     case _ => Some(refine(row, column, on, fields.map(_ => Pattern.Wildcard[TypeRec]())))
                   }
                 }
@@ -76,7 +76,7 @@ object PatternDesugar {
                 row.patterns(column) match {
                   case Pattern.Literal(v, _) => Option.when(value.contains(v))(refine(row, column, on, Nil))
                   case Pattern.Constructor(_, _, _) => invariant("a constructor pattern cannot be matched against a literal type")
-                  case Pattern.Or(_) => invariant("or-patterns must be expanded before compilation")
+                  case Pattern.Or(_) | Pattern.Located(_, _) => invariant("or-patterns and locations must be removed before compilation")
                   case _ => Some(refine(row, column, on, Nil))
                 }
               }
@@ -123,6 +123,7 @@ object PatternDesugar {
   // p | q を、選択肢ごとの（| のない）パターンに展開する。展開した行は同じ分岐（index）を指す
   private def alternatives(pattern: Pattern[TypeRec]): List[Pattern[TypeRec]] = pattern match {
     case Pattern.Or(options) => options.toList.flatMap(alternatives)
+    case Pattern.Located(_, inner) => alternatives(inner)
     case Pattern.Constructor(name, args, siblings) =>
       args.foldRight(List(List.empty[Pattern[TypeRec]])) { (arg, rest) =>
         for { head <- alternatives(arg); tail <- rest } yield head :: tail

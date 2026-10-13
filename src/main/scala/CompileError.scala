@@ -127,7 +127,7 @@ enum CompileError {
   case MixedRecursiveGroup
   case NoConstraintToSatisfy(actual: TypeRec[Type])
   case NotADictionary(actual: TypeRec[Type])
-  case DefaultMethodTypeMismatch(traitName: TypeVariable, method: Variable, expected: TypeRec[Type], actual: TypeRec[Type])
+  case DefaultMethodTypeMismatch(traitName: TypeVariable, method: Variable, expected: TypeRec[Type], actual: TypeRec[Type], narrowed: Option[(TypeRec[Type], TypeRec[Type])] = None)
   case QuantifiedParamUnused(traitName: TypeVariable, param: TypeVariable)
   case AlreadyDefined(kind: NameKind, name: String)
   case ParamAlreadyDefined(owner: DeclRef)
@@ -189,7 +189,8 @@ enum CompileError {
   case OverlappingInstance(traitName: TypeVariable, heads: Seq[String])
   case MissingMethods(impl: DeclRef, methods: Seq[Variable])
   case ExtraMethods(impl: DeclRef, methods: Seq[Variable])
-  case MethodBodyTypeMismatch(impl: DeclRef, method: Variable, expected: TypeRec[Type], actual: TypeRec[Type])
+  // narrowed は、原因の部分式まで絞った (期待される型, 実際の型)。表示がその部分式の位置で使う
+  case MethodBodyTypeMismatch(impl: DeclRef, method: Variable, expected: TypeRec[Type], actual: TypeRec[Type], narrowed: Option[(TypeRec[Type], TypeRec[Type])] = None)
   case MethodSigTypeMismatch(impl: DeclRef, method: Variable, declared: TypeRec[Type], expected: TypeRec[Type])
   case RecursiveInstanceMethodNotFunction(impl: DeclRef, method: Variable)
 
@@ -224,7 +225,8 @@ enum CompileError {
   case MainTypeInvalid(actual: TypeRec[Type])
 
   def at(span: Span): CompileError = this match {
-    case Multiple(_) => this
+    // まとめられたエラーは、位置のないものにだけ付ける
+    case Multiple(errors) => Multiple(errors.map(_.at(span)))
     case _ => if (position.isDefined) this else At(span, this)
   }
 
@@ -308,7 +310,7 @@ enum CompileError {
     case UndefinedTrait(name, site) =>
       site.fold(s"Trait ${name.name} is not defined")(s => s"${s.shown}: trait ${name.name} is not defined")
     case UndefinedModule(path) => s"Module ${path.mkString(".")} is not defined"
-    case DefaultMethodTypeMismatch(traitName, method, expected, actual) =>
+    case DefaultMethodTypeMismatch(traitName, method, expected, actual, _) =>
       s"Trait ${traitName.name}: the default of method ${method.name} has type ${actual.show}, expected ${expected.show}"
     case QuantifiedParamUnused(traitName, param) =>
       s"Quantified constraint on ${traitName.name}: type variable ${param.name} does not appear in the constraint's arguments"
@@ -394,7 +396,7 @@ enum CompileError {
       s"Overlapping instance: ${traitName.name}${heads.map(h => s"[$h]").mkString} is already defined"
     case MissingMethods(impl, methods) => s"Missing method in ${impl.shown}: ${methods.map(_.name).mkString(", ")}"
     case ExtraMethods(impl, methods) => s"Extra method in ${impl.shown}: ${methods.map(_.name).mkString(", ")}"
-    case MethodBodyTypeMismatch(impl, method, expected, actual) =>
+    case MethodBodyTypeMismatch(impl, method, expected, actual, _) =>
       s"Method type mismatch in ${impl.shown}: ${method.name} must have type ${expected.show}, actual ${actual.show}"
     case MethodSigTypeMismatch(impl, method, declared, expected) =>
       s"Method type mismatch in ${impl.shown}: ${method.name} is declared as ${declared.show}, expected ${expected.show}"

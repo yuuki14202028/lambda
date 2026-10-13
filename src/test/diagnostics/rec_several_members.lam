@@ -1,0 +1,8 @@
+// rec の組の中でも、メンバーごとのエラーはまとめて報告される。
+rec {
+  let even(n: i32): bool = odd(n)
+  let odd(n: i32): bool = n
+  let both(n: i32): i32 = even(n)
+}
+
+let main(): i32 = 0

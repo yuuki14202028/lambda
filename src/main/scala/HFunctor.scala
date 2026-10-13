@@ -54,6 +54,7 @@ private def traversePattern[G[_]: Applicative, R[_], S[_]](p: Pattern[R])(f: [x]
     (args.traverse(traversePattern(_)(f)), siblingsG).mapN(Pattern.Constructor[S](name, _, _))
   case Pattern.Literal(value, equals) => equals.traverse(e => f(e)).map(Pattern.Literal[S](value, _))
   case Pattern.Or(alternatives) => alternatives.traverse(traversePattern(_)(f)).map(Pattern.Or[S](_))
+  case Pattern.Located(span, inner) => traversePattern(inner)(f).map(Pattern.Located[S](span, _))
 }
 
 extension [R[_]](self: Evidence[R]) {

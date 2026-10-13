@@ -1,0 +1,15 @@
+error: mismatched types
+ --> rec_several_members.lam:4:27
+  |
+4 |   let odd(n: i32): bool = n
+  |                           ^ expected `bool`, found `i32`
+  |                    ---- expected `bool` because of this type annotation
+
+error: mismatched types
+ --> rec_several_members.lam:5:27
+  |
+5 |   let both(n: i32): i32 = even(n)
+  |                           ^^^^^^^ expected `i32`, found `bool`
+  |                     --- expected `i32` because of this type annotation
+
+error: 2 errors

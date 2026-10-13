@@ -139,10 +139,15 @@ object Diagnostic {
 
   def of(error: CompileError, sources: Sources): Diagnostic = {
     val core = error.core
-    // 構文エラーは、読めなかった字句の範囲を示す
+    // 構文エラーは、読めなかった字句の範囲を示す。閉じていないコメントは、その始まりを示す
     def syntax(failure: cats.parse.Parser.Error, path: Option[Path]): (Description, Option[Span]) = {
-      val (description, width) = syntaxError(failure, sources.file(path))
-      (description, Some(Span(failure.failedAtOffset, failure.failedAtOffset + width, path)))
+      val file = sources.file(path)
+      unclosedComment(file.text) match {
+        case Some(start) => (Description("syntax error", "this comment is never closed", helps = Seq("close it with `*/`")), Some(Span(start, start + 2, path)))
+        case None =>
+          val (description, width) = syntaxError(failure, file)
+          (description, Some(Span(failure.failedAtOffset, failure.failedAtOffset + width, path)))
+      }
     }
     val (description, position) = core match {
       case CompileError.ParseFailure(failure) => syntax(failure, None)
@@ -284,8 +289,8 @@ object Diagnostic {
         notes = Seq("a dictionary is a value of a trait type, such as `Show[i32]` (or a polymorphic function producing one)"),
         helps = Seq("build one with the trait's constructor (`MkShow[i32](…)`) or take an existing instance with `summon[Show[i32]]`")
       )
-      case DefaultMethodTypeMismatch(traitName, method, expected, actual) =>
-        val (label, notes) = mismatch(expected, actual)
+      case DefaultMethodTypeMismatch(traitName, method, expected, actual, narrowed) =>
+        val (label, notes) = narrowed.fold(mismatch(expected, actual))(mismatch.tupled)
         Description(s"the default of ${name(method.name)} does not match its signature", label, notes)
       case QuantifiedParamUnused(traitName, param) => Description(
         s"type variable ${name(param.name)} is not determined by the constraint",
@@ -473,8 +478,8 @@ object Diagnostic {
         helps = Seq(s"add ${methods.map(m => s"`def ${m.name} = …`").mkString(", ")}"))
       case ExtraMethods(impl, methods) => Description(
         s"${impl.shown} defines ${names(methods.map(_.name))}, which the trait does not declare", "this impl")
-      case MethodBodyTypeMismatch(impl, method, expected, actual) =>
-        val (label, notes) = mismatch(expected, actual)
+      case MethodBodyTypeMismatch(impl, method, expected, actual, narrowed) =>
+        val (label, notes) = narrowed.fold(mismatch(expected, actual))(mismatch.tupled)
         Description(s"the method ${name(method.name)} of ${impl.shown} has the wrong type", label, notes)
       case MethodSigTypeMismatch(impl, method, declared, expected) =>
         val (label, notes) = mismatch(expected, declared)
@@ -560,6 +565,25 @@ object Diagnostic {
 
   // ---- 構文エラー ----
 
+  // 閉じていない（いちばん外側の）ブロックコメントの始まり。文字列の中の /* は数えない
+  private def unclosedComment(text: String): Option[Int] = {
+    @annotation.tailrec
+    def scan(at: Int, depth: Int, start: Int, inString: Option[Char]): Option[Int] =
+      if (at >= text.length) Option.when(depth > 0)(start)
+      else inString match {
+        case Some(quote) =>
+          if (text(at) == '\\') scan(at + 2, depth, start, inString)
+          else scan(at + 1, depth, start, if (text(at) == quote || text(at) == '\n') None else inString)
+        case None =>
+          if (text.startsWith("/*", at)) scan(at + 2, depth + 1, if (depth == 0) at else start, None)
+          else if (depth > 0 && text.startsWith("*/", at)) scan(at + 2, depth - 1, start, None)
+          else if (depth == 0 && text.startsWith("//", at)) scan(text.indexOf('\n', at) match { case -1 => text.length; case end => end }, 0, start, None)
+          else if (depth == 0 && (text(at) == '"' || text(at) == '`')) scan(at + 1, 0, start, Some(text(at)))
+          else scan(at + 1, depth, start, None)
+      }
+    scan(0, 0, 0, None)
+  }
+
   // (説明, 読めなかった字句の幅)
   private def syntaxError(failure: cats.parse.Parser.Error, file: Sources.File): (Description, Int) = {
     import cats.parse.Parser.Expectation
@@ -608,7 +632,6 @@ object Diagnostic {
       Option.when(has("""\bdata\s+rec\b"""))("recursion is marked in front of the declaration: write `rec data …`"),
       Option.when(has("""\bimpl\s+rec\b"""))("recursion is marked in front of the declaration: write `rec impl …`"),
       Option.when(has("""--|#""") || rest.startsWith("*/"))("comments are written `// …` (to the end of the line) or `/* … */`"),
-      Option.when(file.text.sliding(2).count(_ == "/*") > file.text.sliding(2).count(_ == "*/"))("a `/*` comment is not closed"),
       Option.when(has("""\bfold\b.*\bwith\b"""))("the cases of a fold are written in braces: `fold e as T { C(x) => … }`"),
       Option.when(has("""^\s*(rec\s+)?let\s+\w+(\[[^\]]*\])*(\([^)]*\))*\s*="""))("every definition states its type: `let x: T = …`, or `let f(x: T): U = …` for a function"),
       Option.when(token.nonEmpty && Set("let", "rec", "data", "type", "trait", "impl", "derive", "module", "open", "import", "in", "then", "else", "with", "as", "match", "fold", "if")(token) && startsExpression)(

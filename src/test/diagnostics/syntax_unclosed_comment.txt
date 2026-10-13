@@ -1,7 +1,7 @@
 error: syntax error
- --> syntax_unclosed_comment.lam:3:1
+ --> syntax_unclosed_comment.lam:1:16
   |
-3 | 
-  | ^ expected `*/`, found the end of the file
+1 | let x: i32 = 1 /* one
+  |                ^^ this comment is never closed
   |
-  = help: a `/*` comment is not closed
+  = help: close it with `*/`

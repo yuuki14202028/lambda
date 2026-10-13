@@ -1,0 +1,9 @@
+trait Shape[a] {
+  def area(x: a): i32
+}
+
+impl Shape[bool] {
+  def area(x: bool): bool = x
+}
+
+let main(): i32 = 0

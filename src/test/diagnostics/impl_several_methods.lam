@@ -1,0 +1,14 @@
+// 1 つの impl の中でも、メソッドごとのエラーはまとめて報告される。
+trait Shape[a] {
+  def area(x: a): i32
+  def sides(x: a): i32
+  def name(x: a): bool
+}
+
+impl Shape[i32] {
+  def area = λx: i32. true
+  def sides = λx: i32. x
+  def name = λx: i32. missing
+}
+
+let main(): i32 = 0
