@@ -65,6 +65,15 @@ impl Describe.Weight[Shape.Shape] {
   }
 }
 
+module Library {
+  import "std/list"
+
+  let firstOr(xs: List[i32])(fallback: i32): i32 = match Library.head[i32](xs) {
+    Some(x) => x
+    Library.None => fallback
+  }
+}
+
 let two: Counter.T = Counter.inc(Counter.inc(Counter.zero))
 
 open Stack
@@ -80,5 +89,7 @@ let main(): i32 = {
   printInt(Describe.weight[i32](7));
   printInt(Describe.twice[Counter.T](two));
   printInt(Describe.weight[Shape.Shape](Shape.Circle(9)));
+  printInt(Library.firstOr(Library.Cons[i32](5)(Library.Nil[i32]))(0));
+  printInt(Library.firstOr(Library.Nil[i32])(8));
   0
 }

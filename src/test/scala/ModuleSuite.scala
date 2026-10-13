@@ -356,4 +356,83 @@ class ModuleSuite extends munit.FunSuite {
     assertRight(encode(withMain(src)))
     assertLeftContains(validate(withMain(src + "impl Weight[M.Box] { def weight = λb: M.Box. 2 }")), "Weight")
   }
+
+  // ---- 検査中の module を修飾子にした参照 ----
+
+  test("module の中から、自身を修飾子にして参照できる（private も含む）") {
+    val src =
+      """module M {
+        |  type T = i32
+        |  private let hidden: M.T = 1
+        |  let shown: T = M.hidden
+        |  module N {
+        |    let inner: M.T = M.shown
+        |    let again: i32 = M.N.inner
+        |    let short: i32 = N.inner
+        |  }
+        |  private module P { let secret: i32 = 2 }
+        |  let viaPrivate: i32 = M.P.secret
+        |}
+        |""".stripMargin
+    assertRight(encode(withMain(src)))
+  }
+
+  test("自身を修飾子にしても、まだ定義していない名前は参照できない") {
+    assertLeftContains(validate(withMain("module M {\n  let a: i32 = M.b\n  let b: i32 = 1\n}")), "Variable M.b is not defined")
+  }
+
+  test("外からは、private な名前は修飾しても参照できない（従来どおり）") {
+    assertLeftContains(validate(withMain("module M { private let hidden: i32 = 1 }\nlet x: i32 = M.hidden")), "Variable M.hidden is not defined")
+  }
+
+  // ---- module の中の import ----
+
+  private def withFiles(files: (String, String)*)(body: java.nio.file.Path => Unit): Unit = {
+    val dir = java.nio.file.Files.createTempDirectory("lambda-import")
+    files.foreach { case (name, content) => java.nio.file.Files.writeString(dir.resolve(name), content) }
+    body(dir)
+  }
+
+  private def compileFile(dir: java.nio.file.Path, name: String): Either[String, TypeRec[AST.Program.type]] = {
+    val path = dir.resolve(name)
+    ParserAST.programParser.parseAll(java.nio.file.Files.readString(path)).left.map(e => s"Parse error: $e")
+      .flatMap(p => ImportResolver.resolve(p, path).left.map(_.render))
+      .flatMap(p => TAnalyser.validate(p).left.map(_.render))
+  }
+
+  test("module の中の import は、その module の中に宣言を取り込む") {
+    withFiles(
+      "lib.lam" -> "let value: i32 = 1\ndata Flag = { On, Off }\n",
+      "main.lam" -> "module A { import \"lib\" }\nmodule B { import \"lib\" }\nlet x: i32 = A.value\nlet f: B.Flag = B.On\nlet main(): i32 = 0\n"
+    ) { dir =>
+      assertRight(compileFile(dir, "main.lam"))
+    }
+  }
+
+  test("module の中に取り込んだ名前は、外からは修飾なしでは見えない") {
+    withFiles(
+      "lib.lam" -> "let value: i32 = 1\n",
+      "main.lam" -> "module A { import \"lib\" }\nlet x: i32 = value\nlet main(): i32 = 0\n"
+    ) { dir =>
+      assertLeftContains(compileFile(dir, "main.lam"), "Variable value is not defined")
+    }
+  }
+
+  test("top-level と module の中の両方に、同じファイルを取り込める") {
+    withFiles(
+      "lib.lam" -> "let value: i32 = 1\n",
+      "main.lam" -> "import \"lib\"\nmodule A { import \"lib\" }\nlet x: i32 = value\nlet y: i32 = A.value\nlet main(): i32 = 0\n"
+    ) { dir =>
+      assertRight(compileFile(dir, "main.lam"))
+    }
+  }
+
+  test("取り込み中のファイルを module の中から取り込むとエラー") {
+    withFiles(
+      "a.lam" -> "module M { import \"main\" }\n",
+      "main.lam" -> "import \"a\"\nlet main(): i32 = 0\n"
+    ) { dir =>
+      assertLeftContains(compileFile(dir, "main.lam"), "is imported inside a module while it is itself being imported")
+    }
+  }
 }

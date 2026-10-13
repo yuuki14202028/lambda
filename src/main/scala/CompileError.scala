@@ -86,6 +86,7 @@ enum CompileError {
   case ImportReadFailure(path: Path, cause: Exception)
   case ImportParseFailure(path: Path, error: cats.parse.Parser.Error)
   case UnresolvedImport(path: String)
+  case ImportCycleInModule(path: Path)
 
   // ---- 名前解決 ----
   case UndefinedVariable(name: Variable)
@@ -206,6 +207,7 @@ enum CompileError {
     case ImportParseFailure(path, error) =>
       s"Import error: parse error in $path: expected ${expectationsShown(error.expected)}"
     case UnresolvedImport(path) => s"Unresolved import: $path"
+    case ImportCycleInModule(path) => s"Import error: $path is imported inside a module while it is itself being imported"
 
     case UndefinedVariable(name) => s"Variable ${name.name} is not defined"
     case UndefinedTypeVariable(name) => s"Type variable ${name.name} is not defined"

@@ -154,26 +154,51 @@ case class Env(
   }
 
   // 修飾された名前 A.B.x の A.B が指す module の公開メンバー
-  private def moduleAt(qualifier: Seq[String]): Option[Names] = qualifier match {
-    case Seq() => Some(scope)
-    case head +: rest => rest.foldLeft(scope.modules.get(head)) { (found, name) =>
-      found.flatMap(modules.get).flatMap(_.modules.get(name))
-    }.flatMap(modules.get)
+  // 修飾子が指す module。閉じた module は公開メンバーの表、検査中の module（自身と外側）はその経路
+  private enum ModuleRef {
+    case Closed(names: Names)
+    case InProgress(modulePath: Seq[String])
   }
 
-  def resolveModule(modulePath: Seq[String]): Option[Names] = if (modulePath.isEmpty) None else moduleAt(modulePath)
+  private def moduleRef(qualifier: Seq[String]): Option[ModuleRef] = qualifier match {
+    case Seq() => None
+    case head +: rest =>
+      // 見えている module を先に、なければ検査中の module（内側から）を探す
+      val start: Option[ModuleRef] = scope.modules.get(head).flatMap(modules.get).map(ModuleRef.Closed(_)).orElse {
+        val index = path.lastIndexOf(head)
+        Option.when(index >= 0)(ModuleRef.InProgress(path.take(index + 1)))
+      }
+      rest.foldLeft(start) { (found, name) =>
+        found.flatMap {
+          case ModuleRef.InProgress(modulePath) if path.startsWith(modulePath :+ name) => Some(ModuleRef.InProgress(modulePath :+ name))
+          // 検査中の module の中で閉じた module は、private でも中からは見える
+          case ModuleRef.InProgress(modulePath) => modules.get((modulePath :+ name).mkString(".")).map(ModuleRef.Closed(_))
+          case ModuleRef.Closed(names) => names.modules.get(name).flatMap(modules.get).map(ModuleRef.Closed(_))
+        }
+      }
+  }
 
-  // 修飾なしの名前は、module メンバーの短い名前でなければそのまま（局所的な束縛か top-level の名前）
+  // open できるのは閉じた module だけ
+  def resolveModule(modulePath: Seq[String]): Option[Names] = moduleRef(modulePath).collect { case ModuleRef.Closed(names) => names }
+
+  // 修飾なしの名前は、module メンバーの短い名前でなければそのまま（局所的な束縛か top-level の名前）。
+  // 検査中の module を修飾子にした名前（M の中の M.x）は、private なものも含めて、定義済みなら参照できる
   def resolveValue(name: Variable): Option[Variable] = {
     val segments = name.name.split('.').toSeq
     if (segments.length == 1) Some(scope.values.getOrElse(name.name, name))
-    else moduleAt(segments.init).flatMap(_.values.get(segments.last))
+    else moduleRef(segments.init).flatMap {
+      case ModuleRef.Closed(names) => names.values.get(segments.last)
+      case ModuleRef.InProgress(modulePath) => Some(Variable((modulePath :+ segments.last).mkString("."))).filter(values.contains)
+    }
   }
 
   def resolveType(name: TypeVariable): Option[TypeVariable] = {
     val segments = name.name.split('.').toSeq
     if (segments.length == 1) Some(scope.types.getOrElse(name.name, name))
-    else moduleAt(segments.init).flatMap(_.types.get(segments.last))
+    else moduleRef(segments.init).flatMap {
+      case ModuleRef.Closed(names) => names.types.get(segments.last)
+      case ModuleRef.InProgress(modulePath) => Some(TypeVariable((modulePath :+ segments.last).mkString("."))).filter(definesTypeName)
+    }
   }
 
   def lookupValue(name: Variable): Option[(Variable, TypeRec[Type])] =
