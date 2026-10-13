@@ -141,7 +141,7 @@ object PatternDesugar {
     val tree = treeOf(new Compiler, root -> scrutineeType, cases)
     val reached = leaves(tree).toSet
     unmatched(tree) match {
-      case Some(shapes) => Left(CompileError.NonExhaustivePatterns(shapes.getOrElse(root, "_")))
+      case Some(shapes) => Left(CompileError.NonExhaustivePatterns(shapes.getOrElse(root, "_"), cases.exists(_.guard.nonEmpty)))
       case None => cases.indices.find(!reached(_)).map(index => CompileError.UnreachableCase(index + 1)).toLeft(())
     }
   }

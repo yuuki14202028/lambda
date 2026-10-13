@@ -1,0 +1,4 @@
+module Counter {
+  let zero: i32 = 0
+}
+let main(): i32 = zero

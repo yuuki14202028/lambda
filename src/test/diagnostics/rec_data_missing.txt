@@ -1,0 +1,8 @@
+error: data type `List` refers to itself
+ --> rec_data_missing.lam:1:1
+  |
+1 | data List[a] = { Nil, Cons(a)(List[a]) }
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ this declaration
+  |
+  = note: recursion must be marked with `rec`
+  = help: write `rec data List …`

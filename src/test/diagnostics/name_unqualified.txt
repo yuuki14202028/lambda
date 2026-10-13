@@ -1,0 +1,7 @@
+error: cannot find value `zero` in this scope
+ --> name_unqualified.lam:4:19
+  |
+4 | let main(): i32 = zero
+  |                   ^^^^ not found in this scope
+  |
+  = help: a similar name exists: `Counter.zero`

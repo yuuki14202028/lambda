@@ -1,0 +1,8 @@
+error: case 2 of this match can never be reached
+ --> match_unreachable.lam:4:3
+  |
+4 |   None => 1
+  |   ^^^^ no value reaches this case
+  |
+  = note: cases are tried from top to bottom, and the earlier cases already match every value this one matches
+  = help: remove the case, or move it above the more general one

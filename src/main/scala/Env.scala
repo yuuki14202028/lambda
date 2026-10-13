@@ -88,6 +88,15 @@ def instanceType(inst: InstanceDef): TypeRec[Type] = {
   inst.params.foldRight(withContext) { case ((p, k), acc) => forallTypeT(p, k, acc) }
 }
 
+/** 型検査が作った型付きノードと、その元になったソース上の範囲の対応（同一性で引く）。
+ * 親の規則が「この子の式がおかしい」と報告するとき、子の位置を示すのに使う。
+ */
+final class SpanTable {
+  private val spans = new java.util.IdentityHashMap[AnyRef, Span]
+  def record(node: AnyRef, span: Span): Unit = spans.putIfAbsent(node, span)
+  def get(node: AnyRef): Option[Span] = Option(spans.get(node))
+}
+
 /** 短い名前から完全な名前（module M の中の x は M.x）への対応。
  * module の公開メンバーの一覧にも、修飾なしで書ける名前の一覧（Env.scope）にも使う。
  */
@@ -119,7 +128,10 @@ case class Env(
     members: Names = Names.empty,                           // 検査中の module が公開する名前
     modules: Map[String, Names] = Map.empty,                // 宣言済みの module（完全な名前）と、その公開メンバー
     abstractTypes: Map[TypeVariable, TypeAlias] = Map.empty, // 封印された opaque type と、その表現（ModuleDesugar が読み替える）
-    keepConstraints: Boolean = false                         // 式の型に残った制約を解決しない（辞書を明示的に渡す適用 f(with d) の f の位置）
+    keepConstraints: Boolean = false,                        // 式の型に残った制約を解決しない（辞書を明示的に渡す適用 f(with d) の f の位置）
+    spans: SpanTable = new SpanTable,                        // 型付きノードの位置（エラー表示用）
+    declared: Set[String] = Set.empty,                       // プログラムのどこかで宣言される top-level の名前（「後で宣言されている」の案内用）
+    defining: Set[String] = Set.empty                        // rec なしで定義している途中の名前（「rec が要る」の案内用）
 ) {
   // 局所的な束縛は、同名の module メンバーを隠す
   def withValue(variable: Variable, t: TypeRec[Type]): Env =

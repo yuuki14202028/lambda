@@ -1,0 +1,6 @@
+error: mismatched types
+ --> type_annotation.lam:1:18
+  |
+1 | let flag: bool = 42
+  |                  ^^ expected `bool`, found `i32`
+  |           ---- expected `bool` because of this type annotation

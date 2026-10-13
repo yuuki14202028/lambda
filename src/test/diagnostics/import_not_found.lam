@@ -1,0 +1,3 @@
+import "lib/nowhere"
+
+let main(): i32 = 0

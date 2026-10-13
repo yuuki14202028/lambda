@@ -1,0 +1,7 @@
+error: this value is applied like a function, but it is not one
+ --> apply_not_function.lam:2:19
+  |
+2 | let main(): i32 = x(2)
+  |                   ^ has type `i32`
+  |
+  = help: check the number of arguments; `f(x)(y)` passes them one at a time

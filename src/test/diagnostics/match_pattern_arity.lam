@@ -1,0 +1,5 @@
+data Pair[a][b] = { MkPair(a)(b) }
+let f(p: Pair[i32][i32]): i32 = match p {
+  MkPair(x) => x
+}
+let main(): i32 = 0

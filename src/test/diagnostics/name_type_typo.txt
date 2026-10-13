@@ -1,0 +1,7 @@
+error: cannot find type `Optoin` in this scope
+ --> name_type_typo.lam:2:8
+  |
+2 | let x: Optoin[i32] = None[i32]
+  |        ^^^^^^ not found in this scope
+  |
+  = help: a similar name exists: `Option`

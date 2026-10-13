@@ -22,7 +22,11 @@ def main(args: String*): Unit = {
   val src = Files.readString(srcPath)
 
   Compiler.compile(src, srcPath, println) match {
-    case Left(err) => Console.err.println(err.render(srcPath.toString, cats.parse.LocationMap(src)))
+    case Left(err) =>
+      // 端末に出すときだけ色を付ける
+      val color = System.console() != null && sys.env.get("NO_COLOR").isEmpty
+      Console.err.println(Diagnostic.render(err, Sources(srcPath.toString, src), color))
+      sys.exit(1)
     case Right(asm) =>
       val outDir = asmPath.getParent
       if (outDir != null) Files.createDirectories(outDir)

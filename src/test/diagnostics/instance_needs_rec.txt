@@ -1,0 +1,8 @@
+error: no instance for `Size[List[a]]`
+ --> instance_needs_rec.lam:6:22
+  |
+6 |     Cons(x)(rest) => size[List[a]](rest)
+  |                      ^^^^^^^^^^^^^ this needs the instance
+  |
+  = note: `Size[List[a]]` refers to itself, and recursion must be marked with `rec`
+  = help: write `rec impl` to make `Size[List[a]]` visible in its own definition

@@ -1,0 +1,7 @@
+error: mismatched kinds in a constraint on `Functor`
+ --> kind_constraint.lam:2:27
+  |
+2 | let go[a](x: a): i32 with Functor[a] = 0
+  |                           ^^^^^^^^^^ `a` has kind `*`, but the trait's parameter has kind `* → *`
+  |
+  = help: a type constructor is expected here. If this is a bound type variable, give its kind: `∀(f: * → *). …` or `[f: * → *]` (the default kind is `*`)

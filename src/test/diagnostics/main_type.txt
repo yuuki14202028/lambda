@@ -1,0 +1,9 @@
+error: `main` has the wrong type
+ --> main_type.lam:1:1
+  |
+1 | let main(x: i32): i32 = x
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^ this is the program's entry point
+  |
+  = note: expected: `unit → i32`
+             found: `i32 → i32`
+  = help: declare it as `let main(): i32 = …`

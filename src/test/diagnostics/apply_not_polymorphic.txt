@@ -1,0 +1,8 @@
+error: type arguments are given to a value that takes none
+ --> apply_not_polymorphic.lam:2:19
+  |
+2 | let main(): i32 = x[i32]
+  |                   ^ has type `i32`
+  |
+  = note: `e[T]` applies a value of type `∀a. …` to the type `T`
+  = help: remove the type argument; inside a trait's default method, the trait's own methods are plain functions and are called without type arguments

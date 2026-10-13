@@ -1,0 +1,8 @@
+error: `derive Functor[Rose]` needs an instance for `List`
+ --> derive_missing_instance.lam:4:1
+  |
+4 | derive Functor[Rose]
+  | ^^^^^^^^^^^^^^^^^^^^ this derive
+  |
+  = note: the constructor `Node` has a field built with `List`, and `Functor[List]` is not declared before this point
+  = help: declare `derive Functor[List]` first; if the two types refer to each other, put both derives in one `rec { … }`

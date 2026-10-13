@@ -1,0 +1,7 @@
+let pick(b: bool): i32 =
+  if b then
+    1
+  else
+    "two"
+
+let main(): i32 = 0

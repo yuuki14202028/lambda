@@ -1,0 +1,11 @@
+trait Show[a] {
+  def show(x: a): foreign.C.String
+}
+
+impl Show[i32] {
+  def show = λx: i32. "n"
+}
+
+let describe[a](x: a): foreign.C.String = show[a](x)
+
+let main(): i32 = 0

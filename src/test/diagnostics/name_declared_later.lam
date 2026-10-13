@@ -1,0 +1,5 @@
+let first(): i32 = second()
+
+let second(): i32 = 1
+
+let main(): i32 = first()

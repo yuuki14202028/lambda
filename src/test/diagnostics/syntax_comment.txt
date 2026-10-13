@@ -1,0 +1,7 @@
+error: syntax error
+ --> syntax_comment.lam:1:17
+  |
+1 | let x: i32 = 1 // one
+  |                 ^ expected an expression, found `/`
+  |
+  = help: this language has no comment syntax

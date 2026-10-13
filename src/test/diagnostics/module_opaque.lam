@@ -1,0 +1,5 @@
+module Counter {
+  opaque type T = i32
+  let zero: T = 0
+}
+let main(): i32 = Counter.zero

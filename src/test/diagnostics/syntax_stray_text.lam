@@ -1,0 +1,3 @@
+let x: i32 = 1
+oops
+let main(): i32 = 0

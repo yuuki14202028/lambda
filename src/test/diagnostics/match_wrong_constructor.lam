@@ -1,0 +1,7 @@
+data Option[a] = { None, Some(a) }
+data Flag = { On, Off }
+let f(o: Option[i32]): i32 = match o {
+  Some(x) => x
+  Off => 0
+}
+let main(): i32 = 0

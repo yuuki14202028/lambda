@@ -1,0 +1,7 @@
+error: syntax error
+ --> syntax_unfinished_expression.lam:2:1
+  |
+2 | let main(): i32 = 0
+  | ^^^ expected an expression, found `let`
+  |
+  = help: `let` is a keyword, and the expression before it is not finished

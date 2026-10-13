@@ -1,0 +1,5 @@
+rec {
+  let f(x: i32): i32 = x
+  data A = { MkA }
+}
+let main(): i32 = 0

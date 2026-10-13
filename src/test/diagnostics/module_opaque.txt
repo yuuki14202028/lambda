@@ -1,0 +1,9 @@
+error: mismatched types
+ --> module_opaque.lam:5:19
+  |
+5 | let main(): i32 = Counter.zero
+  |                   ^^^^^^^^^^^^ expected `i32`, found `Counter.T`
+  |             --- expected `i32` because of this type annotation
+  |
+  = note: `Counter.T` is an `opaque type`: outside its module it is a different type from its representation
+  = help: use the functions the module exports to create and inspect values of this type

@@ -1,0 +1,7 @@
+error: cannot find value `countr` in this scope
+ --> name_typo.lam:5:19
+  |
+5 | let main(): i32 = countr + 1
+  |                   ^^^^^^ not found in this scope
+  |
+  = help: a similar name exists: `counter`

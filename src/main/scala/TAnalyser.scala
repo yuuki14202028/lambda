@@ -15,6 +15,133 @@ object TAnalyser {
   private def expect(expected: TypeRec[Type], actual: TypeRec[Type]): Check[Unit] =
     guard(Equivalence.alpha(expected, actual), CompileError.TypeMismatch(expected, actual))
 
+  // ---- エラーの位置 ----
+  // 規則は親のノードで走るが、原因になった子の式（node）の位置で報告する。related は一緒に示す位置
+
+  private def failAt[A](node: TypeRec[?], error: CompileError, related: (TypeRec[?], Related)*): Check[A] = ask.flatMap { env =>
+    val places = related.flatMap { case (place, reason) => env.spans.get(place).map(_ -> reason) }
+    val withPlaces = if (places.isEmpty) error else CompileError.RelatedTo(error, places)
+    fail(env.spans.get(node).fold(withPlaces)(withPlaces.at))
+  }
+
+  private def guardAt(node: TypeRec[?], cond: Boolean, error: => CompileError, related: (TypeRec[?], Related)*): Check[Unit] =
+    if (cond) Check.pure(()) else failAt(node, error, related*)
+
+  private def expectAt(expected: TypeRec[Type], actual: TypeRec[Expr], related: (TypeRec[?], Related)*): Check[Unit] =
+    guardAt(actual, Equivalence.alpha(expected, typeOf(actual)), CompileError.TypeMismatch(expected, typeOf(actual)), related*)
+
+  /** 型が合わない値 value のうち、実際に原因になっている部分を探す。
+   * 引数の型が合っている λ・Λ・λ[C] は中へ進み、本体と結果の型を比べる（`let f(x: T): U = e` なら e と U）。
+   * annotation は期待される型を書いた注釈のノードで、同じように中へ進む（別名などで形が違えばそこで止まる）。
+   */
+  @annotation.tailrec
+  private def blame(
+      expected: TypeRec[Type],
+      value: TypeRec[Expr],
+      annotation: Option[TypeRec[Type]]
+  ): (TypeRec[Type], TypeRec[Expr], Option[TypeRec[Type]]) = (expected.project, value.project) match {
+    case (AST.Arrow(from, to), AST.Abs(_, _, body)) if destructArrow(typeOf(value)).exists { case (param, _) => Equivalence.alpha(from, param) } =>
+      blame(to, body, annotation.map(a => a.project match {
+        case AST.Arrow(_, result) => result
+        case _ => a
+      }))
+    case (AST.ForAll(variable, kind, inner), AST.TyAbs(bound, boundKind, body)) if kind == boundKind =>
+      blame(Equivalence.normalize(substType(variable, typeVarT(bound), inner)), body, annotation.map(a => a.project match {
+        case AST.ForAll(_, _, result) => result
+        case _ => a
+      }))
+    case (AST.InstArrow(_, to), AST.InstAbs(_, body)) =>
+      blame(to, body, annotation.map(a => a.project match {
+        case AST.InstArrow(_, result) => result
+        case _ => a
+      }))
+    case _ => (expected, value, annotation)
+  }
+
+  // 注釈の型 expected を持つはずの値 value を検査し、合わなければ原因の部分式と、対応する注釈の部分を示す
+  private def expectAnnotated(expected: TypeRec[Type], value: TypeRec[Expr], annotation: TypeRec[Type]): Check[Unit] =
+    if (Equivalence.alpha(expected, typeOf(value))) Check.pure(())
+    else {
+      val (wanted, culprit, place) = blame(expected, value, Some(annotation))
+      failAt(culprit, CompileError.TypeMismatch(wanted, typeOf(culprit)), place.map(_ -> Related.ExpectedByAnnotation(wanted)).toSeq*)
+    }
+
+  // check の中で起きた（まだ位置のない）エラーを、node の位置で報告する
+  private def locatedAt[A](node: TypeRec[?])(check: Check[A]): Check[A] =
+    ReaderT((env: Env) => check.run(env).left.map(error => env.spans.get(node).fold(error)(error.at)))
+
+  // ---- 手がかり ----
+  // エラーが起きた位置の Env から、直し方の手がかり（似た名前・宣言済みのインスタンスなど）を付ける
+
+  private def editDistance(a: String, b: String): Int = {
+    val row = Array.tabulate(b.length + 1)(identity)
+    for (i <- 1 to a.length) {
+      var diagonal = row(0)
+      row(0) = i
+      for (j <- 1 to b.length) {
+        val above = row(j)
+        row(j) = (row(j) + 1).min(row(j - 1) + 1).min(diagonal + (if (a(i - 1) == b(j - 1)) 0 else 1))
+        diagonal = above
+      }
+    }
+    row(b.length)
+  }
+
+  // 修飾された名前（M.x）は、最後の名前が一致または近ければ候補にする
+  private def similarNames(target: String, candidates: Iterable[String]): Seq[String] = {
+    val limit = (target.length / 3).max(1)
+    candidates.toSeq.distinct
+      .filter(c => c != target && !c.startsWith("$") && !c.startsWith("__"))
+      .map(c => c -> editDistance(target, c).min(editDistance(target, c.substring(c.lastIndexOf('.') + 1))))
+      .filter(_._2 <= limit)
+      .sortBy { case (c, distance) => (distance, c) }
+      .map(_._1).take(3)
+  }
+
+  private def hintsFor(env: Env, error: CompileError): Seq[Hint] = {
+    def similar(target: String, candidates: Iterable[String]): Seq[Hint] =
+      Option(similarNames(target, candidates)).filter(_.nonEmpty).map(Hint.SimilarNames(_)).toSeq
+    def defining(name: String, keyword: String): Option[Hint] =
+      Option.when(env.defining.contains(name))(Hint.DeclareRec(keyword, name))
+    def later(name: String): Option[Hint] = Option.when(env.declared(name))(Hint.DefinedLater(name))
+
+    error match {
+      case CompileError.UndefinedVariable(name) if name.name.contains('.') && env.values.contains(name) =>
+        Seq(Hint.PrivateMember(name.name))
+      case CompileError.UndefinedTypeVariable(name) if name.name.contains('.') && env.definesTypeName(name) =>
+        Seq(Hint.PrivateMember(name.name))
+      case CompileError.TypeMismatch(expected, actual) =>
+        (freeTypeVars(expected) ++ freeTypeVars(actual)).filter(env.abstractTypes.contains).toSeq.sortBy(_.name).map(t => Hint.OpaqueType(t.name))
+      case CompileError.UndefinedVariable(name) =>
+        val visible = (env.values.keys.map(_.name) ++ env.scope.values.keys)
+          .filter(c => env.resolveValue(Variable(c)).exists(env.values.contains))
+        defining(name.name, "rec let").orElse(later(name.name)).toSeq ++ similar(name.name, visible)
+      case CompileError.UndefinedTypeVariable(name) =>
+        val visible = (env.typeVars.keys ++ env.typeAliases.keys ++ env.dataTypes.keys ++ env.abstractTypes.keys).map(_.name) ++ env.scope.types.keys
+        later(name.name).toSeq ++
+          similar(name.name, visible.filter(c => env.resolveType(TypeVariable(c)).exists(env.definesTypeName)) ++ BuiltinTypes.primitiveArities.keys)
+      case CompileError.UndefinedTrait(name, _) =>
+        later(name.name).toSeq ++ similar(name.name, env.traits.keys.map(_.name).filter(c => env.resolveType(TypeVariable(c)).nonEmpty))
+      case CompileError.UndefinedModule(path) => similar(path.mkString("."), env.modules.keys ++ env.scope.modules.keys)
+      case CompileError.NoInstance(name, args) =>
+        val wanted = showTypeConstraint(TypeConstraint(name, args))
+        val heads = args.flatMap(a => typeConstructorHead(a).map(_._1))
+        val self = Option.when(heads.length == args.length && env.defining.contains(instanceDictionaryName(name, heads).name))(Hint.DeclareRec("rec impl", wanted))
+        val parameter = Option.when(args.exists(a => collectTypeApps(a)._1.project match {
+          case AST.TypeVar(v) => env.typeVars.contains(v)
+          case _ => false
+        }))(Hint.AddConstraint(wanted))
+        val declared = env.instances.values.filter(_.name == name).toSeq.sortBy(_.dictName.name).map(Resolver.showInstance)
+        // 自身のインスタンスが要るなら、rec の案内だけで足りる
+        self.fold(Hint.Instances(wanted, declared, env.givens.filter(_.name == name).map(showTypeConstraint)) +: parameter.toSeq)(Seq(_))
+      case CompileError.InContext(inner) => hintsFor(env, inner)
+      case _ => Seq.empty
+    }
+  }
+
+  private def enrich(env: Env, error: CompileError): CompileError =
+    if (error.hinted) error else CompileError.Hinted(error, hintsFor(env, error.core))
+
   private def expectNumeric(actual: TypeRec[Type]): Check[Unit] =
     guard(isNumericType(actual), CompileError.ExpectedNumeric(actual))
 
@@ -51,12 +178,12 @@ object TAnalyser {
             val appliedLeft = appT(afterLeft, fnRef, left)
             okT(appT(resultType, appliedLeft, rightArg))
           case Some((rightParam, _)) =>
-            fail(CompileError.TypeMismatch(rightParam, expectedRightType))
+            failAt(right, CompileError.TypeMismatch(rightParam, expectedRightType), left -> Related.LeftOperand(typeOf(left)))
           case None =>
             fail(CompileError.OperatorNotBinary(fn, fnType))
         }
       case Some((leftParam, _)) =>
-        fail(CompileError.TypeMismatch(leftParam, typeOf(left)))
+        failAt(left, CompileError.TypeMismatch(leftParam, typeOf(left)))
       case None =>
         fail(CompileError.OperatorNotAFunction(fn, fnType))
     }
@@ -84,8 +211,8 @@ object TAnalyser {
         case Seq(left, right) =>
           val operandType = primitiveT(operandTypeName)
           for {
-            _ <- expect(operandType, typeOf(left))
-            _ <- expect(operandType, typeOf(right))
+            _ <- expectAt(operandType, left)
+            _ <- expectAt(operandType, right)
             _ <- binOp match {
               case BinOps.Add | BinOps.Sub | BinOps.Mul | BinOps.Div =>
                 guard(BuiltinTypes.numericTypes.contains(operandTypeName), CompileError.IntrinsicOperandInvalid(binOp, OperandRequirement.Numeric))
@@ -117,7 +244,7 @@ object TAnalyser {
         case Seq(body) =>
           val operandType = primitiveT(operandTypeName)
           for {
-            _ <- expect(operandType, typeOf(body))
+            _ <- expectAt(operandType, body)
             _ <- unaryOp match {
               case UnaryOps.Neg =>
                 guard(BuiltinTypes.numericTypes.contains(operandTypeName), CompileError.IntrinsicOperandInvalid(unaryOp, OperandRequirement.Numeric))
@@ -165,19 +292,25 @@ object TAnalyser {
   private def underParams[A](params: Seq[(TypeVariable, Kind)])(body: Check[A]): Check[A] =
     params.foldRight(body) { case ((variable, kind), inner) => underTypeVar(variable, kind)(inner) }
 
-  private def typedConstraint(c: Constraint[TC]): Check[Constraint[TypeRec]] = underParams(c.params) {
-    (resolveTrait(c.name), c.arg.traverse(identity), c.premises.traverse(typedConstraint)).mapN(Constraint[TypeRec](_, _, c.params, _))
+  // ソースに書かれた制約についてのエラーは、その制約の位置で報告する
+  private def locatedAt[A](span: Option[Span])(check: Check[A]): Check[A] =
+    ReaderT((env: Env) => check.run(env).left.map(error => span.fold(error)(found => enrich(env, error).at(found))))
+
+  private def typedConstraint(c: Constraint[TC]): Check[Constraint[TypeRec]] = locatedAt(c.span) {
+    underParams(c.params) {
+      (resolveTrait(c.name), c.arg.traverse(identity), c.premises.traverse(typedConstraint)).mapN(Constraint[TypeRec](_, _, c.params, _, c.span))
+    }
   }
 
   // trait の存在・引数の数・カインドを確かめ、引数を展開した制約を返す。site はエラー表示用の宣言
-  private def expandConstraint(c: Constraint[TypeRec], site: Option[DeclRef]): Check[TypeConstraint] = for {
+  private def expandConstraint(c: Constraint[TypeRec], site: Option[DeclRef]): Check[TypeConstraint] = locatedAt(c.span)(for {
     resolved <- resolveConstraintNames(c)
     _ <- KAnalyser.checkConstraint(resolved, site)
     _ <- checkQuantifiedParams(resolved)
   } yield resolved.hmap([y] => (t: TypeRec[y]) => t.extract match {
     case TypeAnn => Equivalence.normalize(t)
     case _ => t
-  })
+  }))
 
   // 解決はヘッドの照合でパラメータを決めるので、パラメータはヘッドの引数に現れなければならない（前提の中でも同じ）
   private def checkQuantifiedParams(c: TypeConstraint): Check[Unit] = for {
@@ -257,14 +390,16 @@ object TAnalyser {
     resolveNames(t).map(Equivalence.normalize)
 
   // 正規化は well-kinded な型に対してのみ停止が保証されるため、カインドを先に確定する
-  private def expandWellKinded(types: TypeRec[Type]): Check[(TypeRec[Type], Kind)] = for {
-    resolved <- resolveNames(types)
-    kind <- KAnalyser.kindOf(resolved)
-  } yield (Equivalence.normalize(resolved), kind)
+  private def expandWellKinded(types: TypeRec[Type]): Check[(TypeRec[Type], Kind)] = locatedAt(types) {
+    for {
+      resolved <- resolveNames(types)
+      kind <- KAnalyser.kindOf(resolved)
+    } yield (Equivalence.normalize(resolved), kind)
+  }
 
   private def expandChecked(types: TypeRec[Type]): Check[TypeRec[Type]] =
     expandWellKinded(types).flatMap { case (expanded, kind) =>
-      guard(kind == Kind.Star, CompileError.KindNotStar(expanded, kind)).as(expanded)
+      guardAt(types, kind == Kind.Star, CompileError.KindNotStar(expanded, kind)).as(expanded)
     }
 
   // ---- 宣言と式（top-level / in 式）で共有する検査 ----
@@ -321,7 +456,7 @@ object TAnalyser {
     typedTypes <- types
     declaredType <- expandChecked(typedTypes)
     typedValue <- value
-    _ <- expect(valueType(declaredType), typeOf(typedValue))
+    _ <- expectAnnotated(valueType(declaredType), typedValue, typedTypes)
   } yield (typedTypes, typedValue, declaredType)
 
   private case class CheckedBinding(variable: Variable, types: TypeRec[Type], value: TypeRec[Expr], declaredType: TypeRec[Type])
@@ -338,7 +473,7 @@ object TAnalyser {
       checked <- bindings.zip(annotated).traverse { case ((_, _, value), (variable, typedTypes, declaredType)) =>
         for {
           typedValue <- value.local(scope)
-          _ <- expect(declaredType, typeOf(typedValue))
+          _ <- expectAnnotated(declaredType, typedValue, typedTypes)
           _ <- guard(
             isFunctionValue(typedValue) || freeVars(typedValue).intersect(names.toSet).isEmpty,
             CompileError.RecursiveValueNotFunction(variable)
@@ -593,9 +728,12 @@ object TAnalyser {
     case AST.InstApp(function, Evidence.Explicit(dictionary)) => for {
       typedFunction <- function
       typedDictionary <- dictionary
-      expected <- lift(destructInstArrow(typeOf(typedFunction)).toRight(CompileError.NoConstraintToSatisfy(typeOf(typedFunction))))
+      expected <- destructInstArrow(typeOf(typedFunction)) match {
+        case Some(found) => Check.pure(found)
+        case None => failAt(typedFunction, CompileError.NoConstraintToSatisfy(typeOf(typedFunction)))
+      }
       (constraint, to) = expected
-      _ <- expect(dictionaryType(constraint), typeOf(typedDictionary))
+      _ <- expectAt(dictionaryType(constraint), typedDictionary, typedFunction -> Related.FunctionType(typeOf(typedFunction)))
       resolved <- discharge(instAppT(to, typedFunction, Evidence.Explicit(typedDictionary)))
     } yield resolved
 
@@ -605,7 +743,10 @@ object TAnalyser {
     case AST.Using(dictionary, body) => for {
       env <- ask
       typedDictionary <- dictionary
-      constraint <- lift(constraintOfDictionary(typeOf(typedDictionary), env.traits).toRight(CompileError.NotADictionary(typeOf(typedDictionary))))
+      constraint <- constraintOfDictionary(typeOf(typedDictionary), env.traits) match {
+        case Some(found) => Check.pure(found)
+        case None => failAt(typedDictionary, CompileError.NotADictionary(typeOf(typedDictionary)))
+      }
       typedBody <- body.local((e: Env) => e.withGivens(Seq(constraint)))
     } yield usingT(typeOf(typedBody), typedDictionary, typedBody)
 
@@ -616,7 +757,7 @@ object TAnalyser {
     } yield summonT(dictionaryType(expanded), typed, evidence)
 
     case AST.Let(variable, types, value, body) => for {
-      binding <- checkBinding(variable, types, value)
+      binding <- checkBinding(variable, types, value.local((e: Env) => e.copy(defining = e.defining + variable.name)))
       (typedTypes, typedValue, declaredType) = binding
       typedBody <- body.local((e: Env) => e.withValue(variable, declaredType))
     } yield letT(variable, typeOf(typedBody), typedTypes, typedValue, typedBody)
@@ -657,28 +798,38 @@ object TAnalyser {
       typedScrutinee <- scrutinee
       typedCases <- cases.traverse { c =>
         for {
-          checked <- checkPattern(c.pattern, typeOf(typedScrutinee))
+          // パターンについてのエラーは、その分岐のパターンの位置で報告する
+          checked <- locatedAt(c.span) {
+            checkPattern(c.pattern, typeOf(typedScrutinee)).flatMap { case found @ (_, bindings) =>
+              val names = bindings.map(_._1)
+              guard(names.distinct.length == names.length, CompileError.AlreadyDefined(NameKind.VariableName, names.diff(names.distinct).head.name)).as(found)
+            }
+          }
           (pattern, bindings) = checked
-          names = bindings.map(_._1)
-          _ <- guard(names.distinct.length == names.length, CompileError.AlreadyDefined(NameKind.VariableName, names.diff(names.distinct).head.name))
           typedGuard <- c.guard.traverse(_.local((e: Env) => e.withValues(bindings)))
-          _ <- typedGuard.traverse_(g => expect(boolTypeT, typeOf(g)))
+          _ <- typedGuard.traverse_(g => expectAt(boolTypeT, g))
           typedBody <- c.body.local((e: Env) => e.withValues(bindings))
-        } yield PatternCase[TypeRec](pattern, typedGuard, typedBody)
+        } yield PatternCase[TypeRec](pattern, typedGuard, typedBody, c.span)
       }
       resultType <- typedCases.headOption match {
-        case Some(first) => typedCases.tail.traverse(c => expect(typeOf(first.body), typeOf(c.body))).as(typeOf(first.body))
+        case Some(first) =>
+          typedCases.tail.traverse(c => expectAt(typeOf(first.body), c.body, first.body -> Related.FirstCase(typeOf(first.body)))).as(typeOf(first.body))
         case None => fail(CompileError.EmptyMatch)
       }
       // ノードは保持したまま、網羅性と到達不能な分岐は脱糖と同じ決定木で調べる
-      _ <- lift(PatternDesugar.check(typeOf(typedScrutinee), typedCases))
+      // 到達不能な分岐は、その分岐の位置で報告する
+      _ <- lift(PatternDesugar.check(typeOf(typedScrutinee), typedCases).left.map {
+        case unreachable @ CompileError.UnreachableCase(index) => typedCases.lift(index - 1).flatMap(_.span).fold(unreachable)(unreachable.at)
+        case other => other
+      })
     } yield patternMatchT(resultType, typedScrutinee, typedCases)
 
     case AST.Match(scrutinee, cases) => for {
       typedScrutinee <- scrutinee
       typedCases <- checkCases(MatchKindRef.MatchExpr, typeOf(typedScrutinee), cases)((_, fieldTypes) => fieldTypes)
       resultType <- typedCases.headOption match {
-        case Some(first) => typedCases.tail.traverse(c => expect(typeOf(first.body), typeOf(c.body))).as(typeOf(first.body))
+        case Some(first) =>
+          typedCases.tail.traverse(c => expectAt(typeOf(first.body), c.body, first.body -> Related.FirstCase(typeOf(first.body)))).as(typeOf(first.body))
         case None => fail(CompileError.EmptyMatch)
       }
     } yield matchExprT(resultType, typedScrutinee, typedCases)
@@ -691,7 +842,7 @@ object TAnalyser {
       typedCases <- checkCases(MatchKindRef.FoldExpr, typeOf(typedScrutinee), cases) { (dataName, fieldTypes) =>
         fieldTypes.map(field => if (isDataApplicationOf(field, dataName)) resultType else field)
       }
-      _ <- typedCases.traverse_(c => expect(resultType, typeOf(c.body)))
+      _ <- typedCases.traverse_(c => expectAt(resultType, c.body, typedResultType -> Related.ExpectedByAnnotation(resultType)))
     } yield foldExprT(resultType, typedScrutinee, typedResultType, typedCases)
 
     case AST.App(function, argument) => for {
@@ -699,8 +850,9 @@ object TAnalyser {
       typedArgument <- argument
       resultType <- destructArrow(typeOf(typedFunction)) match {
         case Some((from, to)) if Equivalence.alpha(from, typeOf(typedArgument)) => okT(to)
-        case Some((from, _)) => fail(CompileError.TypeMismatch(from, typeOf(typedArgument)))
-        case None => fail(CompileError.NotAFunction(typeOf(typedFunction)))
+        case Some((from, _)) =>
+          failAt(typedArgument, CompileError.TypeMismatch(from, typeOf(typedArgument)), typedFunction -> Related.FunctionType(typeOf(typedFunction)))
+        case None => failAt(typedFunction, CompileError.NotAFunction(typeOf(typedFunction)))
       }
     } yield appT(resultType, typedFunction, typedArgument)
 
@@ -712,8 +864,9 @@ object TAnalyser {
       resultType <- destructForAllK(typeOf(typedFunction)) match {
         case Some((variable, expectedKind, bodyType)) =>
           if (expectedKind == argKind) okT(Equivalence.normalize(substType(variable, argumentType, bodyType)))
-          else fail(CompileError.KindMismatchInTypeApp(expectedKind, argKind, None))
-        case None => fail(CompileError.NotPolymorphic(typeOf(typedFunction)))
+          else failAt(typedArgument, CompileError.KindMismatchInTypeApp(expectedKind, argKind, Some(argumentType)),
+            typedFunction -> Related.FunctionType(typeOf(typedFunction)))
+        case None => failAt(typedFunction, CompileError.NotPolymorphic(typeOf(typedFunction)))
       }
       resolved <- discharge(tyAppT(resultType, typedFunction, typedArgument))
     } yield resolved
@@ -815,8 +968,8 @@ object TAnalyser {
       typedThen <- thenBranch
       typedElse <- elseBranch
       thenType = typeOf(typedThen)
-      _ <- expect(boolTypeT, typeOf(typedCond))
-      _ <- expect(thenType, typeOf(typedElse))
+      _ <- expectAt(boolTypeT, typedCond)
+      _ <- expectAt(thenType, typedElse, typedThen -> Related.OtherBranch(thenType))
     } yield ifT(thenType, typedCond, typedThen, typedElse)
 
     case AST.Primitive(name) =>
@@ -843,7 +996,15 @@ object TAnalyser {
         AST.InstApp(function.local((e: Env) => e.copy(keepConstraints = true)), evidence.hmap(resolving))
       case other => other.hmap(resolving)
     }
-    ReaderT((env: Env) => tcAlg(node).run(env).left.map(_.at(he.ask)))
+    ReaderT { (env: Env) =>
+      tcAlg(node).run(env) match {
+        case Right(typed) =>
+          env.spans.record(typed, he.ask)
+          Right(typed)
+        // 手がかりは、エラーが起きた位置の Env から付ける
+        case Left(error) => Left(enrich(env, error).at(he.ask))
+      }
+    }
   }
 
   private def check[I](t: IndexedRec[I]): TC[I] = t.cata(indexedAlg)
@@ -865,7 +1026,7 @@ object TAnalyser {
 
     case AST.TopLet(variable, types, value) => for {
       name <- memberName(variable)
-      binding <- checkBinding(name, types, value)
+      binding <- checkBinding(name, types, value.local((e: Env) => e.copy(defining = e.defining + variable.name)))
       (typedTypes, typedValue, declaredType) = binding
       checked <- extending(topLetT(name, typedTypes, typedValue))(_.withValue(name, declaredType).exportValue(variable))
     } yield checked
@@ -914,7 +1075,10 @@ object TAnalyser {
         typedMethods <- methods.zip(signature.methods).traverse { case (m, (method, sig)) =>
           m.body.traverse { body =>
             body.local(defaultScope).flatMap { typedBody =>
-              guard(Equivalence.alpha(sig, typeOf(typedBody)), CompileError.DefaultMethodTypeMismatch(name, method, sig, typeOf(typedBody))).as(typedBody)
+              (if (Equivalence.alpha(sig, typeOf(typedBody))) Check.pure(()) else {
+                val (wanted, culprit, _) = blame(sig, typedBody, None)
+                failAt[Unit](culprit, CompileError.DefaultMethodTypeMismatch(name, method, wanted, typeOf(culprit)))
+              }).as(typedBody)
             }
           }.map(typedBody => MethodSig[TypeRec](method, typedSigs.find(_._1 == method).get._2, typedBody))
         }
@@ -1029,7 +1193,11 @@ object TAnalyser {
     val implScope = (e: Env) => e.withTypeVars(head.params)
     // スーパークラスの解決とメソッド本体からは、impl の文脈がスコープ中の制約として見える
     val contextScope = (e: Env) => implScope(e).withGivens(head.inst.context)
-    val bodyScope = (e: Env) => contextScope(e).copy(instances = e.instances ++ group)
+    // rec でない impl の中で自身のインスタンスが要ると、「rec impl と書く」と案内する
+    val bodyScope = (e: Env) => contextScope(e).copy(
+      instances = e.instances ++ group,
+      defining = if (group.contains(head.key)) e.defining else e.defining + head.inst.dictName.name
+    )
     val traitMethodNames = traitDef.methods.map(_._1)
     // impl のメソッドは短い名前で書き、trait のメソッド（module の中なら M.m）に対応づける
     val methods = writtenMethods.map { m =>
@@ -1051,10 +1219,10 @@ object TAnalyser {
         val expected = Equivalence.normalize(substMany(traitDef.paramVars, head.targets, traitDef.methods.find(_._1 == m.name).get._2))
         for {
           typedBody <- m.body.local(bodyScope)
-          _ <- guard(
-            Equivalence.alpha(expected, typeOf(typedBody)),
-            CompileError.MethodBodyTypeMismatch(implRef, m.name, expected, typeOf(typedBody))
-          )
+          _ <- if (Equivalence.alpha(expected, typeOf(typedBody))) Check.pure(()) else {
+            val (wanted, culprit, _) = blame(expected, typedBody, None)
+            failAt[Unit](culprit, CompileError.MethodBodyTypeMismatch(implRef, m.name, wanted, typeOf(culprit)))
+          }
           // 文脈のない impl の辞書は関数ではないので、組のインスタンスを使うメソッドは関数でなければ初期化前の辞書を読む
           _ <- guard(
             head.inst.context.nonEmpty || isFunctionValue(typedBody) || !instancesUsed(typedBody).exists(group.contains),
@@ -1238,7 +1406,7 @@ object TAnalyser {
 
   private def checkDecl(decl: IndexedRec[Decl]): StateT[EitherS, Env, TypeRec[Decl]] = {
     def run(rule: Checked): StateT[EitherS, Env, TypeRec[Decl]] =
-      StateT(env => rule.run(env).map { case (typedDecl, nextEnv) => (nextEnv, typedDecl) })
+      StateT(env => rule.run(env).map { case (typedDecl, nextEnv) => (nextEnv, typedDecl) }.left.map(enrich(env, _)))
     def children(node: AST[IndexedRec, Decl]): AST[TC, Decl] = node.hmap([x] => (child: IndexedRec[x]) => check(child))
     val checked = decl.project match {
       case AST.TopRec(decls) => run(recRule(decls.map(member => children(member.project))))
@@ -1256,9 +1424,28 @@ object TAnalyser {
     case None => Left(CompileError.MainMissing)
   }
 
+  // プログラムのどこかで宣言される名前（「この後で宣言されている」という案内に使う）
+  private def declaredNames(decls: Seq[IndexedRec[Decl]]): Set[String] = decls.flatMap { decl =>
+    decl.project match {
+      case AST.TopLet(variable, _, _) => Seq(variable.name)
+      case AST.TopType(variable, _, _) => Seq(variable.name)
+      case AST.TopData(variable, _, constructors) => variable.name +: constructors.map(_.name.name)
+      case AST.TopTrait(variable, _, _, methods) => variable.name +: methods.map(_.name.name)
+      case AST.TopRec(members) => declaredNames(members).toSeq
+      case AST.TopModified(_, inner) => declaredNames(Seq(inner)).toSeq
+      // module の中の名前は、外からは修飾して参照する（「後で宣言されている」には当たらない）
+      case _ => Seq.empty
+    }
+  }.toSet
+
   def validate(prog: IndexedRec[AST.Program.type]): Either[CompileError, TypeRec[AST.Program.type]] = prog.project match {
-    case AST.Program(decls) => decls.traverse(checkDecl).run(Env.empty).flatMap { case (env, typedDecls) =>
-      checkMain(env).as(programT(typedDecls, env))
+    case AST.Program(decls) => decls.traverse(checkDecl).run(Env.empty.copy(spans = new SpanTable, declared = declaredNames(decls))).flatMap { case (env, typedDecls) =>
+      // main についてのエラーは、main の宣言の位置で報告する
+      val mainSpan = decls.collectFirst { case decl if (decl.project match {
+        case AST.TopLet(Variable("main"), _, _) => true
+        case _ => false
+      }) => decl.extract }
+      checkMain(env).left.map(error => mainSpan.fold(error)(error.at)).as(programT(typedDecls, env))
     }
   }
 

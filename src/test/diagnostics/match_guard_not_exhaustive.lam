@@ -1,0 +1,6 @@
+let __add_i32(a: i32)(b: i32): i32 = intrinsic[add_i32](a)(b)
+let __eq_i32(a: i32)(b: i32): bool = intrinsic[eq_i32](a)(b)
+let f(n: i32): i32 = match n {
+  m if m == 0 => 0
+}
+let main(): i32 = 0

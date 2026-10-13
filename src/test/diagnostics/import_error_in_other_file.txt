@@ -1,0 +1,7 @@
+error: cannot find value `helpr` in this scope
+ --> src/test/diagnostics/lib/broken.lam:3:19
+  |
+3 | let broken: i32 = helpr
+  |                   ^^^^^ not found in this scope
+  |
+  = help: a similar name exists: `helper`

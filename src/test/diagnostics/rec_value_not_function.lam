@@ -1,0 +1,2 @@
+rec let x: i32 = x
+let main(): i32 = 0

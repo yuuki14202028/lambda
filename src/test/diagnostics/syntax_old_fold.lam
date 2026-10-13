@@ -1,0 +1,5 @@
+rec data L = { N, C(i32)(L) }
+let f(l: L): i32 = fold l as i32 with
+  N => 0
+  C(x)(acc) => acc
+let main(): i32 = 0

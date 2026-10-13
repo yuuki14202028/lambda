@@ -1,0 +1,6 @@
+error: mismatched types
+ --> type_operator_operand.lam:3:23
+  |
+3 | let main(): i32 = 1 + true
+  |                       ^^^^ expected `i32`, found `bool`
+  |                   - the left operand has type `i32`

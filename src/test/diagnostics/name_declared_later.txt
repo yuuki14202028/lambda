@@ -1,0 +1,8 @@
+error: cannot find value `second` in this scope
+ --> name_declared_later.lam:1:20
+  |
+1 | let first(): i32 = second()
+  |                    ^^^^^^ not found in this scope
+  |
+  = note: `second` is declared later in the program; a declaration is only visible after it
+  = help: move the declaration of `second` above this use, or put the declarations that refer to each other in `rec { … }`

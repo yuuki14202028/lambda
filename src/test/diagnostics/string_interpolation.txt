@@ -1,0 +1,8 @@
+error: cannot embed a value of type `i32` in a string
+ --> string_interpolation.lam:1:21
+  |
+1 | let main(): i32 = { `value = {1}`; 0 }
+  |                     ^^^^^^^^^^^^^ this string
+  |
+  = note: values other than strings are converted with the method `show`, which is not defined here
+  = help: declare `trait Show[a] { def show(x: a): foreign.C.String }` and an instance for the type

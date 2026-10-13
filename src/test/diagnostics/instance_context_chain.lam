@@ -1,0 +1,4 @@
+trait Show[a] { def show(x: a): i32 }
+data Box[a] = { MkBox(a) }
+impl[a] Show[Box[a]] with Show[a] { def show = λb: Box[a]. 0 }
+let main(): i32 = show[Box[Box[bool]]](MkBox[Box[bool]](MkBox[bool](true)))

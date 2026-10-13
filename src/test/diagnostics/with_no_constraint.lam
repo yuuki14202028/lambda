@@ -1,0 +1,2 @@
+let id(x: i32): i32 = x
+let main(): i32 = id(with 1)(2)

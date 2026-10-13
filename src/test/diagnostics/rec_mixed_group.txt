@@ -1,0 +1,8 @@
+error: a `rec { … }` group mixes different kinds of declarations
+ --> rec_mixed_group.lam:1:1
+  |
+1 | rec {
+  | ^^^^^ this group
+  |
+  = note: a group contains only `let`s, only `data`s, or only `impl` / `derive`s
+  = help: split it into one `rec { … }` per kind (data first, then the functions or instances that use it)

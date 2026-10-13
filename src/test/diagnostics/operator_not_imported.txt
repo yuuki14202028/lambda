@@ -1,0 +1,8 @@
+error: operator `+` is not defined for `i32`
+ --> operator_not_imported.lam:1:19
+  |
+1 | let main(): i32 = 1 + 2
+  |                   ^^^^^ needs a function named `__add_i32`
+  |
+  = note: `a + b` is a call to the function `__add_i32`, chosen from the type of the left operand
+  = help: the operators for the built-in types are defined in the standard library: add `import "std/operators"`

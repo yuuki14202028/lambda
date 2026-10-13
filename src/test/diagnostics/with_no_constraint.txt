@@ -1,0 +1,8 @@
+error: this expression does not take an instance
+ --> with_no_constraint.lam:2:19
+  |
+2 | let main(): i32 = id(with 1)(2)
+  |                   ^^ has type `i32 → i32`
+  |
+  = note: `f(with d)` passes the dictionary `d` for the first constraint in the type of `f`, written `[C[…]] → …`
+  = help: remove `(with …)`, or apply the type arguments first: `f[T](with d)`

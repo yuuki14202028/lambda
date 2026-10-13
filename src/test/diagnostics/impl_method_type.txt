@@ -1,0 +1,5 @@
+error: the method `area` of impl Shape[bool] has the wrong type
+ --> impl_method_type.lam:3:24
+  |
+3 |   def area = λx: bool. x
+  |                        ^ expected `i32`, found `bool`

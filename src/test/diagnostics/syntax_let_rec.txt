@@ -1,0 +1,7 @@
+error: syntax error
+ --> syntax_let_rec.lam:1:9
+  |
+1 | let rec loop(n: i32): i32 = loop(n)
+  |         ^^^^ expected `:`, found `loop`
+  |
+  = help: recursion is marked in front of the declaration: write `rec let …`

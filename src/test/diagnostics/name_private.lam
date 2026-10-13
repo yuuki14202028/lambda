@@ -1,0 +1,5 @@
+module Counter {
+  private let step: i32 = 1
+  let zero: i32 = 0
+}
+let main(): i32 = Counter.step

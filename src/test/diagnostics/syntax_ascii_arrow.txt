@@ -1,0 +1,7 @@
+error: syntax error
+ --> syntax_ascii_arrow.lam:1:12
+  |
+1 | let f: i32 -> i32 = λx: i32. x
+  |            ^ expected `=`, found `-`
+  |
+  = help: functions and cases use the arrows `→` and `=>`

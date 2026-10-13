@@ -1,0 +1,9 @@
+data Option[a] = { None, Some(a) }
+rec data List[a] = { Nil, Cons(a)(List[a]) }
+
+let firstTwo(xs: List[Option[i32]]): i32 = match xs {
+  Cons(Some(x))(Nil) => x
+  Nil => 0
+}
+
+let main(): i32 = 0

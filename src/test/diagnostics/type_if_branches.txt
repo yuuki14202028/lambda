@@ -1,0 +1,8 @@
+error: mismatched types
+ --> type_if_branches.lam:5:5
+  |
+3 |     1
+  |     - this branch has type `i32`
+ ...
+5 |     "two"
+  |     ^^^^^ expected `i32`, found `foreign.C.String`

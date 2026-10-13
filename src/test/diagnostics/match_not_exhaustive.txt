@@ -1,0 +1,7 @@
+error: this match does not cover every value
+ --> match_not_exhaustive.lam:4:44
+  |
+4 | let firstTwo(xs: List[Option[i32]]): i32 = match xs {
+  |                                            ^^^^^^^^^^ `Cons(None)(_)` is not matched
+  |
+  = help: add a case for `Cons(None)(_)`, or a final `_ => …`

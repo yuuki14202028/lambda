@@ -32,7 +32,7 @@ class EndToEndSuite extends munit.FunSuite {
     val src = Files.readString(srcPath)
     val asm = Compiler.compile(src, srcPath) match {
       case Right(asm) => asm
-      case Left(err) => fail(err.render(source, cats.parse.LocationMap(src)))
+      case Left(err) => fail(Diagnostic.render(err, Sources(source, src)))
     }
     val asmPath = workDir.resolve(s"$name.s")
     val binPath = workDir.resolve(name)

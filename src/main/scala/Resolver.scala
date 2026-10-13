@@ -22,6 +22,15 @@ object Resolver {
   def sameConstraint(left: TypeConstraint, right: TypeConstraint): Boolean =
     Equivalence.alpha(dictionaryType(left), dictionaryType(right))
 
+  def showInstance(inst: InstanceDef): String = {
+    val params = inst.params.map {
+      case (v, Kind.Star) => s"[${v.name}]"
+      case (v, k) => s"[${v.name}: ${k.show}]"
+    }.mkString
+    val context = if (inst.context.isEmpty) "" else inst.context.map(showTypeConstraint).mkString(" with ", ", ", "")
+    s"impl$params ${inst.name.name}${inst.targets.map(t => s"[${t.show}]").mkString}$context"
+  }
+
   def resolve(constraint: TypeConstraint): Check[Evidence[TypeRec]] =
     Check.ask.flatMap(env => Check.lift(resolveIn(env, constraint, 0)))
 
@@ -113,6 +122,8 @@ object Resolver {
     inst.context
       .traverse(c => resolveIn(env, instantiate(c, paramVars, typeArgs), depth + 1))
       .map(Evidence.Instance(constraint.name, heads, typeArgs, _))
+      // 文脈が解決できなかったときは、どの制約のために必要だったかを残す
+      .left.map(CompileError.RequiredBy(_, showTypeConstraint(constraint), showInstance(inst)))
   }
 
   // スコープ中の（単純な）制約からスーパークラス射影をたどって得られる制約と、その根拠（幅優先。出発点は含まない）

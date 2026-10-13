@@ -1,0 +1,8 @@
+error: `x` would be read before it is initialized
+ --> rec_value_not_function.lam:1:1
+  |
+1 | rec let x: i32 = x
+  | ^^^^^^^^^^^^^^^^^^ this definition
+  |
+  = note: in a `rec` definition, a value that is not a function is evaluated immediately, while the definitions it refers to are still being created
+  = help: make `x` a function (`λ…` or `let x(…)`), or move it out of the `rec` group

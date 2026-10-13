@@ -1,0 +1,5 @@
+error: syntax error
+ --> src/test/diagnostics/lib/unparsable.lam:3:11
+  |
+3 | let other i32 = 2
+  |           ^^^ expected `:`, found `i32`

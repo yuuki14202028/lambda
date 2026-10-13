@@ -1,0 +1,8 @@
+trait Shape[a] {
+  def area(x: a): i32
+  def name(x: a): i32
+}
+impl Shape[i32] {
+  def area = λx: i32. x
+}
+let main(): i32 = 0

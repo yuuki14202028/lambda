@@ -1,0 +1,7 @@
+error: mismatched kinds in a type application
+ --> kind_quantified.lam:2:38
+  |
+2 | trait Lifts[t: (* → *) → * → *] with ∀m. Wrap[m] ⇒ Wrap[t[m]] {
+  |                                      ^^^^^^^^^^^^^^^^^^^^^^^^ expected a type of kind `* → *`, found `m` of kind `*`
+  |
+  = help: a type constructor is expected here. If this is a bound type variable, give its kind: `∀(f: * → *). …` or `[f: * → *]` (the default kind is `*`)

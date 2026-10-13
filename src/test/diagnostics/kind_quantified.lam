@@ -1,0 +1,5 @@
+trait Wrap[f: * → *] { def wrap[a](x: a): f[a] }
+trait Lifts[t: (* → *) → * → *] with ∀m. Wrap[m] ⇒ Wrap[t[m]] {
+  def lift(x: i32): i32
+}
+let main(): i32 = 0

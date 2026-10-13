@@ -1,0 +1,2 @@
+let f: i32 -> i32 = λx: i32. x
+let main(): i32 = 0

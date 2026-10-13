@@ -1,0 +1,6 @@
+error: mismatched types
+ --> type_argument.lam:5:25
+  |
+5 | let total: i32 = add(1)(true)
+  |                         ^^^^ expected `i32`, found `bool`
+  |                  ------ this function has type `i32 → i32`

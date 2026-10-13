@@ -1,0 +1,8 @@
+error: type arguments are given to a value that takes none
+ --> default_method_type_application.lam:4:32
+  |
+4 |   def neq(x: a)(y: a): bool = !eq[a](x)(y)
+  |                                ^^ has type `a → a → bool`
+  |
+  = note: `e[T]` applies a value of type `∀a. …` to the type `T`
+  = help: remove the type argument; inside a trait's default method, the trait's own methods are plain functions and are called without type arguments

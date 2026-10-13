@@ -1,0 +1,2 @@
+let twice[f: * → *](x: f[i32]): i32 = 0
+let main(): i32 = twice[i32](1)

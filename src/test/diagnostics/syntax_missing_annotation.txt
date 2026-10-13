@@ -1,0 +1,7 @@
+error: syntax error
+ --> syntax_missing_annotation.lam:1:7
+  |
+1 | let x = 1
+  |       ^ expected `:`, found `=`
+  |
+  = help: every definition states its type: `let x: T = …`, or `let f(x: T): U = …` for a function

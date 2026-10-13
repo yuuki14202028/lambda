@@ -1,0 +1,7 @@
+error: syntax error
+ --> syntax_old_fold.lam:2:34
+  |
+2 | let f(l: L): i32 = fold l as i32 with
+  |                                  ^^^^ expected `{`, found `with`
+  |
+  = help: the cases of a fold are written in braces: `fold e as T { C(x) => … }`

@@ -42,6 +42,34 @@ sbt test                        # 全テスト（munit）。実際にコンパ�
 ./benchmarks/run_fibonacci.sh   # 他言語とのベンチマーク比較
 ```
 
+## エラー表示
+
+コンパイルエラーは、原因になった部分式に下線を引き、関係する位置（期待される型を決めた注釈など）と直し方を添えて表示します。
+
+```
+error: mismatched types
+ --> main.lam:3:28
+  |
+3 | let double(n: i32): bool = n + n
+  |                            ^^^^^ expected `bool`, found `i32`
+  |                     ---- expected `bool` because of this type annotation
+```
+
+```
+error: no instance for `Show[bool]`
+ --> main.lam:4:19
+  |
+4 | let main(): i32 = show[Box[Box[bool]]](MkBox[Box[bool]](MkBox[bool](true)))
+  |                   ^^^^^^^^^^^^^^^^^^^^ this needs the instance
+  |
+  = note: required for `Show[Box[bool]]` by `impl[a] Show[Box[a]] with Show[a]`
+  = note: required for `Show[Box[Box[bool]]]` by `impl[a] Show[Box[a]] with Show[a]`
+  = note: instances declared before this point:
+            impl[a] Show[Box[a]] with Show[a]
+```
+
+似た名前の候補、`rec` の付け忘れ、後で宣言されている名前、`private` な名前、`opaque type` と表現の取り違え、足りない `with` 節、古い構文（`let rec` など）といった、よくある原因には直し方を示します。import したファイルの中のエラーは、そのファイルの位置で表示します。表示の例は `src/test/diagnostics/`（`.lam` と、表示されるエラーの `.txt`）にあります。
+
 ## アーキテクチャ
 
 ```

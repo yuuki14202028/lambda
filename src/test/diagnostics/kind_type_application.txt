@@ -1,0 +1,8 @@
+error: mismatched kinds in a type application
+ --> kind_type_application.lam:2:25
+  |
+2 | let main(): i32 = twice[i32](1)
+  |                         ^^^ expected a type of kind `* → *`, found `i32` of kind `*`
+  |                   ----- this function has type `∀(f: * → *). f[i32] → i32`
+  |
+  = help: a type constructor is expected here. If this is a bound type variable, give its kind: `∀(f: * → *). …` or `[f: * → *]` (the default kind is `*`)

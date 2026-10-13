@@ -1,0 +1,7 @@
+error: the constructor `Off` does not belong to the matched type
+ --> match_wrong_constructor.lam:5:3
+  |
+5 |   Off => 0
+  |   ^^^ the matched value has type `Option[i32]`
+  |
+  = note: a name without arguments in a pattern is a constructor if one with that name is in scope, and a variable otherwise

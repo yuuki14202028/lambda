@@ -1,0 +1,8 @@
+error: operator `+` is not defined for `Money`
+ --> operator_own_type.lam:2:40
+  |
+2 | let total(a: Money)(b: Money): Money = a + b
+  |                                        ^^^^^ needs a function named `__add_Money`
+  |
+  = note: `a + b` is a call to the function `__add_Money`, chosen from the type of the left operand
+  = help: define the operator for this type: `let __add_Money(x: Money)(y: Money): … = …`

@@ -1,0 +1,3 @@
+let rec loop(n: i32): i32 = loop(n)
+
+let main(): i32 = 0

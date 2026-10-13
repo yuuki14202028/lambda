@@ -1,0 +1,3 @@
+data Money = { MkMoney(i32) }
+let total(a: Money)(b: Money): Money = a + b
+let main(): i32 = 0

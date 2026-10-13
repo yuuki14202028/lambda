@@ -69,6 +69,15 @@ trait `C` は辞書のデータ型でもあり（`Env.dataTypes` に登録）、
 `match` は `PatternMatch(scrutinee, cases)` としてパースされ、パターン（`Pattern`: `_`・変数・構成子（入れ子可）・リテラル）を持つ。引数のない名前は、型検査がスコープ中の構成子でなければ変数の束縛（`Bind`）と決める。型検査はノードを保ち、構成子パターンにそのデータ型の全構成子と型引数適用済みのフィールド型（`siblings`）、リテラルに解決済みの `==` を記録する。
 PatternDesugar は行列から決定木を作り、構成子 1 段の `Match`（ChurchEncoder が符号化する形）と `if` / `let` に展開する。複数の葉から使われる本体は関数として一度だけ置く。網羅性と到達不能な分岐は、型検査が同じ決定木で調べる（`PatternDesugar.check`）。選択肢 `p | q`（`Pattern.Or`）は脱糖の入口で選択肢ごとの行に展開し（同じ分岐を指すので本体は共有される）、条件付きの分岐（`PatternCase.guard`）は「条件が偽なら後続の行へ進む」節点になり、網羅には数えない。文字列のリテラルはランタイムの `string_equal` で比べる。`fold` の分岐は従来どおり構成子 1 段と束縛子だけ（`MatchCase`）。
 
+### エラー表示（Diagnostic.scala）
+
+エラーの中身（`CompileError` の各 case）と表示は分かれている。`CompileError.render` は 1 行の要約（テストが文字列で確かめる）で、利用者に見せる表示は `Diagnostic.render` が作る: 見出し・主な位置の下線と説明・関係する位置・note・help。文言は `Diagnostic.describe`（case ごと）と `syntaxError`（構文エラー）にある。
+
+- 位置は `Span(start, end, file)`。パーサが各ノードに範囲を付け（`IndexedRec` の注釈）、import されたファイルのノードにはそのファイルを記録する
+- 型検査の規則は親のノードで走るが、エラーは原因の子で報告する。型付きノードと元の範囲の対応を `Env.spans`（`SpanTable`、同一性で引く）に記録し、`failAt` / `expectAt` / `guardAt` が子の位置を引く。注釈つきの束縛は `blame` が λ・Λ の中へ進み、本体と結果の型の注釈を指す
+- エラーに付ける情報は包む case で表す（どれも `render` と `core` は中身のまま）: `At`（主な位置）、`RelatedTo`（関係する位置と理由 `Related`）、`Hinted`（Env から得た手がかり `Hint`: 似た名前・宣言済みのインスタンス・`rec` の案内など。エラーが起きたノードの Env で一度だけ付ける。`TAnalyser.enrich`）、`RequiredBy`（どのインスタンスの文脈として必要になったか）
+- 表示を変えたら `UPDATE_DIAGNOSTICS=1 sbt "testOnly *DiagnosticSuite"` で `src/test/diagnostics/*.txt` を書き直し、差分を確認する
+
 エラー処理は 3 層に分かれる（Effects.scala / CompileError.scala）:
 
 - ユーザー起因のエラーは、エラー種別ごとに case を持つ構造化 ADT `CompileError` を `EitherS[A] = Either[CompileError, A]` で伝播する。case はメッセージ文字列ではなく型・名前・カインド等のデータを持ち、表示は `CompileError.render` に一元化されている（多言語対応は render の差し替えで行う）

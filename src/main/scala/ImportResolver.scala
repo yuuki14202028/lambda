@@ -31,7 +31,11 @@ object ImportResolver {
       case AST.TopImport(importPath) =>
         val path = resolvePath(baseDir, importPath)
         if (seen.contains(path)) Right(Vector.empty -> seen)
-        else resolveFile(path, seen + path, ancestors)
+        // 読めなかったファイルは、import を書いた位置で報告する
+        else resolveFile(path, seen + path, ancestors).left.map {
+          case unreadable @ CompileError.ImportReadFailure(_, _) => unreadable.at(decl.extract)
+          case other => other
+        }
       case AST.TopModule(name, decls) =>
         // module の中は独立に展開する。外で展開済みのファイルも、この module の中にもう一度取り込める
         resolveDecls(decls.toVector, baseDir, Set.empty, ancestors, inModule = true).map { case (resolved, _) =>
@@ -48,11 +52,16 @@ object ImportResolver {
     src <- try Right(Files.readString(path)) catch {
       case e: Exception => Left(CompileError.ImportReadFailure(path, e))
     }
-    ast <- ParserAST.programParser.parseAll(src).left.map(err => CompileError.ImportParseFailure(path, err))
+    parsed <- ParserAST.programParser.parseAll(src).left.map(err => CompileError.ImportParseFailure(path, err))
+    ast = inFile(parsed, path)
     result <- ast.project match {
       case AST.Program(decls) => resolveDecls(decls.toVector, path.getParent, seen, ancestors + path, inModule = false)
     }
   } yield result
+
+  // import されたファイルのノードには、そのファイルを記録する（エラーの位置を正しいファイルで示すため）
+  private def inFile[I](t: IndexedRec[I], path: Path): IndexedRec[I] =
+    HCofree(t.extract.copy(file = Some(path)), t.project.hmap([x] => (child: IndexedRec[x]) => inFile(child, path)))
 
   private def resolveDecls(decls: Vector[IndexedRec[Decl]], baseDir: Path, seen: Set[Path], ancestors: Set[Path], inModule: Boolean): Resolved =
     decls.foldLeftM(Vector.empty[IndexedRec[Decl]] -> seen) {

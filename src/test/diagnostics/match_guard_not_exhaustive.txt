@@ -1,0 +1,8 @@
+error: this match does not cover every value
+ --> match_guard_not_exhaustive.lam:3:22
+  |
+3 | let f(n: i32): i32 = match n {
+  |                      ^^^^^^^^^ `_` is not matched
+  |
+  = note: a case with an `if` condition does not count as covering its pattern, because the condition may be false
+  = help: add a case for `_`, or a final `_ => …`

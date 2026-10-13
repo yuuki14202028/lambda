@@ -1,0 +1,6 @@
+data Option[a] = { None, Some(a) }
+let f(o: Option[i32]): i32 = match o {
+  _ => 0
+  None => 1
+}
+let main(): i32 = 0

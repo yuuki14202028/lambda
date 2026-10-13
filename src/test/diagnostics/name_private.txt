@@ -1,0 +1,7 @@
+error: cannot find value `Counter.step` in this scope
+ --> name_private.lam:5:19
+  |
+5 | let main(): i32 = Counter.step
+  |                   ^^^^^^^^^^^^ not found in this scope
+  |
+  = note: `Counter.step` exists, but it is `private` (or a constructor of an `opaque data`) and cannot be used outside its module

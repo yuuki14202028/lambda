@@ -1,0 +1,8 @@
+error: `using` expects a dictionary
+ --> using_not_dictionary.lam:1:25
+  |
+1 | let main(): i32 = using 1 in 2
+  |                         ^ has type `i32`
+  |
+  = note: a dictionary is a value of a trait type, such as `Show[i32]` (or a polymorphic function producing one)
+  = help: build one with the trait's constructor (`MkShow[i32](…)`) or take an existing instance with `summon[Show[i32]]`

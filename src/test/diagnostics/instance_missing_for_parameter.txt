@@ -1,0 +1,9 @@
+error: no instance for `Show[a]`
+ --> instance_missing_for_parameter.lam:9:43
+  |
+9 | let describe[a](x: a): foreign.C.String = show[a](x)
+  |                                           ^^^^^^^ this needs the instance
+  |
+  = note: instances declared before this point:
+            impl Show[i32]
+  = help: the type is a type parameter, so require the instance from the caller: add `with Show[a]` to the enclosing definition

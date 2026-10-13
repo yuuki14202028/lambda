@@ -74,12 +74,38 @@ enum OperandRequirement {
   }
 }
 
+/** エラーの主な位置のほかに示す、関係するソース上の位置の説明 */
+enum Related {
+  case ExpectedByAnnotation(expected: TypeRec[Type]) // この型注釈があるので expected が期待される
+  case OtherBranch(found: TypeRec[Type])             // もう一方の分岐はこの型
+  case FunctionType(found: TypeRec[Type])            // この関数（多相関数）の型
+  case FirstCase(found: TypeRec[Type])               // 最初の分岐はこの型
+  case Scrutinee(found: TypeRec[Type])               // match の対象はこの型
+  case LeftOperand(found: TypeRec[Type])             // 演算子の左の被演算子はこの型
+}
+
+/** Env から得られる、直し方の手がかり */
+enum Hint {
+  case SimilarNames(names: Seq[String])                                                // 似た名前がスコープにある
+  case DefinedLater(name: String)                                                      // 同じ名前の宣言がこの後にある
+  case DeclareRec(keyword: String, name: String)                                       // 自身を参照しているので rec が要る
+  case Instances(constraint: String, declared: Seq[String], inScope: Seq[String])      // その trait の宣言済みインスタンスとスコープ中の制約
+  case AddConstraint(constraint: String)                                               // 型変数についての制約なので with 節が要る
+  case PrivateMember(name: String)                                                     // その名前は module の中にあるが、公開されていない
+  case OpaqueType(name: String)                                                        // module の外では表現と別の型
+}
+
 /** ユーザー起因のコンパイルエラー。エラーの種類ごとに case を持ち、
  * 表示用の文字列は持たず構造化された情報（型・名前・カインド等）だけを運ぶ。
  * 表示は render が一元的に行う（将来の多言語対応は render の差し替えで行う）。
  */
 enum CompileError {
-  case At(offset: Int, error: CompileError)
+  case At(span: Span, error: CompileError)
+  // 関係する位置と手がかり。表示（Diagnostic）だけが使い、エラーの中身（render）は変えない
+  case RelatedTo(error: CompileError, places: Seq[(Span, Related)])
+  case Hinted(error: CompileError, found: Seq[Hint])
+  // 制約 wanted を解決する途中で、インスタンス through の文脈として必要になった
+  case RequiredBy(error: CompileError, wanted: String, through: String)
 
   // ---- 構文・モジュール ----
   case ParseFailure(error: cats.parse.Parser.Error)
@@ -142,7 +168,7 @@ enum CompileError {
   case NonExhaustive(kind: MatchKindRef, missing: Seq[Variable], invalid: Seq[Variable])
   case BinderArityMismatch(constructor: Variable, expected: Int, actual: Int)
   case EmptyMatch
-  case NonExhaustivePatterns(example: String)
+  case NonExhaustivePatterns(example: String, guarded: Boolean = false)
   case UnreachableCase(index: Int)
   case NotAConstructor(name: Variable)
   case OrPatternBindingMismatch(first: Seq[Variable], other: Seq[Variable])
@@ -194,13 +220,64 @@ enum CompileError {
   case MainMissing
   case MainTypeInvalid(actual: TypeRec[Type])
 
-  def at(offset: Int): CompileError = this match {
-    case At(_, _) => this
-    case _ => At(offset, this)
+  def at(span: Span): CompileError = if (position.isDefined) this else At(span, this)
+
+  // 位置・関係する位置・手がかりを外した、エラーそのもの
+  def core: CompileError = this match {
+    case At(_, error) => error.core
+    case RelatedTo(error, _) => error.core
+    case Hinted(error, _) => error.core
+    case RequiredBy(error, _, _) => error.core
+    case other => other
+  }
+
+  // 内側（実際に解決できなかった制約に近い側）から順に (必要とした制約, 経由したインスタンス)
+  def requirements: Seq[(String, String)] = this match {
+    case At(_, error) => error.requirements
+    case RelatedTo(error, _) => error.requirements
+    case Hinted(error, _) => error.requirements
+    case RequiredBy(error, wanted, through) => error.requirements :+ (wanted, through)
+    case _ => Seq.empty
+  }
+
+  def position: Option[Span] = this match {
+    case At(span, _) => Some(span)
+    case RelatedTo(error, _) => error.position
+    case Hinted(error, _) => error.position
+    case RequiredBy(error, _, _) => error.position
+    case _ => None
+  }
+
+  def related: Seq[(Span, Related)] = this match {
+    case At(_, error) => error.related
+    case RelatedTo(error, places) => places ++ error.related
+    case Hinted(error, _) => error.related
+    case RequiredBy(error, _, _) => error.related
+    case _ => Seq.empty
+  }
+
+  def hints: Seq[Hint] = this match {
+    case At(_, error) => error.hints
+    case RelatedTo(error, _) => error.hints
+    case Hinted(error, found) => found ++ error.hints
+    case RequiredBy(error, _, _) => error.hints
+    case _ => Seq.empty
+  }
+
+  // Env からの手がかりを付け終えているか（付けるのはエラーが起きた位置の Env で一度だけ）
+  def hinted: Boolean = this match {
+    case At(_, error) => error.hinted
+    case RelatedTo(error, _) => error.hinted
+    case Hinted(_, _) => true
+    case RequiredBy(error, _, _) => error.hinted
+    case _ => false
   }
 
   def render: String = this match {
     case At(_, error) => error.render
+    case RelatedTo(error, _) => error.render
+    case Hinted(error, _) => error.render
+    case RequiredBy(error, _, _) => error.render
 
     case ParseFailure(error) => s"Parse error: expected ${expectationsShown(error.expected)}"
     case ImportReadFailure(path, cause) => s"Import error: $path: ${cause.getMessage}"
@@ -276,7 +353,7 @@ enum CompileError {
     case BinderArityMismatch(constructor, expected, actual) =>
       s"Constructor ${constructor.name} expects $expected binders, got $actual"
     case EmptyMatch => "Match must have at least one case"
-    case NonExhaustivePatterns(example) => s"Match is not exhaustive: no case matches $example"
+    case NonExhaustivePatterns(example, _) => s"Match is not exhaustive: no case matches $example"
     case UnreachableCase(index) => s"Match case $index is unreachable: earlier cases already match everything it matches"
     case OrPatternBindingMismatch(first, other) =>
       s"The alternatives of an or-pattern must bind the same variables with the same types: (${first.map(_.name).mkString(", ")}) vs (${other.map(_.name).mkString(", ")})"
@@ -343,21 +420,6 @@ enum CompileError {
 
     case MainMissing => "Top-level main is not defined"
     case MainTypeInvalid(actual) => s"Top-level main must have type unit → i32, actual ${actual.show}"
-  }
-
-  def render(sourceName: String, locations: cats.parse.LocationMap): String = {
-    def withCaret(offset: Int, message: String): String =
-      locations.toCaret(offset) match {
-        case Some(caret) =>
-          val line = locations.getLine(caret.line).getOrElse("")
-          s"$sourceName:${caret.line + 1}:${caret.col + 1}: $message\n  $line\n  ${" " * caret.col}^"
-        case None => message
-      }
-    this match {
-      case At(offset, error) => withCaret(offset, error.render)
-      case ParseFailure(error) => withCaret(error.failedAtOffset, render)
-      case _ => render
-    }
   }
 
   private def siteShown(site: Option[DeclRef]): String = site.fold("")(s => s"${s.shown}: ")

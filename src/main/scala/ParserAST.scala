@@ -24,12 +24,16 @@ object ParserAST {
     private def brackets: Parser[A] = '[' -*> p <*- ']'
   }
 
-  private def at[I](offset: Int, node: AST[IndexedRec, I]): IndexedRec[I] = HCofree(offset, node)
+  private def at[I](span: Span, node: AST[IndexedRec, I]): IndexedRec[I] = HCofree(span, node)
+
+  // パーサが読んだ範囲
+  extension [A](p: Parser[A]) {
+    private def spanned: Parser[(Span, A)] =
+      (Parser.index.with1 ~ p ~ Parser.index).map { case ((start, value), end) => (Span(start, end), value) }
+  }
 
   extension [I](p: Parser[AST[IndexedRec, I]]) {
-    private def indexed: Parser[IndexedRec[I]] = {
-      (Parser.index.with1 ~ p).map { case (offset, node) => at(offset, node) }
-    }
+    private def indexed: Parser[IndexedRec[I]] = p.spanned.map { case (span, node) => at(span, node) }
   }
 
   private val unitParens: Parser[Unit] = '(' -*> ')'
@@ -44,7 +48,7 @@ object ParserAST {
   }
 
   private def binaryLevel(op: Parser[BinOps], next: => Parser[IndexedRec[Expr]]): Parser[IndexedRec[Expr]] =
-    opLevel(op.map(o => (l, r) => at(l.extract, AST.BinOp(o, l, r))), next)
+    opLevel(op.map(o => (l, r) => at(l.extract.to(r.extract), AST.BinOp(o, l, r))), next)
 
   private def arrowChain[A](atom: Parser[A], whole: => Parser[A])(make: (A, A) => A): Parser[A] = {
     val arrowTail = sp.with1.soft *> '→' -*> Parser.defer(whole)
@@ -76,7 +80,7 @@ object ParserAST {
   }
 
   lazy val expr: Parser[IndexedRec[Expr]] =
-    Parser.defer(recExprP | usingP | dataLetP | foldP.backtrack | matchP | typeLetP | tyAbsP | absP | contextP.backtrack | letExprP | ifP | logicalOr)
+    Parser.defer(recExprP | usingP | dataLetP | foldP | matchP | typeLetP | tyAbsP | absP | contextP.backtrack | letExprP | ifP | logicalOr)
 
 
   lazy val tyAbsP: Parser[IndexedRec[Expr]] = binderP('Λ', expr)(AST.TyAbs.apply)
@@ -98,10 +102,10 @@ object ParserAST {
   }
 
   private def functionType(params: Seq[(String, IndexedRec[Type])], returnType: IndexedRec[Type]): IndexedRec[Type] =
-    params.map(_._2).foldRight(returnType)((from, to) => at(from.extract, AST.Arrow(from, to)))
+    params.map(_._2).foldRight(returnType)((from, to) => at(from.extract.to(to.extract), AST.Arrow(from, to)))
 
   private def functionValue(params: Seq[(String, IndexedRec[Type])], value: IndexedRec[Expr]): IndexedRec[Expr] =
-    params.foldRight(value) { case ((name, types), body) => at(types.extract, AST.Abs(Variable(name), types, body)) }
+    params.foldRight(value) { case ((name, types), body) => at(types.extract.to(body.extract), AST.Abs(Variable(name), types, body)) }
 
   private def polymorphicType(params: Seq[(TypeVariable, Kind)], bodyType: IndexedRec[Type]): IndexedRec[Type] =
     params.foldRight(bodyType) { case ((v, k), body) => at(body.extract, AST.ForAll(v, k, body)) }
@@ -118,7 +122,7 @@ object ParserAST {
 
   private lazy val functionParamsP: Parser0[Seq[(String, IndexedRec[Type])]] = {
     val namedParam = identifier ~ (spaced(':') *> typeP)
-    val unitParam = (Parser.index.with1 <* unitParens).map(offset => ("_", at(offset, AST.Primitive("unit"))))
+    val unitParam = unitParens.spanned.map { case (span, _) => ("_", at(span, AST.Primitive("unit"))) }
     val param = unitParam.backtrack | namedParam.parens
     param.rep0
   }
@@ -159,7 +163,7 @@ object ParserAST {
     val quantified = (binderHead('∀').rep ~ premises ~ simpleConstraintP).map { case ((params, premises), head) =>
       Constraint[IndexedRec](head.name, head.arg, params.toList, premises.fold(List.empty)(_.toList))
     }
-    quantified | simpleConstraintP
+    (quantified | simpleConstraintP).spanned.map { case (span, c) => c.copy(span = Some(span)) }
   }
 
   private lazy val withClauseP: Parser0[Seq[Constraint[IndexedRec]]] =
@@ -167,7 +171,7 @@ object ParserAST {
 
   // with C₁, …, Cₖ は、型では [C₁] → … → [Cₖ] → τ、値では λ[C₁]. … λ[Cₖ]. e（型パラメータの直下に置く）
   private def constrainedType(constraints: Seq[Constraint[IndexedRec]], bodyType: IndexedRec[Type]): IndexedRec[Type] =
-    constraints.foldRight(bodyType)((c, to) => at(to.extract, AST.InstArrow(c, to)))
+    constraints.foldRight(bodyType)((c, to) => at(c.span.getOrElse(to.extract), AST.InstArrow(c, to)))
 
   private def constrainedValue(constraints: Seq[Constraint[IndexedRec]], value: IndexedRec[Expr]): IndexedRec[Expr] =
     constraints.foldRight(value)((c, body) => at(body.extract, AST.InstAbs(c, body)))
@@ -317,12 +321,12 @@ object ParserAST {
   lazy val forAllP: Parser[IndexedRec[Type]] = binderP('∀', typeP)(AST.ForAll.apply)
 
   lazy val arrowTypeP: Parser[IndexedRec[Type]] =
-    arrowChain(typeAppP, typeP)((from, to) => at(from.extract, AST.Arrow(from, to)))
+    arrowChain(typeAppP, typeP)((from, to) => at(from.extract.to(to.extract), AST.Arrow(from, to)))
 
   private lazy val typeAppP: Parser[IndexedRec[Type]] = {
-    val typeArg = Parser.defer(typeP).brackets
+    val typeArg = Parser.defer(typeP).brackets.spanned
     (typeAtomP ~ typeArg.rep0).map { case (init, args) =>
-      args.foldLeft(init)((acc, arg) => at(acc.extract, AST.TypeApp(acc, arg)))
+      args.foldLeft(init) { case (acc, (span, arg)) => at(acc.extract.to(span), AST.TypeApp(acc, arg)) }
     }
   }
 
@@ -387,8 +391,8 @@ object ParserAST {
 
   lazy val matchP: Parser[IndexedRec[Expr]] = {
     val scrutinee = "match" -+> expr
-    val patternCase = (patternP ~ guardP ~ (spaced("=>") *> Parser.defer(expr))).map { case ((pattern, guard), body) =>
-      PatternCase[IndexedRec](pattern, guard, body)
+    val patternCase = (patternP.spanned ~ guardP ~ (spaced("=>") *> Parser.defer(expr))).map { case (((span, pattern), guard), body) =>
+      PatternCase[IndexedRec](pattern, guard, body, Some(span))
     }
     val cases = sp.with1 *> ('{' -*> patternCase.repSep(gap.backtrack) <*- '}')
     (scrutinee ~ cases).map { case (scrutinee, cases) =>
@@ -449,8 +453,8 @@ object ParserAST {
   )
 
   private val infixIdentOp: Parser[(IndexedRec[Expr], IndexedRec[Expr]) => IndexedRec[Expr]] =
-    (Parser.not(caseStartLookahead.backtrack).with1 *> (Parser.index.with1 ~ identifier.filter(n => !exprKeywords(n)))).map { case (offset, n) => (l, r) =>
-      at(l.extract, AST.App(at(l.extract, AST.App(at(offset, AST.Var(Variable(n))), l)), r))
+    (Parser.not(caseStartLookahead.backtrack).with1 *> identifier.filter(n => !exprKeywords(n)).spanned).map { case (span, n) => (l, r) =>
+      at(l.extract.to(r.extract), AST.App(at(l.extract.to(span), AST.App(at(span, AST.Var(Variable(n))), l)), r))
     }
 
   lazy val logicalOr: Parser[IndexedRec[Expr]]      = binaryLevel("||".as(BinOps.ShortOr), logicalAnd)
@@ -475,16 +479,16 @@ object ParserAST {
       case Types(argument: IndexedRec[Type])
       case Dictionary(argument: IndexedRec[Expr]) // f(with d): 制約を解決せず、辞書を直接渡す
     }
-    val unitArg: Parser[Postfix] = (Parser.index.with1 <* unitParens).map(offset => Postfix.Value(at(offset, AST.UnitLit()))).backtrack
+    val unitArg: Parser[Postfix] = unitParens.spanned.map { case (span, _) => Postfix.Value(at(span, AST.UnitLit())) }.backtrack
     val dictArg: Parser[Postfix] =
       ((Parser.char('(') *> sp *> Parser.string("with") *> gap).backtrack *> Parser.defer(expr) <*- ')').map(Postfix.Dictionary.apply)
     val exprArg: Parser[Postfix] = Parser.defer(expr).parens.map(Postfix.Value.apply)
     val typeArg: Parser[Postfix] = Parser.defer(typeP).brackets.map(Postfix.Types.apply)
-    (atom ~ (unitArg | dictArg | exprArg | typeArg).rep0).map { case (f, args) =>
+    (atom ~ (unitArg | dictArg | exprArg | typeArg).spanned.rep0).map { case (f, args) =>
       args.foldLeft(f) {
-        case (acc, Postfix.Value(a)) => at(acc.extract, AST.App(acc, a))
-        case (acc, Postfix.Types(t)) => at(acc.extract, AST.TyApp(acc, t))
-        case (acc, Postfix.Dictionary(d)) => at(acc.extract, AST.InstApp(acc, Evidence.Explicit(d)))
+        case (acc, (span, Postfix.Value(a))) => at(acc.extract.to(span), AST.App(acc, a))
+        case (acc, (span, Postfix.Types(t))) => at(acc.extract.to(span), AST.TyApp(acc, t))
+        case (acc, (span, Postfix.Dictionary(d))) => at(acc.extract.to(span), AST.InstApp(acc, Evidence.Explicit(d)))
       }
     }
   }
@@ -521,7 +525,9 @@ object ParserAST {
     }.indexed
   }
 
-  val varP: Parser[IndexedRec[Expr]] = qualifiedIdentifier.map(n => AST.Var[IndexedRec, Expr](Variable(n))).indexed
+  // キーワードは変数として読まない（`1 +` の後の `let` を式の続きと読んで、離れた位置でエラーにしないため）
+  lazy val varP: Parser[IndexedRec[Expr]] =
+    qualifiedIdentifier.filter(n => !exprKeywords(n)).backtrack.map(n => AST.Var[IndexedRec, Expr](Variable(n))).indexed
 
   private val intSuffixP: Parser[String] =
     Parser.string("isize").as("isize") |
@@ -570,14 +576,14 @@ object ParserAST {
       Parser.char('}').as('}') | commonStringEscape
     )
     val plain = Parser.charWhere(ch => ch != '`' && ch != '{' && ch != '\\' && ch != '\n' && ch != '\r')
-    val literalPart: Parser[Either[(Int, String), IndexedRec[Expr]]] =
-      (Parser.index.with1 ~ (escaped | plain).rep).map { case (offset, chars) => Left((offset, chars.toList.mkString)) }
-    val exprPart: Parser[Either[(Int, String), IndexedRec[Expr]]] =
+    val literalPart: Parser[Either[(Span, String), IndexedRec[Expr]]] =
+      (escaped | plain).rep.spanned.map { case (span, chars) => Left((span, chars.toList.mkString)) }
+    val exprPart: Parser[Either[(Span, String), IndexedRec[Expr]]] =
       ('{' -*> Parser.defer(expr) <*- '}').map(Right.apply)
-    (Parser.index.with1 ~ ('`' *> (literalPart | exprPart).rep0 <* '`')).map { case (offset, parts) =>
-      if (parts.forall(_.isLeft)) at(offset, AST.StringLit(parts.collect { case Left((_, s)) => s }.mkString))
-      else at(offset, AST.StrInterp(parts.map {
-        case Left((o, s)) => at(o, AST.StringLit(s))
+    ('`' *> (literalPart | exprPart).rep0 <* '`').spanned.map { case (span, parts) =>
+      if (parts.forall(_.isLeft)) at(span, AST.StringLit(parts.collect { case Left((_, s)) => s }.mkString))
+      else at(span, AST.StrInterp(parts.map {
+        case Left((part, s)) => at(part, AST.StringLit(s))
         case Right(e) => e
       }))
     }

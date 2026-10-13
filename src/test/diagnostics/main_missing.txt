@@ -1,0 +1,2 @@
+error: the program has no `main`
+  = help: add `let main(): i32 = …` at the top level; its result is the exit code

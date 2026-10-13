@@ -1,0 +1,3 @@
+import "lib/unparsable"
+
+let main(): i32 = 0

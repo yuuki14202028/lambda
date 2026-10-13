@@ -195,9 +195,10 @@ class TraitPhase2Suite extends munit.FunSuite {
         |""".stripMargin
     val rendered = ParserAST.programParser.parseAll(src).toOption
       .flatMap(p => TAnalyser.validate(p).left.toOption)
-      .map(_.render("t.lam", cats.parse.LocationMap(src)))
+      .map(Diagnostic.render(_, Sources("t.lam", src)))
     val line = src.linesIterator.indexWhere(_.contains("show[bool]")) + 1
-    assert(rendered.exists(_.startsWith(s"t.lam:$line:3: No instance for Show[bool]")), clue(rendered))
+    assert(rendered.exists(_.contains("no instance for `Show[bool]`")), clue(rendered))
+    assert(rendered.exists(_.contains(s"--> t.lam:$line:3")), clue(rendered))
   }
 
   test("インスタンスは宣言してから使う: impl より前の使用は No instance") {

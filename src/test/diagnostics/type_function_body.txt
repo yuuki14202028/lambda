@@ -1,0 +1,6 @@
+error: mismatched types
+ --> type_function_body.lam:3:28
+  |
+3 | let double(n: i32): bool = n + n
+  |                            ^^^^^ expected `bool`, found `i32`
+  |                     ---- expected `bool` because of this type annotation

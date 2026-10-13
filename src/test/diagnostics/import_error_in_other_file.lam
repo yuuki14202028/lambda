@@ -1,0 +1,3 @@
+import "lib/broken"
+
+let main(): i32 = broken

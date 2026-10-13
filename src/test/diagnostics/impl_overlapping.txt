@@ -1,0 +1,8 @@
+error: a second instance of `Shape[i32]`
+ --> impl_overlapping.lam:3:1
+  |
+3 | impl Shape[i32] { def area = λx: i32. 0 }
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ this instance
+  |
+  = note: there is at most one instance per trait and outermost type constructor
+  = help: to use a different implementation in one place, build a dictionary and pass it with `(with d)` or `using d in …`

@@ -1,0 +1,3 @@
+data Option[a] = { None, Some(a) }
+let x: Optoin[i32] = None[i32]
+let main(): i32 = 0

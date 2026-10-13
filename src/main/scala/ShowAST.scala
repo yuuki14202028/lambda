@@ -22,6 +22,8 @@ private def showConstraint(c: Constraint[ShowResult]): String = {
   s"$binders$premises${c.name.name}${c.arg.map(a => s"[$a]").mkString}"
 }
 
+def showTypeConstraint(c: TypeConstraint): String = showConstraint(c.hmap[ShowResult]([y] => (t: TypeRec[y]) => t.show))
+
 private def showEvidence(e: Evidence[ShowResult]): String = e match {
   case Evidence.Given(constraint) => s"given ${showConstraint(constraint)}"
   case Evidence.Instance(traitName, heads, typeArgs, context) =>

@@ -1,0 +1,8 @@
+error: impl Shape[i32] does not define `name`
+ --> impl_missing_method.lam:5:1
+  |
+5 | impl Shape[i32] {
+  | ^^^^^^^^^^^^^^^^^ this impl
+  |
+  = note: an impl must define every method of the trait that has no default
+  = help: add `def name = …`

@@ -1,0 +1,8 @@
+error: cannot read the imported file `src/test/diagnostics/lib/nowhere.lam`
+ --> import_not_found.lam:1:1
+  |
+1 | import "lib/nowhere"
+  | ^^^^^^^^^^^^^^^^^^^^ imported here
+  |
+  = note: the file does not exist
+  = help: `import "std/…"` reads from the bundled `stdlib/` directory; any other path is relative to the importing file

@@ -1,0 +1,5 @@
+error: mismatched types
+ --> type_if_condition.lam:1:22
+  |
+1 | let main(): i32 = if 1 then 2 else 3
+  |                      ^ expected `bool`, found `i32`

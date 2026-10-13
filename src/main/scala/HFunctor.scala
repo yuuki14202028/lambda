@@ -25,7 +25,7 @@ extension [H[_[_], _], R[_], I](self: H[R, I])(using ht: HTraverse[H]) {
 }
 
 private def traverseConstraint[G[_]: Applicative, R[_], S[_]](c: Constraint[R])(f: [x] => R[x] => G[S[x]]): G[Constraint[S]] =
-  (c.arg.traverse(a => f(a)), c.premises.traverse(traverseConstraint(_)(f))).mapN(Constraint[S](c.name, _, c.params, _))
+  (c.arg.traverse(a => f(a)), c.premises.traverse(traverseConstraint(_)(f))).mapN(Constraint[S](c.name, _, c.params, _, c.span))
 
 extension [R[_]](self: Constraint[R]) {
   def hmap[S[_]](f: R ~> S): Constraint[S] = traverseConstraint[Id, R, S](self)([x] => (r: R[x]) => f(r): Id[S[x]])
@@ -122,7 +122,7 @@ given HTraverse[AST] with {
       }
       (datasG, f(body)).mapN(AST.DataLetRec(_, _))
     case AST.PatternMatch(scrut, cases) =>
-      val casesG = cases.traverse(c => (traversePattern(c.pattern)(f), c.guard.traverse(g => f(g)), f(c.body)).mapN(PatternCase[S](_, _, _)))
+      val casesG = cases.traverse(c => (traversePattern(c.pattern)(f), c.guard.traverse(g => f(g)), f(c.body)).mapN(PatternCase[S](_, _, _, c.span)))
       (f(scrut), casesG).mapN(AST.PatternMatch(_, _))
     case AST.Match(scrut, cases) =>
       val casesG = cases.traverse { c =>

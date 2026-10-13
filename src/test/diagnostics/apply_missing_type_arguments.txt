@@ -1,0 +1,8 @@
+error: missing type arguments
+ --> apply_missing_type_arguments.lam:2:19
+  |
+2 | let main(): i32 = id(1)
+  |                   ^^ has type `∀a. a → a`
+  |
+  = note: type arguments are always written out; they are not inferred from the value arguments
+  = help: give a type for `a` in brackets before the value arguments: `f[T](x)`

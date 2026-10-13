@@ -1,0 +1,7 @@
+error: mismatched types
+ --> type_match_arms.lam:4:11
+  |
+3 |   Some(x) => x
+  |              - the first case has type `i32`
+4 |   None => true
+  |           ^^^^ expected `i32`, found `bool`

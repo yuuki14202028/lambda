@@ -1,0 +1,9 @@
+trait Size[a] { def size(x: a): i32 }
+rec data List[a] = { Nil, Cons(a)(List[a]) }
+impl[a] Size[List[a]] with Size[a] {
+  def size = λl: List[a]. match l {
+    Nil => 0
+    Cons(x)(rest) => size[List[a]](rest)
+  }
+}
+let main(): i32 = 0

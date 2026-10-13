@@ -111,8 +111,8 @@ enum LiteralValue {
   }
 }
 
-// guard は `パターン if 条件 => 本体` の条件。偽なら後続の分岐を試す
-case class PatternCase[R[_]](pattern: Pattern[R], guard: Option[R[Expr]], body: R[Expr])
+// guard は `パターン if 条件 => 本体` の条件。偽なら後続の分岐を試す。span はパターンの位置（エラー表示用）
+case class PatternCase[R[_]](pattern: Pattern[R], guard: Option[R[Expr]], body: R[Expr], span: Option[Span] = None)
 
 def patternVariables[R[_]](pattern: Pattern[R]): Seq[Variable] = pattern match {
   case Pattern.Bind(name) => Seq(name)
@@ -140,7 +140,8 @@ case class Constraint[R[_]](
     name: TypeVariable,
     arg: Seq[R[Type]],
     params: Seq[(TypeVariable, Kind)] = Nil,
-    premises: Seq[Constraint[R]] = Nil
+    premises: Seq[Constraint[R]] = Nil,
+    span: Option[Span] = None // ソースに書かれた制約の位置（エラー表示用。型検査が作る制約にはない）
 ) {
   def quantified: Boolean = params.nonEmpty || premises.nonEmpty
   def head: Constraint[R] = Constraint(name, arg)
@@ -254,10 +255,15 @@ object BuiltinTypes {
 }
 
 type Rec[I] = HFix[AST, I]
-type IndexedRec[I] = HCofree[AST, ConstI[Int], I]
-type IndexedAST[R[_], x] = HCofreeT[ConstI[Int], AST, R, x]
+/** ソース上の範囲（start 以上 end 未満の文字位置）。file は import されたファイル（None はコンパイル対象のファイル） */
+case class Span(start: Int, end: Int, file: Option[java.nio.file.Path] = None) {
+  def to(other: Span): Span = Span(start, other.end.max(end), file)
+}
 
-def programI(decls: Seq[IndexedRec[Decl]]): IndexedRec[AST.Program.type] = HCofree(0, AST.Program(decls))
+type IndexedRec[I] = HCofree[AST, ConstI[Span], I]
+type IndexedAST[R[_], x] = HCofreeT[ConstI[Span], AST, R, x]
+
+def programI(decls: Seq[IndexedRec[Decl]]): IndexedRec[AST.Program.type] = HCofree(Span(0, 0), AST.Program(decls))
 
 val eraseIndex: IndexedRec ~> Rec =
   [I] => (t: IndexedRec[I]) => HFix(t.project.hmap(eraseIndex))

@@ -1,0 +1,8 @@
+error: cannot find value `fact` in this scope
+ --> name_needs_rec.lam:3:51
+  |
+3 | let fact(n: i32): i32 = if n == 0 then 1 else n + fact(n)
+  |                                                   ^^^^ not found in this scope
+  |
+  = note: `fact` refers to itself, and recursion must be marked with `rec`
+  = help: write `rec let` to make `fact` visible in its own definition

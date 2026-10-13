@@ -1,0 +1,7 @@
+error: syntax error
+ --> syntax_stray_text.lam:2:1
+  |
+2 | oops
+  | ^^^^ unexpected `oops`
+  |
+  = note: a declaration is complete before this point, so a new declaration (`let`, `rec`, `data`, `type`, `trait`, `impl`, `derive`, `module`, `open`, `import`) or the end of the file is expected
