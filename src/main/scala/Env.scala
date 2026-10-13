@@ -31,8 +31,12 @@ def methodType(traitName: TypeVariable, params: Seq[(TypeVariable, Kind)], sig: 
   params.foldRight(instArrowT(self, sig)) { case ((p, k), acc) => forallTypeT(p, k, acc) }
 }
 
-// 制約 C[τ̄] の辞書の型。trait C は同名のデータ型（辞書）でもある
-def dictionaryType(constraint: TypeConstraint): TypeRec[Type] = applyTypeConstructor(constraint.name, constraint.arg)
+// 制約の辞書の型。trait C は同名のデータ型（辞書）でもあり、C[τ̄] の辞書の型は C[τ̄]。
+// 量化された制約 ∀ā. P̄ ⇒ C[τ̄] の辞書は、前提の辞書から C[τ̄] の辞書を作る多相関数 ∀ā. P̄ の辞書… → C[τ̄]
+def dictionaryType(constraint: TypeConstraint): TypeRec[Type] = {
+  val withPremises = constraint.premises.map(dictionaryType).foldRight(applyTypeConstructor(constraint.name, constraint.arg))(arrowT)
+  constraint.params.foldRight(withPremises) { case ((p, k), acc) => forallTypeT(p, k, acc) }
+}
 
 // module の中の trait M.C の辞書コンストラクタは M.MkC（修飾は最後の名前に付ける）
 def dictionaryConstructor(traitName: TypeVariable): Variable = {

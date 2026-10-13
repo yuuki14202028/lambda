@@ -25,7 +25,11 @@ extension [H[_[_], _], R[_], I](self: H[R, I])(using ht: HTraverse[H]) {
 }
 
 private def traverseConstraint[G[_]: Applicative, R[_], S[_]](c: Constraint[R])(f: [x] => R[x] => G[S[x]]): G[Constraint[S]] =
-  c.arg.traverse(a => f(a)).map(args => Constraint[S](c.name, args))
+  (c.arg.traverse(a => f(a)), c.premises.traverse(traverseConstraint(_)(f))).mapN(Constraint[S](c.name, _, c.params, _))
+
+extension [R[_]](self: Constraint[R]) {
+  def hmap[S[_]](f: R ~> S): Constraint[S] = traverseConstraint[Id, R, S](self)([x] => (r: R[x]) => f(r): Id[S[x]])
+}
 
 private def traverseEvidence[G[_]: Applicative, R[_], S[_]](e: Evidence[R])(f: [x] => R[x] => G[S[x]]): G[Evidence[S]] = e match {
   case Evidence.Given(constraint) =>
@@ -34,6 +38,10 @@ private def traverseEvidence[G[_]: Applicative, R[_], S[_]](e: Evidence[R])(f: [
     (typeArgs.traverse(a => f(a)), context.traverse(traverseEvidence(_)(f))).mapN(Evidence.Instance(traitName, heads, _, _))
   case Evidence.Super(traitName, index, of) =>
     traverseEvidence(of)(f).map(Evidence.Super(traitName, index, _))
+  case Evidence.Apply(of, typeArgs, premises) =>
+    (traverseEvidence(of)(f), typeArgs.traverse(a => f(a)), premises.traverse(traverseEvidence(_)(f))).mapN(Evidence.Apply(_, _, _))
+  case Evidence.Abs(constraint, body) =>
+    (traverseConstraint(constraint)(f), traverseEvidence(body)(f)).mapN(Evidence.Abs(_, _))
 }
 
 extension [R[_]](self: Evidence[R]) {

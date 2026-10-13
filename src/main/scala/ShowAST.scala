@@ -12,7 +12,14 @@ private def showConstraints(constraints: Seq[Constraint[ShowResult]]): String = 
   case _ => constraints.map(showConstraint).mkString(" with ", ", ", "")
 }
 
-private def showConstraint(c: Constraint[ShowResult]): String = s"${c.name.name}${c.arg.map(a => s"[$a]").mkString}"
+private def showConstraint(c: Constraint[ShowResult]): String = {
+  val binders = c.params.map {
+    case (v, Kind.Star) => s"∀${v.name}. "
+    case (v, k) => s"∀(${v.name}: ${k.show}). "
+  }.mkString
+  val premises = if (c.premises.isEmpty) "" else c.premises.map(showConstraint).mkString("", ", ", " ⇒ ")
+  s"$binders$premises${c.name.name}${c.arg.map(a => s"[$a]").mkString}"
+}
 
 private def showEvidence(e: Evidence[ShowResult]): String = e match {
   case Evidence.Given(constraint) => s"given ${showConstraint(constraint)}"
@@ -21,6 +28,9 @@ private def showEvidence(e: Evidence[ShowResult]): String = e match {
     val ctx = context.map(c => s"(${showEvidence(c)})").mkString
     s"${instanceDictionaryName(traitName, heads).name}$args$ctx"
   case Evidence.Super(traitName, index, of) => s"${superDictionaryName(traitName, index).name}(${showEvidence(of)})"
+  case Evidence.Apply(of, typeArgs, premises) =>
+    s"(${showEvidence(of)})${typeArgs.map(a => s"[$a]").mkString}${premises.map(p => s"(${showEvidence(p)})").mkString}"
+  case Evidence.Abs(constraint, body) => s"λ[${showConstraint(constraint)}]. ${showEvidence(body)}"
 }
 
 private def showRecBindings(bindings: Seq[RecBinding[ShowResult]]): String = {

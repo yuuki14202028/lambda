@@ -41,6 +41,9 @@ TAnalyser が検査して InstanceDef を Env に登録し、Deriver が手書�
 - 抽象 `InstAbs`: `λ[Show[a]]. e`（本体でその制約がスコープに入る。`Env.givens`）
 - 適用 `InstApp`: 式の型が `[C[τ̄]] → τ` になった時点で TAnalyser が `Resolver` で制約を解決し、根拠（`Evidence`）を記録して挿入する
 
+制約 `Constraint(name, arg, params, premises)` は量化された制約 `∀params. premises ⇒ name[arg]` も表す（`with ∀a. Show[a] ⇒ Show[f[a]]`。前提は単純な制約に限り、スーパークラスには書けない）。辞書の型は `∀params. 前提の辞書… → name[arg]`（文脈付きインスタンスの辞書と同じ形）で、`params` は制約の中だけの束縛子として `substType` / `freeTypeVars` / `Equivalence.alpha` が扱う。
+スコープ中の量化された制約はインスタンスのように使われ（根拠 `Evidence.Apply`）、量化された制約を示すときは `params` と前提をスコープに入れてヘッドを解決する（根拠 `Evidence.Abs`。辞書は `Λparams. λ前提の辞書. …`）。
+
 解決は型検査の一部で、その時点までに宣言されたインスタンスとスコープ中の制約だけを見る（インスタンスも「宣言してから使う」。impl 自身のメソッド本体からそのインスタンスはまだ見えない）。
 再帰は `rec` の印がある所に限る。`rec` は宣言の前に付ける修飾子で、宣言 1 つ（`rec let` / `rec data` / `rec impl`）か、同じ種類の宣言を囲んだ組（`rec { let …  let … }`）に付ける。組の全員が互いに、また自身から見える（相互再帰）。`derive` はインスタンス宣言なので `impl` と同じ組に入れられる（相互再帰のデータ型への `derive` は `rec { derive …  derive … }`）。AST では宣言を包む `TopRec(decls)`、式の中では `LetRec(bindings, body)` / `DataLetRec(datas, body)`、context ブロックの中では `ContextStep.Rec(bindings)`。
 `rec` を使った所の停止性は保証しない（`rec data` の正の出現検査も行わない）。初期化前の値を読まないよう、関数（λ）でない `rec let` の値は組の誰も参照できず、文脈のない `rec impl` で組のインスタンスを使うメソッドも関数に限る。

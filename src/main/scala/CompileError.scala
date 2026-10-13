@@ -95,6 +95,8 @@ enum CompileError {
   case UndefinedModule(path: Seq[String])
   case ModifierOutsideModule(modifier: Modifier)
   case MixedRecursiveGroup
+  case QuantifiedSuperclassUnsupported(traitName: TypeVariable)
+  case QuantifiedParamUnused(traitName: TypeVariable, param: TypeVariable)
   case AlreadyDefined(kind: NameKind, name: String)
   case ParamAlreadyDefined(owner: DeclRef)
   case DuplicateParams(owner: DeclRef)
@@ -205,6 +207,9 @@ enum CompileError {
     case UndefinedTrait(name, site) =>
       site.fold(s"Trait ${name.name} is not defined")(s => s"${s.shown}: trait ${name.name} is not defined")
     case UndefinedModule(path) => s"Module ${path.mkString(".")} is not defined"
+    case QuantifiedSuperclassUnsupported(traitName) => s"Trait ${traitName.name}: a superclass cannot be a quantified constraint"
+    case QuantifiedParamUnused(traitName, param) =>
+      s"Quantified constraint on ${traitName.name}: type variable ${param.name} does not appear in the constraint's arguments"
     case MixedRecursiveGroup => "rec { } must contain declarations of one kind: let, data, or impl / derive"
     case ModifierOutsideModule(modifier) => s"${modifier.keyword} can only be used inside a module"
     case AlreadyDefined(kind, name) => s"${kind.shown} $name is already defined"

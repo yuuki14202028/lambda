@@ -22,8 +22,17 @@ object Equivalence {
           lk == rk && lb((l2r + (lv -> rv), r2l + (rv -> lv)))(rb)
         case (AST.TypeApp(lf, la), AST.TypeApp(rf, ra)) => lf(bound)(rf) && la(bound)(ra)
         case (AST.InstArrow(lc, lt), AST.InstArrow(rc, rt)) =>
-          lc.name == rc.name && lc.arg.length == rc.arg.length &&
-            lc.arg.zip(rc.arg).forall { case (la, ra) => la(bound)(ra) } && lt(bound)(rt)
+          // 量化された制約のパラメータは、制約の中だけを束縛する
+          def same(l: Constraint[Eq], r: Constraint[TypeRec], outer: Bound): Boolean =
+            l.name == r.name && l.arg.length == r.arg.length &&
+              l.params.map(_._2) == r.params.map(_._2) && l.premises.length == r.premises.length && {
+                val inner = l.params.zip(r.params).foldLeft(outer) { case ((toRight, toLeft), ((lv, _), (rv, _))) =>
+                  (toRight + (lv -> rv), toLeft + (rv -> lv))
+                }
+                l.arg.zip(r.arg).forall { case (la, ra) => la(inner)(ra) } &&
+                  l.premises.zip(r.premises).forall { case (lp, rp) => same(lp, rp, inner) }
+              }
+          same(lc, rc, bound) && lt(bound)(rt)
         case _ => false
       }
     }

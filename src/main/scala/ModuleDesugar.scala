@@ -41,7 +41,7 @@ object ModuleDesugar {
 
     def typeOf(t: TypeRec[Type]): TypeRec[Type] = Equivalence.normalize(t.cata(revealAlg))
 
-    private def constraint(c: TypeConstraint): TypeConstraint = TypeConstraint(c.name, c.arg.map(typeOf))
+    private def constraint(c: TypeConstraint): TypeConstraint = c.hmap([y] => (child: TypeRec[y]) => apply(child))
 
     def apply[I](t: TypeRec[I]): TypeRec[I] = {
       val children = t.project.hmap([y] => (child: TypeRec[y]) => apply(child))

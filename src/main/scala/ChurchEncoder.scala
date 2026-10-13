@@ -21,10 +21,9 @@ object ChurchEncoder {
   private def encodeConstructorFields(owner: TypeVariable, args: Seq[TypeRec[Type]], dataDef: DataDef, constructor: ConstructorDef): Encode[Seq[TypeRec[Type]]] =
     constructor.fields.traverse { field =>
       val substituted = substMany(dataDef.paramVars, args, field)
-      // rec の組のデータ型に言及するフィールドは、符号化せず名前のまま残す（展開が止まらないため）
-      if (containsDataApplicationOf(substituted, owner) && !dataDef.recursive)
-        invariant(s"Recursive data type ${owner.name} must be declared with rec data")
-      else if (dataDef.group.exists(containsDataApplicationOf(substituted, _))) okT(substituted)
+      // rec の組のデータ型に言及するフィールドは、符号化せず名前のまま残す（展開が止まらないため）。
+      // 判定は型引数を代入する前のフィールドで行う（Option[Option[i32]] の引数は再帰ではない）
+      if (dataDef.group.exists(containsDataApplicationOf(field, _))) okT(substituted)
       else encodeType(substituted)
     }
 

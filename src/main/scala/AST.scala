@@ -88,7 +88,19 @@ enum ContextStep[R[_]] {
 // context[M] が使う pure[M] / flatMap[M]。型検査が名前と制約を解決して埋める（パース直後は None）
 case class ContextOps[R[_]](pure: R[Expr], flatMap: R[Expr])
 
-case class Constraint[R[_]](name: TypeVariable, arg: Seq[R[Type]])
+/** 制約 ∀params. premises ⇒ name[arg]。params と premises が空なら単純な制約 C[τ̄]。
+ * 量化された制約（`∀a. Show[a] ⇒ Show[f[a]]`）は「その場で使えるインスタンス」で、premises は単純な制約に限る。
+ * 辞書の型は ∀params. premises の辞書… → name[arg]（文脈付きインスタンスの辞書と同じ形）。
+ */
+case class Constraint[R[_]](
+    name: TypeVariable,
+    arg: Seq[R[Type]],
+    params: Seq[(TypeVariable, Kind)] = Nil,
+    premises: Seq[Constraint[R]] = Nil
+) {
+  def quantified: Boolean = params.nonEmpty || premises.nonEmpty
+  def head: Constraint[R] = Constraint(name, arg)
+}
 
 /** 制約は Lean 4 と同じく「辞書 C[τ̄] を受け取る、インスタンス解決で埋まる引数」として表す:
  *   型 InstArrow  `[C[τ̄]] → τ`   / 抽象 InstAbs `λ[C[τ̄]]. e` / 適用 InstApp（型検査が挿入）
@@ -102,6 +114,8 @@ enum Evidence[R[_]] {
   case Given(constraint: Constraint[R])                                                                        // スコープ中の制約（with 節・impl の文脈）
   case Instance(traitName: TypeVariable, heads: Seq[String], typeArgs: Seq[R[Type]], context: Seq[Evidence[R]]) // インスタンス（typeArgs は impl の型パラメータへの束縛）
   case Super(traitName: TypeVariable, index: Int, of: Evidence[R])                                             // traitName[τ̄] の根拠 of から index 番目のスーパークラスを射影
+  case Apply(of: Evidence[R], typeArgs: Seq[R[Type]], premises: Seq[Evidence[R]])                              // 量化された制約の根拠 of を、型引数と前提の根拠で具体化する
+  case Abs(constraint: Constraint[R], body: Evidence[R])                                                       // 量化された制約の根拠。body では constraint の前提がスコープに入る
 }
 case class MethodSig[R[_]](name: Variable, sig: R[Type], body: Option[R[Expr]])
 case class MethodImpl[R[_]](name: Variable, sig: Option[R[Type]], body: R[Expr])
@@ -400,7 +414,10 @@ def freeTypeVars(t: Rec[Type]): Set[TypeVariable] = {
   val alg: Algebra[AST, ConstI[Set[TypeVariable]]] = [x] => node => node match {
     case AST.TypeVar(v) => Set(v)
     case AST.ForAll(v, _, body) => body - v
-    case AST.InstArrow(constraint, to) => constraint.arg.foldLeft(to)(_ ++ _)
+    case AST.InstArrow(constraint, to) =>
+      def free(c: Constraint[ConstI[Set[TypeVariable]]]): Set[TypeVariable] =
+        (c.arg.foldLeft(Set.empty[TypeVariable])(_ ++ _) ++ c.premises.flatMap(free)) -- c.params.map(_._1)
+      to ++ free(constraint)
     case AST.Arrow(from, to) => from ++ to
     case AST.TypeApp(f, a) => f ++ a
     case AST.TypeAbs(v, _, body) => body - v
@@ -472,6 +489,8 @@ def substType(target: TypeVariable, replace: TypeRec[Type], in: TypeRec[Type]): 
       case HCofreeT(_, AST.TypeVar(variable)) if variable == from => typeVarT(to)
       case HCofreeT(_, AST.ForAll(variable, kind, body)) if variable == from => forallTypeT(to, kind, body)
       case HCofreeT(_, AST.TypeAbs(variable, kind, body)) if variable == from => typeAbsT(to, kind, body)
+      case HCofreeT(_, AST.InstArrow(constraint, body)) if constraint.params.exists(_._1 == from) =>
+        instArrowT(constraint.copy(params = constraint.params.map { case (p, k) => (if (p == from) to else p, k) }), body)
       case HCofreeT(ann, ast) => HCofree(ann, ast)
     }
     in.cata(algebra)
@@ -485,6 +504,18 @@ def substType(target: TypeVariable, replace: TypeRec[Type], in: TypeRec[Type]): 
       (fresh, renameTypeVar(variable, fresh, body))
     } else (variable, body)
   }
+
+  def rebindConstraint(constraint: Constraint[TypeRec]): Constraint[TypeRec] =
+    constraint.params.map(_._1).filter(replaceFreeVars.contains).foldLeft(constraint) { (c, param) =>
+      val inner = c.arg ++ c.premises.flatMap(_.arg)
+      val fresh = freshTypeVariable(param, replaceFreeVars ++ inner.flatMap(freeTypeVars) ++ c.params.map(_._1) + target)
+      def rename(t: TypeRec[Type]): TypeRec[Type] = renameTypeVar(param, fresh, t)
+      Constraint[TypeRec](
+        c.name, c.arg.map(rename),
+        c.params.map { case (p, k) => (if (p == param) fresh else p, k) },
+        c.premises.map(p => Constraint[TypeRec](p.name, p.arg.map(rename)))
+      )
+    }
 
   val coalg: ApoCoalgebra[TypedAST, TypeRec] = [x] => seed => seed.project match {
     case AST.TypeVar(variable) if variable == target => Left(replace)
@@ -501,8 +532,14 @@ def substType(target: TypeVariable, replace: TypeRec[Type], in: TypeRec[Type]): 
     case AST.TypeApp(function, argument) =>
       Right(HCofreeT(seed.extract, AST.TypeApp(Right(function), Right(argument))))
     case AST.InstArrow(constraint, to) =>
-      val pending = Constraint[[y] =>> Either[TypeRec[y], TypeRec[y]]](constraint.name, constraint.arg.map(Right(_)))
-      Right(HCofreeT(seed.extract, AST.InstArrow(pending, Right(to))))
+      type Pending[y] = Either[TypeRec[y], TypeRec[y]]
+      def pending(c: Constraint[TypeRec], child: TypeRec[Type] => Pending[Type]): Constraint[Pending] =
+        Constraint[Pending](c.name, c.arg.map(child), c.params, c.premises.map(pending(_, child)))
+      // 量化された制約のパラメータは束縛子: target を隠し、replace の自由変数と衝突するなら付け替える
+      val substituted =
+        if (constraint.params.exists(_._1 == target)) pending(constraint, Left(_))
+        else pending(rebindConstraint(constraint), Right(_))
+      Right(HCofreeT(seed.extract, AST.InstArrow(substituted, Right(to))))
     case _ => Left(seed)
   }
 
@@ -567,7 +604,7 @@ def containsDataApplicationOf(t: Rec[Type], owner: TypeVariable): Boolean = {
     case AST.TypeVar(variable) => variable == owner
     case AST.Arrow(from, to) => from || to
     case AST.ForAll(_, _, body) => body
-    case AST.InstArrow(constraint, to) => to || constraint.arg.exists(identity)
+    case AST.InstArrow(constraint, to) => to || constraint.arg.exists(identity) || constraint.premises.exists(_.arg.exists(identity))
     case AST.TypeAbs(_, _, body) => body
     case AST.TypeApp(function, argument) => function || argument
     case _ => false

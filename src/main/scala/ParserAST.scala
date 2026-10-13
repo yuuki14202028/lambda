@@ -53,12 +53,15 @@ object ParserAST {
     }
   }
 
-  private def binderP[I](sigil: Char, body: => Parser[IndexedRec[I]])(make: (TypeVariable, Kind, IndexedRec[I]) => AST[IndexedRec, I]): Parser[IndexedRec[I]] = {
+  // 束縛子の頭部: ∀a. / ∀(f: * → *). （sigil は ∀・λ・Λ）
+  private def binderHead(sigil: Char): Parser[(TypeVariable, Kind)] = {
     val plain = identifier.map(n => (TypeVariable(n), Kind.Star))
-    val annotated = (identifier.map(TypeVariable.apply) ~ (spaced(':') *> kindP)).parens
-    val nameKind = Parser.char(sigil) -*> (annotated.backtrack | plain)
-    (nameKind ~ (spaced('.') *> Parser.defer(body))).map { case ((v, k), b) => make(v, k, b) }.indexed
+    val annotated = (identifier.map(TypeVariable.apply) ~ (spaced(':') *> Parser.defer(kindP))).parens
+    (Parser.char(sigil) -*> (annotated.backtrack | plain)) <* spaced('.')
   }
+
+  private def binderP[I](sigil: Char, body: => Parser[IndexedRec[I]])(make: (TypeVariable, Kind, IndexedRec[I]) => AST[IndexedRec, I]): Parser[IndexedRec[I]] =
+    (binderHead(sigil) ~ Parser.defer(body)).map { case ((v, k), b) => make(v, k, b) }.indexed
 
   private val identStart: Parser[Char] = alpha | Parser.char('_').as('_')
   private val identChar: Parser[Char] = alpha | digit | '_'.as('_')
@@ -145,8 +148,17 @@ object ParserAST {
     (datas.backtrack | lets).indexed
   }
 
-  private lazy val constraintP: Parser[Constraint[IndexedRec]] =
-    (qualifiedIdentifier.map(TypeVariable.apply) ~ typeP.brackets.rep0).map(Constraint.apply)
+  private lazy val simpleConstraintP: Parser[Constraint[IndexedRec]] =
+    (qualifiedIdentifier.map(TypeVariable.apply) ~ typeP.brackets.rep0).map { case (name, args) => Constraint[IndexedRec](name, args) }
+
+  // C[τ̄]、または量化された制約 ∀a. P₁, …, Pₖ ⇒ C[τ̄]（前提は省略できる）
+  private lazy val constraintP: Parser[Constraint[IndexedRec]] = {
+    val premises = (simpleConstraintP.repSep(spaced(',').backtrack) <* spaced('⇒')).backtrack.?
+    val quantified = (binderHead('∀').rep ~ premises ~ simpleConstraintP).map { case ((params, premises), head) =>
+      Constraint[IndexedRec](head.name, head.arg, params.toList, premises.fold(List.empty)(_.toList))
+    }
+    quantified | simpleConstraintP
+  }
 
   private lazy val withClauseP: Parser0[Seq[Constraint[IndexedRec]]] =
     (spaced("with") *> constraintP.repSep(spaced(',').backtrack)).backtrack.?.map(_.fold(List.empty)(_.toList))

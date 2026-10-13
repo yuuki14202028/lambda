@@ -1,0 +1,45 @@
+import "std/operators"
+
+let printInt: i32 → i32 = foreign[i32 → i32] print_int
+
+trait Size[a] {
+  def size(x: a): i32
+}
+
+impl Size[i32] {
+  def size = λx: i32. x
+}
+
+data ListF[e][r] = { NilF, ConsF(e)(r) }
+
+impl[e][r] Size[ListF[e][r]] with Size[e], Size[r] {
+  def size = λl: ListF[e][r]. match l {
+    NilF => 0
+    ConsF(x)(rest) => size[e](x) + size[r](rest)
+  }
+}
+
+rec data Fix[f: * → *] = { In(f[Fix[f]]) }
+
+rec impl[f: * → *] Size[Fix[f]] with ∀a. Size[a] ⇒ Size[f[a]] {
+  def size = λx: Fix[f]. match x {
+    In(inner) => size[f[Fix[f]]](inner)
+  }
+}
+
+let nil: Fix[ListF[i32]] = In[ListF[i32]](NilF[i32][Fix[ListF[i32]]])
+let cons(x: i32)(xs: Fix[ListF[i32]]): Fix[ListF[i32]] = In[ListF[i32]](ConsF[i32][Fix[ListF[i32]]](x)(xs))
+
+let twice[f: * → *](x: f[i32]): i32 with ∀a. Size[a] ⇒ Size[f[a]] = size[f[i32]](x) + size[f[i32]](x)
+
+let viaTwice[g: * → *](x: g[i32]): i32 with ∀b. Size[b] ⇒ Size[g[b]] = twice[g](x)
+
+let sameName[a](x: ListF[a][i32]): i32 with Size[a] = twice[ListF[a]](x)
+
+let main(): i32 = {
+  printInt(size[Fix[ListF[i32]]](cons(1)(cons(2)(cons(3)(nil)))));
+  printInt(twice[ListF[i32]](ConsF[i32][i32](4)(5)));
+  printInt(viaTwice[ListF[i32]](ConsF[i32][i32](10)(20)));
+  printInt(sameName[i32](ConsF[i32][i32](1)(2)));
+  0
+}

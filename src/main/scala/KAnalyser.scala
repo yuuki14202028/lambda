@@ -47,8 +47,7 @@ object KAnalyser {
     } yield Kind.Star
 
     case AST.InstArrow(constraint, to) => for {
-      kinds <- constraint.arg.traverse[Check, Kind](_.result)
-      _ <- checkConstraintKinds(constraint.name, constraint.arg.map(_.original).zip(kinds), None)
+      _ <- checkConstraint(constraint.hmap([y] => (child: Para[TypeRec, ConstI[Check[Kind]]][y]) => child.original), None)
       kt <- to.result
       _ <- guard(kt == Kind.Star, CompileError.ArrowKindNotStar(ArrowSide.Rhs, kt, to.original))
     } yield Kind.Star
@@ -75,8 +74,11 @@ object KAnalyser {
     t.para(alg)
 
   // 制約 C[τ̄] の検査: trait の存在・引数の数・各引数のカインド一致。site はエラー表示用の宣言
-  def checkConstraint(constraint: Constraint[TypeRec], site: Option[DeclRef]): Check[Unit] =
-    constraint.arg.traverse(kindOf).flatMap(kinds => checkConstraintKinds(constraint.name, constraint.arg.zip(kinds), site))
+  def checkConstraint(constraint: Constraint[TypeRec], site: Option[DeclRef]): Check[Unit] = (for {
+    kinds <- constraint.arg.traverse(kindOf)
+    _ <- checkConstraintKinds(constraint.name, constraint.arg.zip(kinds), site)
+    _ <- constraint.premises.traverse_(checkConstraint(_, site))
+  } yield ()).local((e: Env) => e.copy(typeVars = e.typeVars ++ constraint.params))
 
   private def checkConstraintKinds(name: TypeVariable, args: Seq[(TypeRec[Type], Kind)], site: Option[DeclRef]): Check[Unit] = for {
     env <- ask

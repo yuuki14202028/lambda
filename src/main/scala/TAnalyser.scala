@@ -157,14 +157,30 @@ object TAnalyser {
   private def resolveTrait(name: TypeVariable): Check[TypeVariable] =
     ask.flatMap(env => lift(env.resolveType(name).toRight(CompileError.UndefinedTrait(name, None))))
 
-  private def typedConstraint(c: Constraint[TC]): Check[Constraint[TypeRec]] =
-    (resolveTrait(c.name), c.arg.traverse(identity)).mapN(Constraint[TypeRec](_, _))
+  // 量化された制約のパラメータは、その制約の引数と前提の中だけで見える型変数
+  private def underParams[A](params: Seq[(TypeVariable, Kind)])(body: Check[A]): Check[A] =
+    params.foldRight(body) { case ((variable, kind), inner) => underTypeVar(variable, kind)(inner) }
+
+  private def typedConstraint(c: Constraint[TC]): Check[Constraint[TypeRec]] = underParams(c.params) {
+    (resolveTrait(c.name), c.arg.traverse(identity), c.premises.traverse(typedConstraint)).mapN(Constraint[TypeRec](_, _, c.params, _))
+  }
 
   // trait の存在・引数の数・カインドを確かめ、引数を展開した制約を返す。site はエラー表示用の宣言
   private def expandConstraint(c: Constraint[TypeRec], site: Option[DeclRef]): Check[TypeConstraint] = for {
-    resolved <- c.arg.traverse(resolveNames)
-    _ <- KAnalyser.checkConstraint(TypeConstraint(c.name, resolved), site)
-  } yield TypeConstraint(c.name, resolved.map(Equivalence.normalize))
+    resolved <- resolveConstraintNames(c)
+    _ <- KAnalyser.checkConstraint(resolved, site)
+    // 解決はヘッドの照合でパラメータを決めるので、パラメータはヘッドの引数に現れなければならない
+    _ <- resolved.params.traverse_ { case (param, _) =>
+      guard(resolved.arg.exists(arg => freeTypeVars(arg).contains(param)), CompileError.QuantifiedParamUnused(c.name, param))
+    }
+  } yield resolved.hmap([y] => (t: TypeRec[y]) => t.extract match {
+    case TypeAnn => Equivalence.normalize(t)
+    case _ => t
+  })
+
+  private def resolveConstraintNames(c: Constraint[TypeRec]): Check[TypeConstraint] = underParams(c.params) {
+    (c.arg.traverse(resolveNames), c.premises.traverse(resolveConstraintNames)).mapN(Constraint[TypeRec](c.name, _, c.params, _))
+  }
 
   // ---- 文字列埋め込みの脱糖 ----
   // `a = {e}` は型検査時に concat("a = ")(show[τ](e)) へ展開する。
@@ -217,6 +233,11 @@ object TAnalyser {
     }
     case AST.ForAll(variable, kind, body) => underTypeVar(variable, kind)(body).map(forallTypeT(variable, kind, _))
     case AST.TypeAbs(variable, kind, body) => underTypeVar(variable, kind)(body).map(typeAbsT(variable, kind, _))
+    case AST.InstArrow(constraint, to) if constraint.quantified =>
+      def resolved(c: Constraint[TC]): Check[TypeConstraint] = underParams(c.params) {
+        (c.arg.traverse(identity), c.premises.traverse(resolved)).mapN(Constraint[TypeRec](c.name, _, c.params, _))
+      }
+      (resolved(constraint), to).mapN(instArrowT)
     case node => node.htraverse([y] => (child: TC[y]) => child).map(HCofree(he.ann, _))
   }
 
@@ -263,6 +284,8 @@ object TAnalyser {
       case Evidence.Given(_) => Set.empty
       case Evidence.Instance(traitName, heads, _, context) => context.flatMap(inEvidence).toSet + instanceKey(traitName, heads)
       case Evidence.Super(_, _, of) => inEvidence(of)
+      case Evidence.Apply(of, _, premises) => inEvidence(of) ++ premises.flatMap(inEvidence)
+      case Evidence.Abs(_, body) => inEvidence(body)
     }
     val alg: Algebra[TypedAST, Keys] = [x] => he => {
       val inChildren = he.ast.htraverse[[a] =>> cats.data.Const[Set[(TypeVariable, Seq[Variable])], a], Keys](
@@ -744,6 +767,7 @@ object TAnalyser {
         )
         _ <- guard(methods.forall(_.body.isEmpty), CompileError.DefaultMethodsUnsupported(name))
         typedSupers <- supers.traverse(typedConstraint).local(scope)
+        _ <- guard(!typedSupers.exists(_.quantified), CompileError.QuantifiedSuperclassUnsupported(name))
         typedSigs <- methods.zip(methodNames).traverse { case (m, method) => m.sig.local(scope).map(method -> _) }
         define <- traitOf(name, params, typedSupers, typedSigs)
         typed = topTraitT(name, params, typedSupers, typedSigs.map { case (method, sig) => MethodSig[TypeRec](method, sig, None) })

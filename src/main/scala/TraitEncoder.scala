@@ -42,7 +42,7 @@ object TraitEncoder {
 
   private def encodeAlg(env: Env): Algebra[TypedAST, Encoded] = [x] => he => scope => (he.ann, he.ast) match {
     case (TypeAnn, AST.InstArrow(constraint, to)) =>
-      arrowT(dictionaryType(Constraint[TypeRec](constraint.name, constraint.arg.map(_(scope)))), to(scope))
+      arrowT(dictionaryType(constraint.hmap([y] => (child: Encoded[y]) => child(scope))), to(scope))
 
     case (ExprAnn(t), AST.InstAbs(_, body)) =>
       // 展開済みの制約は注釈の型が持っている
@@ -72,6 +72,19 @@ object TraitEncoder {
       )
       val applied = typeArgs.foldLeft(varrType(inst.dictName, encodeType(instanceType(inst), env)))(mkTyApp)
       context.map(dictionary(_, scope, env)).foldLeft(applied)(mkApp)
+
+    // 量化された制約の辞書 d を具体化する: d[型引数…](前提の辞書…)
+    case Evidence.Apply(of, typeArgs, premises) =>
+      premises.map(dictionary(_, scope, env)).foldLeft(typeArgs.foldLeft(dictionary(of, scope, env))(mkTyApp))(mkApp)
+
+    // 量化された制約 ∀ā. P̄ ⇒ C[τ̄] の辞書: Λā. λ$with_n: P の辞書. … C[τ̄] の辞書
+    case Evidence.Abs(constraint, body) =>
+      val premises = constraint.premises.zipWithIndex.map { case (premise, index) =>
+        (premise, Variable(s"$$with_${scope.length + index}"), encodeType(dictionaryType(premise), env))
+      }
+      val inner = dictionary(body, scope ++ premises.map { case (premise, dictVar, dictType) => premise -> varrType(dictVar, dictType) }, env)
+      val withPremises = premises.foldRight(inner) { case ((_, dictVar, dictType), acc) => mkAbs(dictVar, dictType, acc) }
+      constraint.params.foldRight(withPremises) { case ((p, k), acc) => mkTyAbs(p, k, acc) }
 
     // $super_C_i[τ̄](C[τ̄] の辞書)
     case Evidence.Super(traitName, index, of) =>
@@ -136,7 +149,7 @@ object TraitEncoder {
     val heads = targets.map(t => typeConstructorHead(t).map(_._1).getOrElse(invariant(s"impl ${traitName.name}: target is not a type constructor")))
     val shown = s"${traitName.name}${heads.map(h => s"[$h]").mkString}"
     val inst = env.instances.getOrElse(instanceKey(traitName, heads), invariant(s"instance $shown is missing from ProgramAnn"))
-    val context = inst.context.zipWithIndex.map { case (constraint, i) => (constraint, Variable(s"$$ctx_$i"), dictionaryType(constraint)) }
+    val context = inst.context.zipWithIndex.map { case (constraint, i) => (constraint, Variable(s"$$ctx_$i"), encodeType(dictionaryType(constraint), env)) }
     val scope: Scope = context.map { case (constraint, dictVar, dictType) => constraint -> varrType(dictVar, dictType) }
     val superDicts = superEvidence.map(dictionary(_, scope, env))
     val bodies = traitDef.methods.map { case (methodName, _) =>
