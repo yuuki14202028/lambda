@@ -1,0 +1,31 @@
+import "std/operators"
+import "std/list"
+
+let printInt: i32 → i32 = foreign[i32 → i32] print_int
+
+let rec count(n: i32)(acc: i32): i32 = if n == 0 then acc else count(n - 1)(acc + 1)
+
+let rec build(n: i32)(acc: List[i32]): List[i32] = if n == 0 then acc else build(n - 1)(Cons[i32](n)(acc))
+
+let rec sum(xs: List[i32])(acc: i32): i32 = match xs {
+  Nil => acc
+  Cons(x)(rest) => sum(rest)(acc + x)
+}
+
+let parity(n: i32): i32 =
+  let rec go(k: i32)(even: bool): i32 =
+    if k == 0 then (if even then 0 else 1) else go(k - 1)(!even)
+  in go(n)(true)
+
+let rec keep(n: i32): i32 = let unused: i32 = 10 in (λk: i32. n)(unused)
+
+let rec spin(n: i32): i32 = if intrinsic[eq_i32](n)(0) then 7 else spin(intrinsic[sub_i32](n)(1))
+
+let main(): i32 = {
+  printInt(count(1000000)(0));
+  printInt(sum(build(300000)(Nil[i32]))(0));
+  printInt(parity(1000001));
+  printInt(keep(42));
+  printInt(spin(1000000));
+  0
+}

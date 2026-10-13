@@ -35,8 +35,9 @@ object TAnalyser {
   private def resolveBinaryOperator(op: BinOps, left: TypeRec[Expr], right: TypeRec[Expr]): Check[TypeRec[Expr]] = for {
     env <- ask
     typeName <- lift(operatorTypeName(typeOf(left)).toRight(CompileError.OperatorUnresolvable(op, typeOf(left))))
-    fn = StandardLibrary.binaryOperatorName(op, typeName)
-    fnType <- lift(env.values.get(fn).toRight(CompileError.OperatorUndefined(op, typeOf(left), fn)))
+    operator = StandardLibrary.binaryOperatorName(op, typeName)
+    found <- lift(env.lookupValue(operator).toRight(CompileError.OperatorUndefined(op, typeOf(left), operator)))
+    (fn, fnType) = found
     rightArg = if (isShortCircuit(op)) {
       val thunkType = arrowT(unitTypeT, typeOf(right))
       absT(thunkParam(right), thunkType, unitTypeT, right)
@@ -64,8 +65,9 @@ object TAnalyser {
   private def resolveUnaryOperator(op: UnaryOps, body: TypeRec[Expr]): Check[TypeRec[Expr]] = for {
     env <- ask
     typeName <- lift(operatorTypeName(typeOf(body)).toRight(CompileError.OperatorUnresolvable(op, typeOf(body))))
-    fn = StandardLibrary.unaryOperatorName(op, typeName)
-    fnType <- lift(env.values.get(fn).toRight(CompileError.OperatorUndefined(op, typeOf(body), fn)))
+    operator = StandardLibrary.unaryOperatorName(op, typeName)
+    found <- lift(env.lookupValue(operator).toRight(CompileError.OperatorUndefined(op, typeOf(body), operator)))
+    (fn, fnType) = found
     result <- destructArrow(fnType) match {
       case Some((paramType, resultType)) if Equivalence.alpha(paramType, typeOf(body)) =>
         okT(appT(resultType, varrType(fn, fnType), body))
@@ -152,8 +154,11 @@ object TAnalyser {
     case None => okT(e)
   }
 
+  private def resolveTrait(name: TypeVariable): Check[TypeVariable] =
+    ask.flatMap(env => lift(env.resolveType(name).toRight(CompileError.UndefinedTrait(name, None))))
+
   private def typedConstraint(c: Constraint[TC]): Check[Constraint[TypeRec]] =
-    c.arg.traverse(identity).map(Constraint[TypeRec](c.name, _))
+    (resolveTrait(c.name), c.arg.traverse(identity)).mapN(Constraint[TypeRec](_, _))
 
   // trait の存在・引数の数・カインドを確かめ、引数を展開した制約を返す。site はエラー表示用の宣言
   private def expandConstraint(c: Constraint[TypeRec], site: Option[DeclRef]): Check[TypeConstraint] = for {
@@ -174,13 +179,14 @@ object TAnalyser {
     if (Equivalence.alpha(stringTypeT, partType)) okT(part)
     else for {
       env <- ask
-      surface <- lift(env.values.get(showMethod).toRight(
+      found <- lift(env.lookupValue(showMethod).toRight(
         CompileError.StrInterpShowMissing(partType)))
+      (show, surface) = found
       destructed <- lift(destructForAllK(surface).toRight(
         CompileError.StrInterpShowNotPolymorphic(surface)))
       (variable, kind, body) = destructed
       _ <- guard(kind == Kind.Star, CompileError.StrInterpShowKindInvalid(kind))
-      applied <- discharge(tyAppT(Equivalence.normalize(substType(variable, partType, body)), varrType(showMethod, surface), partType))
+      applied <- discharge(tyAppT(Equivalence.normalize(substType(variable, partType, body)), varrType(show, surface), partType))
       arrowParts <- lift(destructArrow(typeOf(applied)).toRight(
         CompileError.StrInterpShowNotFunction(typeOf(applied))))
       (from, to) = arrowParts
@@ -205,7 +211,7 @@ object TAnalyser {
       if (env.typeVars.contains(variable)) okT(typeVarT(variable))
       else env.typeAliases.get(variable) match {
         case Some(alias) => okT(aliasAsTypeAbs(alias.params, alias.body))
-        case None if env.dataTypes.contains(variable) => okT(typeVarT(variable))
+        case None if env.dataTypes.contains(variable) || env.abstractTypes.contains(variable) => okT(typeVarT(variable))
         case None => fail(CompileError.UndefinedTypeVariable(variable))
       }
     }
@@ -242,29 +248,84 @@ object TAnalyser {
     _ <- guard(params.forall { case (p, _) => !env.typeVars.contains(p) }, CompileError.ParamAlreadyDefined(owner))
   } yield ()
 
+  // 評価しても本体が走らない値か（Λ は実行時に残らないので剥がして見る）
+  @annotation.tailrec
+  private def isFunctionValue(e: TypeRec[Expr]): Boolean = e.project match {
+    case AST.TyAbs(_, _, body) => isFunctionValue(body)
+    case AST.Abs(_, _, _) | AST.InstAbs(_, _) => true
+    case _ => false
+  }
+
+  // 自身を参照する let rec の値は関数に限る。そうでないと初期化前の自身を読んでしまう
+  private def checkRecursiveValue(variable: Variable, value: TypeRec[Expr]): Check[Unit] =
+    guard(isFunctionValue(value) || !freeVars(value).contains(variable), CompileError.RecursiveValueNotFunction(variable))
+
+  // 式の中で制約の解決に使われたインスタンス（文脈として間接的に使われたものを含む）
+  private def instancesUsed(e: TypeRec[Expr]): Set[(TypeVariable, Seq[Variable])] = {
+    type Keys[I] = Set[(TypeVariable, Seq[Variable])]
+    def inEvidence(evidence: Evidence[Keys]): Set[(TypeVariable, Seq[Variable])] = evidence match {
+      case Evidence.Given(_) => Set.empty
+      case Evidence.Instance(traitName, heads, _, context) => context.flatMap(inEvidence).toSet + instanceKey(traitName, heads)
+      case Evidence.Super(_, _, of) => inEvidence(of)
+    }
+    val alg: Algebra[TypedAST, Keys] = [x] => he => {
+      val inChildren = he.ast.htraverse[[a] =>> cats.data.Const[Set[(TypeVariable, Seq[Variable])], a], Keys](
+        [y] => (child: Keys[y]) => cats.data.Const(child)
+      ).getConst
+      he.ast match {
+        case AST.InstApp(_, evidence) => inChildren ++ inEvidence(evidence)
+        case _ => inChildren
+      }
+    }
+    e.cata(alg)
+  }
+
   // let / let rec: (型付きの注釈, 型付きの値, 展開済みの宣言型)
   private def checkBinding(variable: Variable, types: TC[Type], value: TC[Expr], recursive: Boolean): Check[(TypeRec[Type], TypeRec[Expr], TypeRec[Type])] = for {
     typedTypes <- types
     declaredType <- expandChecked(typedTypes)
     typedValue <- if (recursive) value.local((e: Env) => e.withValue(variable, declaredType)) else value
     _ <- expect(declaredType, typeOf(typedValue))
+    _ <- if (recursive) checkRecursiveValue(variable, typedValue) else Check.pure(())
   } yield (typedTypes, typedValue, declaredType)
 
+  // 以下の宣言の検査は「型付きの宣言」と「その宣言が Env に足す定義」を返す。
+  // 後者は型付きの宣言だけから決まり（aliasOf / dataOf / traitOf）、module を封印するときに読み直す
+
+  private def aliasOf(params: Seq[(TypeVariable, Kind)], alias: TypeRec[Type]): Check[TypeAlias] =
+    expandChecked(alias).local((e: Env) => e.withTypeVars(params)).map(TypeAlias(params, _))
+
   // type: (型付きの別名本体, 別名を登録する Env の拡張)
-  private def checkAlias(variable: TypeVariable, params: Seq[(TypeVariable, Kind)], alias: TC[Type]): Check[(TypeRec[Type], Env => Env)] = {
-    val scope = (e: Env) => e.withTypeVars(params)
-    for {
-      _ <- checkTypeNameFresh(NameKind.TypeAliasName, variable)
-      _ <- checkParams(DeclRef.TypeAliasDecl(variable), params)
-      typedAlias <- alias.local(scope)
-      expanded <- expandChecked(typedAlias).local(scope)
-    } yield (typedAlias, (e: Env) => e.copy(typeAliases = e.typeAliases + (variable -> TypeAlias(params, expanded))))
-  }
+  private def checkAlias(variable: TypeVariable, params: Seq[(TypeVariable, Kind)], alias: TC[Type]): Check[(TypeRec[Type], Env => Env)] = for {
+    _ <- checkTypeNameFresh(NameKind.TypeAliasName, variable)
+    _ <- checkParams(DeclRef.TypeAliasDecl(variable), params)
+    typedAlias <- alias.local((e: Env) => e.withTypeVars(params))
+    definition <- aliasOf(params, typedAlias)
+  } yield (typedAlias, (e: Env) => e.withAlias(variable, definition))
 
   private def constructorType(owner: TypeVariable, params: Seq[(TypeVariable, Kind)], fields: Seq[TypeRec[Type]]): TypeRec[Type] = {
     val result = applyTypeConstructor(owner, params.map { case (v, _) => typeVarT(v) })
     params.foldRight(fields.foldRight(result)(arrowT)) { case ((v, k), body) => forallTypeT(v, k, body) }
   }
+
+  // フィールドの検査中は、自身を参照できるようコンストラクタなしの定義を仮登録する
+  private def fieldScope(variable: TypeVariable, params: Seq[(TypeVariable, Kind)], recursive: Boolean)(e: Env): Env =
+    e.withData(variable, DataDef(params, Seq.empty, recursive)).withTypeVars(params)
+
+  private def dataOf(
+      variable: TypeVariable,
+      params: Seq[(TypeVariable, Kind)],
+      constructors: Seq[DataConstructor[TypeRec]],
+      recursive: Boolean
+  ): Check[DataDef] =
+    constructors.zipWithIndex.traverse { case (c, tag) =>
+      c.fields.traverse(field => expandChecked(field).local(fieldScope(variable, params, recursive))).map(ConstructorDef(c.name, variable, _, tag))
+    }.map(DataDef(params, _, recursive))
+
+  private def defineData(variable: TypeVariable, dataDef: DataDef)(e: Env): Env =
+    e.withData(variable, dataDef)
+      .withValues(dataDef.constructors.map(c => c.name -> constructorType(variable, dataDef.params, c.fields)))
+      .copy(constructors = e.constructors ++ dataDef.constructors.map(c => c.name -> c))
 
   // data: (型付きのコンストラクタ, データ型とコンストラクタを登録する Env の拡張)
   private def checkData(
@@ -275,8 +336,6 @@ object TAnalyser {
   ): Check[(Seq[DataConstructor[TypeRec]], Env => Env)] = {
     val owner = DeclRef.DataDecl(variable)
     val names = constructors.map(_.name)
-    // フィールドの検査中は、自身を参照できるようコンストラクタなしの定義を仮登録する
-    val fieldScope = (e: Env) => e.withTypeVars(params).copy(dataTypes = e.dataTypes + (variable -> DataDef(params, Seq.empty, recursive)))
     for {
       env <- ask
       _ <- checkTypeNameFresh(NameKind.DataTypeName, variable)
@@ -286,19 +345,35 @@ object TAnalyser {
         names.forall(name => !env.values.contains(name) && !env.constructors.contains(name)),
         CompileError.MemberAlreadyDefined(owner, MemberKind.ConstructorMember)
       )
-      typed <- constructors.traverse(c => c.fields.traverse(_.local(fieldScope)).map(DataConstructor[TypeRec](c.name, _)))
-      defs <- typed.zipWithIndex.traverse { case (c, tag) =>
-        c.fields.traverse(field => expandChecked(field).local(fieldScope)).map(ConstructorDef(c.name, variable, _, tag))
-      }
+      typed <- constructors.traverse(c => c.fields.traverse(_.local(fieldScope(variable, params, recursive))).map(DataConstructor[TypeRec](c.name, _)))
+      dataDef <- dataOf(variable, params, typed, recursive)
       _ <- guard(
-        recursive || !defs.exists(_.fields.exists(field => containsDataApplicationOf(field, variable))),
+        recursive || !dataDef.constructors.exists(_.fields.exists(field => containsDataApplicationOf(field, variable))),
         CompileError.RecursiveDataNotDeclared(variable)
       )
-    } yield (typed, (e: Env) => e.copy(
-      values = e.values ++ defs.map(c => c.name -> constructorType(variable, params, c.fields)),
-      dataTypes = e.dataTypes + (variable -> DataDef(params, defs, recursive)),
-      constructors = e.constructors ++ defs.map(c => c.name -> c)
-    ))
+    } yield (typed, defineData(variable, dataDef))
+  }
+
+  // trait C[p̄] は辞書のデータ型 C[p̄] = MkC(スーパークラスの辞書…)(メソッド…) でもある
+  private def traitOf(
+      variable: TypeVariable,
+      params: Seq[(TypeVariable, Kind)],
+      supers: Seq[Constraint[TypeRec]],
+      sigs: Seq[(Variable, TypeRec[Type])]
+  ): Check[Env => Env] = {
+    val scope = (e: Env) => e.withTypeVars(params)
+    for {
+      expandedSupers <- supers.traverse(expandConstraint(_, Some(DeclRef.TraitDecl(variable)))).local(scope)
+      expandedSigs <- sigs.traverse { case (name, sig) => expandChecked(sig).local(scope).map(name -> _) }
+    } yield {
+      val ctorName = dictionaryConstructor(variable)
+      val fields = expandedSupers.map(dictionaryType) ++ expandedSigs.map(_._2)
+      val ctorDef = ConstructorDef(ctorName, variable, fields, 0)
+      (e: Env) => e
+        .withData(variable, DataDef(params, Seq(ctorDef), recursive = false))
+        .withValues(expandedSigs.map { case (name, sig) => name -> methodType(variable, params, sig) } :+ (ctorName -> constructorType(variable, params, fields)))
+        .copy(constructors = e.constructors + (ctorName -> ctorDef), traits = e.traits + (variable -> TraitDef(params, expandedSigs, expandedSupers)))
+    }
   }
 
   // match / fold: 網羅性と束縛子を検査し、各分岐の本体を型付けする。
@@ -309,13 +384,17 @@ object TAnalyser {
     env <- ask
     dataApp <- lift(dataTypeApplication(scrutineeType, env.dataTypes)(_.paramVars))
     (dataName, dataDef, typeArgs) = dataApp
-    caseNames = cases.map(_.constructor)
+    // 分岐のコンストラクタ名も、式の中の名前と同じ規則で解決する
+    named <- cases.traverse { c =>
+      lift(env.resolveValue(c.constructor).toRight(CompileError.UndefinedVariable(c.constructor))).map(MatchCase[TC](_, c.binders, c.body))
+    }
+    caseNames = named.map(_.constructor)
     expected = dataDef.constructors.map(_.name)
     _ <- guard(caseNames.distinct.length == caseNames.length, CompileError.DuplicateCases(kind))
     missing = expected.filterNot(caseNames.contains)
     extra = caseNames.filterNot(expected.contains)
     _ <- guard(missing.isEmpty && extra.isEmpty, CompileError.NonExhaustive(kind, missing, extra))
-    typedCases <- cases.traverse { c =>
+    typedCases <- named.traverse { c =>
       val constructor = dataDef.constructors.find(_.name == c.constructor)
         .getOrElse(invariant(s"constructor ${c.constructor.name} passed the exhaustiveness check but is not defined"))
       val fieldTypes = constructor.fields.map(field => Equivalence.normalize(substMany(dataDef.paramVars, typeArgs, field)))
@@ -333,8 +412,9 @@ object TAnalyser {
   // context[M] が使うメソッド参照 name[M]（M の制約もここで解決する）
   private def contextMethod(name: Variable, monad: TypeRec[Type]): Check[TypeRec[Expr]] = for {
     env <- ask
-    methodType <- lift(env.values.get(name).toRight(CompileError.ContextMethodMissing(name)))
-    applied <- lift(ContextDesugar.applyTypeArg(varrType(name, methodType), monad, ContextDesugar.monadKind))
+    found <- lift(env.lookupValue(name).toRight(CompileError.ContextMethodMissing(name)))
+    (method, methodType) = found
+    applied <- lift(ContextDesugar.applyTypeArg(varrType(method, methodType), monad, ContextDesugar.monadKind))
     resolved <- discharge(applied)
   } yield resolved
 
@@ -353,6 +433,9 @@ object TAnalyser {
     case AST.TopTrait(_, _, _, _) => declarationNode("TopTrait")
     case AST.TopImpl(_, _, _, _, _, _, _) => declarationNode("TopImpl")
     case AST.TopDerive(_, _) => declarationNode("TopDerive")
+    case AST.TopModule(_, _) => declarationNode("TopModule")
+    case AST.TopOpen(_) => declarationNode("TopOpen")
+    case AST.TopModified(_, _) => declarationNode("TopModified")
 
     case AST.Abs(variable, types, body) => for {
       typedTypes <- types
@@ -447,8 +530,9 @@ object TAnalyser {
 
     case AST.Var(value) => for {
       env <- ask
-      t <- lift(env.values.get(value).toRight(CompileError.UndefinedVariable(value)))
-      resolved <- discharge(varrType(value, t))
+      found <- lift(env.lookupValue(value).toRight(CompileError.UndefinedVariable(value)))
+      (name, t) = found
+      resolved <- discharge(varrType(name, t))
     } yield resolved
 
     case AST.Num(value, typeName) =>
@@ -498,6 +582,7 @@ object TAnalyser {
           _ <-
             if (b.monadic) expect(typeAppT(monadType, annType), typeOf(typedValue))
             else expect(annType, typeOf(typedValue))
+          _ <- if (!b.monadic && b.recursive) checkRecursiveValue(b.name, typedValue) else Check.pure(())
         } yield (scope + (b.name -> annType), done :+ ContextBinding[TypeRec](b.name, annType, typedValue, b.monadic, b.recursive))
       }
       (bindersScope, typedBindings) = checkedBindings
@@ -541,8 +626,8 @@ object TAnalyser {
       }
     case AST.TypeVar(variable) => for {
       env <- ask
-      _ <- guard(env.definesTypeName(variable), CompileError.UndefinedTypeVariable(variable))
-    } yield typeVarT(variable)
+      name <- lift(env.resolveType(variable).filter(env.definesTypeName).toRight(CompileError.UndefinedTypeVariable(variable)))
+    } yield typeVarT(name)
     case AST.Arrow(from, to) => (from, to).mapN(arrowT)
     case AST.InstArrow(constraint, to) => (typedConstraint(constraint), to).mapN(instArrowT)
     case AST.ForAll(variable, kind, body) => underTypeVar(variable, kind)(body).map(forallTypeT(variable, kind, _))
@@ -562,72 +647,85 @@ object TAnalyser {
 
   private def extending(decl: TypeRec[Decl])(extend: Env => Env): Checked = ask.map(env => (decl, extend(env)))
 
+  // module の中の宣言は、短い名前 x を完全な名前 M.x で定義する
+  private def memberName(variable: Variable): Check[Variable] = ask.map(env => Variable(env.qualify(variable.name)))
+  private def memberType(variable: TypeVariable): Check[TypeVariable] = ask.map(env => TypeVariable(env.qualify(variable.name)))
+
+  private def shortName(name: String): String = name.substring(name.lastIndexOf('.') + 1)
+
   private def declRule(decl: AST[TC, Decl]): Checked = decl match {
 
-    case AST.TopLet(variable, types, value) =>
-      checkBinding(variable, types, value, recursive = false).flatMap { case (typedTypes, typedValue, declaredType) =>
-        extending(topLetT(variable, typedTypes, typedValue))(_.withValue(variable, declaredType))
-      }
+    case AST.TopLet(variable, types, value) => for {
+      name <- memberName(variable)
+      binding <- checkBinding(name, types, value, recursive = false)
+      (typedTypes, typedValue, declaredType) = binding
+      checked <- extending(topLetT(name, typedTypes, typedValue))(_.withValue(name, declaredType).exportValue(variable))
+    } yield checked
 
-    case AST.TopLetRec(variable, types, value) =>
-      checkBinding(variable, types, value, recursive = true).flatMap { case (typedTypes, typedValue, declaredType) =>
-        extending(topLetRecT(variable, typedTypes, typedValue))(_.withValue(variable, declaredType))
-      }
+    case AST.TopLetRec(variable, types, value) => for {
+      name <- memberName(variable)
+      // 値の中からは、自身を短い名前で参照できる
+      binding <- checkBinding(name, types, value.local((e: Env) => e.exportValue(variable)), recursive = true)
+      (typedTypes, typedValue, declaredType) = binding
+      checked <- extending(topLetRecT(name, typedTypes, typedValue))(_.withValue(name, declaredType).exportValue(variable))
+    } yield checked
 
     case AST.TopImport(path) => fail(CompileError.UnresolvedImport(path))
 
-    case AST.TopType(variable, params, alias) =>
-      checkAlias(variable, params, alias).flatMap { case (typedAlias, extend) =>
-        extending(topTypeT(variable, params, typedAlias))(extend)
-      }
+    case AST.TopType(variable, params, alias) => for {
+      name <- memberType(variable)
+      checked <- checkAlias(name, params, alias)
+      (typedAlias, extend) = checked
+      result <- extending(topTypeT(name, params, typedAlias))(e => extend(e).exportType(variable))
+    } yield result
 
-    case AST.TopData(variable, params, constructors, recursive) =>
-      checkData(variable, params, constructors, recursive).flatMap { case (typedConstructors, extend) =>
-        extending(topDataT(variable, params, typedConstructors, recursive))(extend)
+    case AST.TopData(variable, params, constructors, recursive) => for {
+      env <- ask
+      name <- memberType(variable)
+      // フィールドからは、自身を短い名前で参照できる
+      members = constructors.map(c => DataConstructor[TC](Variable(env.qualify(c.name.name)), c.fields.map(_.local((e: Env) => e.exportType(variable)))))
+      checked <- checkData(name, params, members, recursive)
+      (typedConstructors, extend) = checked
+      result <- extending(topDataT(name, params, typedConstructors, recursive)) { e =>
+        constructors.foldLeft(extend(e).exportType(variable))((acc, c) => acc.exportValue(c.name))
       }
+    } yield result
 
-    // trait C[p̄] は辞書のデータ型 C[p̄] = MkC(スーパークラスの辞書…)(メソッド…) でもある
     case AST.TopTrait(variable, params, supers, methods) =>
-      val owner = DeclRef.TraitDecl(variable)
       val scope = (e: Env) => e.withTypeVars(params)
-      val methodNames = methods.map(_.name)
-      val ctorName = dictionaryConstructor(variable)
       for {
         env <- ask
-        _ <- checkTypeNameFresh(NameKind.TraitName, variable)
-        _ <- guard(params.nonEmpty, CompileError.TraitNeedsParameter(variable))
+        name <- memberType(variable)
+        owner = DeclRef.TraitDecl(name)
+        methodNames = methods.map(m => Variable(env.qualify(m.name.name)))
+        ctorName = dictionaryConstructor(name)
+        _ <- checkTypeNameFresh(NameKind.TraitName, name)
+        _ <- guard(params.nonEmpty, CompileError.TraitNeedsParameter(name))
         _ <- checkParams(owner, params)
         _ <- guard(methodNames.distinct.length == methodNames.length, CompileError.DuplicateMembers(owner, MemberKind.MethodMember))
         _ <- guard(
-          methodNames.forall(name => !env.values.contains(name) && !env.constructors.contains(name)),
+          methodNames.forall(method => !env.values.contains(method) && !env.constructors.contains(method)),
           CompileError.MemberAlreadyDefined(owner, MemberKind.MethodMember)
         )
         _ <- guard(
           !env.values.contains(ctorName) && !env.constructors.contains(ctorName),
-          CompileError.DictionaryCtorAlreadyDefined(variable, ctorName)
+          CompileError.DictionaryCtorAlreadyDefined(name, ctorName)
         )
-        _ <- guard(methods.forall(_.body.isEmpty), CompileError.DefaultMethodsUnsupported(variable))
+        _ <- guard(methods.forall(_.body.isEmpty), CompileError.DefaultMethodsUnsupported(name))
         typedSupers <- supers.traverse(typedConstraint).local(scope)
-        expandedSupers <- typedSupers.traverse(expandConstraint(_, Some(owner))).local(scope)
-        typedSigs <- methods.traverse(m => m.sig.local(scope).map(m.name -> _))
-        sigs <- typedSigs.traverse { case (name, sig) => expandChecked(sig).local(scope).map(name -> _) }
-      } yield {
-        val fields = expandedSupers.map(dictionaryType) ++ sigs.map(_._2)
-        val ctorDef = ConstructorDef(ctorName, variable, fields, 0)
-        val typed = topTraitT(variable, params, typedSupers, typedSigs.map { case (name, sig) => MethodSig[TypeRec](name, sig, None) })
-        (typed, env.copy(
-          values = env.values ++ sigs.map { case (name, sig) => name -> methodType(variable, params, sig) }
-            + (ctorName -> constructorType(variable, params, fields)),
-          dataTypes = env.dataTypes + (variable -> DataDef(params, Seq(ctorDef), recursive = false)),
-          constructors = env.constructors + (ctorName -> ctorDef),
-          traits = env.traits + (variable -> TraitDef(params, sigs, expandedSupers))
-        ))
-      }
+        typedSigs <- methods.zip(methodNames).traverse { case (m, method) => m.sig.local(scope).map(method -> _) }
+        define <- traitOf(name, params, typedSupers, typedSigs)
+        typed = topTraitT(name, params, typedSupers, typedSigs.map { case (method, sig) => MethodSig[TypeRec](method, sig, None) })
+        result <- extending(typed) { e =>
+          (methods.map(_.name) :+ Variable(shortName(ctorName.name))).foldLeft(define(e).exportType(variable))((acc, short) => acc.exportValue(short))
+        }
+      } yield result
 
-    case AST.TopImpl(traitName, implParams, targets, context, methods, _, recursive) =>
+    case AST.TopImpl(writtenTrait, implParams, targets, context, writtenMethods, _, recursive) =>
       val implScope = (e: Env) => e.withTypeVars(implParams)
       for {
         env <- ask
+        traitName <- resolveTrait(writtenTrait)
         traitDef <- lift(env.traits.get(traitName).toRight(CompileError.UndefinedTrait(traitName, None)))
         paramVars = traitDef.paramVars
         _ <- guard(
@@ -668,13 +766,20 @@ object TAnalyser {
         contextScope = (e: Env) => implScope(e).withGivens(expandedContext)
         bodyScope = (e: Env) => if (recursive) contextScope(e).copy(instances = e.instances + (key -> inst)) else contextScope(e)
         traitMethodNames = traitDef.methods.map(_._1)
+        // impl のメソッドは短い名前で書き、trait のメソッド（module の中なら M.m）に対応づける
+        methods = writtenMethods.map { m =>
+          MethodImpl[TC](traitMethodNames.find(t => shortName(t.name) == m.name.name).getOrElse(m.name), m.sig, m.body)
+        }
         implMethodNames = methods.map(_.name)
         _ <- guard(implMethodNames.distinct.length == implMethodNames.length, CompileError.DuplicateMembers(implRef, MemberKind.MethodMember))
         missing = traitMethodNames.filterNot(implMethodNames.contains)
         _ <- guard(missing.isEmpty, CompileError.MissingMethods(implRef, missing))
         extra = implMethodNames.filterNot(traitMethodNames.contains)
         _ <- guard(extra.isEmpty, CompileError.ExtraMethods(implRef, extra))
-        sigScope = (e: Env) => implScope(e).withTypeVars(traitDef.param)
+        // メソッドの宣言シグネチャでは trait のパラメータ名も使える（ターゲットに読み替える）。
+        // ただし impl の型パラメータと同名のものは impl 側を指す
+        sigParams = traitDef.param.zip(expandedTargets).filterNot { case ((p, _), _) => implParams.exists(_._1 == p) }
+        sigScope = (e: Env) => implScope(e).withTypeVars(sigParams.map(_._1))
         typedMethods <- methods.traverse { m =>
           val expected = Equivalence.normalize(substMany(paramVars, expandedTargets, traitDef.methods.find(_._1 == m.name).get._2))
           for {
@@ -683,10 +788,15 @@ object TAnalyser {
               Equivalence.alpha(expected, typeOf(typedBody)),
               CompileError.MethodBodyTypeMismatch(implRef, m.name, expected, typeOf(typedBody))
             )
+            // 文脈のない impl rec の辞書は関数ではないので、自身を使うメソッドは関数でなければ初期化前の辞書を読む
+            _ <- guard(
+              !recursive || expandedContext.nonEmpty || isFunctionValue(typedBody) || !instancesUsed(typedBody).contains(key),
+              CompileError.RecursiveInstanceMethodNotFunction(implRef, m.name)
+            )
             typedSig <- m.sig.traverse(_.local(sigScope))
             _ <- typedSig.traverse_ { s =>
               expandType(s).local(sigScope).flatMap { expandedSig =>
-                val declared = Equivalence.normalize(substMany(paramVars, expandedTargets, expandedSig))
+                val declared = Equivalence.normalize(substMany(sigParams.map(_._1._1), sigParams.map(_._2), expandedSig))
                 guard(
                   Equivalence.alpha(expected, declared),
                   CompileError.MethodSigTypeMismatch(implRef, m.name, declared, expected)
@@ -700,19 +810,97 @@ object TAnalyser {
         typed = topImplT(traitName, implParams, expandedTargets, typedContext, typedMethods, superEvidence, recursive)
       } yield (typed, env.copy(instances = env.instances + (key -> inst)))
 
-    case AST.TopDerive(traitName, target) => for {
+    case AST.TopDerive(writtenTrait, writtenTarget) => for {
       env <- ask
+      traitName <- resolveTrait(writtenTrait)
+      target <- lift(env.resolveType(writtenTarget).toRight(CompileError.UndefinedTypeVariable(writtenTarget)))
       inst <- lift(Deriver.check(traitName, target, env))
     } yield (topDeriveT(traitName, target), env.copy(instances = env.instances + (instanceKey(traitName, Seq(target.name)) -> inst)))
+    case AST.TopModule(_, _) => declarationNode("TopModule")
+    case AST.TopOpen(_) => declarationNode("TopOpen")
+    case AST.TopModified(_, _) => declarationNode("TopModified")
   }
 
-  private def checkDecl(decl: IndexedRec[Decl]): StateT[EitherS, Env, TypeRec[Decl]] =
-    StateT { env =>
-      declRule(decl.project.hmap([x] => (child: IndexedRec[x]) => check(child)))
-        .run(env)
-        .map { case (typedDecl, nextEnv) => (nextEnv, typedDecl) }
-        .left.map(_.at(decl.extract))
+  // ---- module ----
+
+  /** module を閉じるとき、中の宣言が Env に足した定義を「外から見た形」に読み直す。
+   * opaque type は module の中では通常の別名だが、ここで中身のわからない型（Env.abstractTypes）に変わり、
+   * それより後の宣言の型は別名を展開しない形で登録し直される。インスタンスは module の中で登録した形のまま残る
+   */
+  private def sealDecls(decls: Seq[TypeRec[Decl]]): Check[Env] =
+    decls.foldLeft(ask)((sealedSoFar, decl) => sealedSoFar.flatMap(env => sealDecl(decl).local((_: Env) => env)))
+
+  private def sealDecl(decl: TypeRec[Decl]): Check[Env] = decl.project match {
+    case AST.TopLet(variable, types, _) => (expandChecked(types), ask).mapN((t, env) => env.withValue(variable, t))
+    case AST.TopLetRec(variable, types, _) => (expandChecked(types), ask).mapN((t, env) => env.withValue(variable, t))
+    case AST.TopType(variable, params, alias) => (aliasOf(params, alias), ask).mapN((definition, env) => env.withAlias(variable, definition))
+    case AST.TopData(variable, params, constructors, recursive) =>
+      (dataOf(variable, params, constructors, recursive), ask).mapN((dataDef, env) => defineData(variable, dataDef)(env))
+    case AST.TopTrait(variable, params, supers, methods) =>
+      (traitOf(variable, params, supers, methods.map(m => m.name -> m.sig)), ask).mapN((define, env) => define(env))
+    case AST.TopModule(_, decls) => sealDecls(decls)
+    case AST.TopModified(Modifier.Opaque, inner) => inner.project match {
+      case AST.TopType(variable, _, _) => ask.map { env =>
+        env.typeAliases.get(variable).fold(env) { representation =>
+          env.copy(typeAliases = env.typeAliases - variable, abstractTypes = env.abstractTypes + (variable -> representation))
+        }
+      }
+      case _ => sealDecl(inner)
     }
+    case AST.TopModified(Modifier.Private, inner) => sealDecl(inner)
+    case AST.TopImpl(_, _, _, _, _, _, _) | AST.TopDerive(_, _) | AST.TopOpen(_) | AST.TopImport(_) => ask
+  }
+
+  private def checkModule(name: String, decls: Seq[IndexedRec[Decl]]): StateT[EitherS, Env, TypeRec[Decl]] = StateT { outer =>
+    val full = outer.qualify(name)
+    for {
+      _ <- Either.cond(!outer.modules.contains(full), (), CompileError.AlreadyDefined(NameKind.ModuleName, full))
+      checked <- decls.traverse(checkDecl).run(outer.copy(path = outer.path :+ name, members = Names.empty))
+      (inner, typedDecls) = checked
+      sealedEnv <- sealDecls(typedDecls).run(inner)
+    } yield (
+      sealedEnv.copy(
+        path = outer.path,
+        scope = outer.scope.withModule(name, full),
+        members = outer.members.withModule(name, full),
+        modules = sealedEnv.modules + (full -> inner.members)
+      ),
+      topModuleT(name, typedDecls)
+    )
+  }
+
+  private def checkOpen(path: Seq[String]): StateT[EitherS, Env, TypeRec[Decl]] = StateT { env =>
+    env.resolveModule(path).toRight(CompileError.UndefinedModule(path)).map(opened => (env.copy(scope = env.scope ++ opened), topOpenT(path)))
+  }
+
+  private def checkModified(modifier: Modifier, inner: IndexedRec[Decl]): StateT[EitherS, Env, TypeRec[Decl]] = for {
+    before <- StateT.get[EitherS, Env]
+    _ <- StateT.liftF[EitherS, Env, Unit](Either.cond(before.path.nonEmpty, (), CompileError.ModifierOutsideModule(modifier)))
+    typed <- checkDecl(inner)
+    _ <- StateT.modify[EitherS, Env] { after =>
+      (modifier, typed.project) match {
+        case (Modifier.Private, _) => after.copy(members = before.members)
+        // opaque data は型の名前だけを公開する
+        case (Modifier.Opaque, AST.TopData(_, _, constructors, _)) =>
+          val hidden = constructors.map(_.name).toSet
+          after.copy(members = after.members.copy(values = after.members.values.filterNot { case (_, full) => hidden(full) }))
+        // opaque type は module を閉じるときに封印する（sealDecl）
+        case (Modifier.Opaque, _) => after
+      }
+    }
+  } yield topModifiedT(modifier, typed)
+
+  private def checkDecl(decl: IndexedRec[Decl]): StateT[EitherS, Env, TypeRec[Decl]] = {
+    val checked = decl.project match {
+      case AST.TopModule(name, decls) => checkModule(name, decls)
+      case AST.TopOpen(path) => checkOpen(path)
+      case AST.TopModified(modifier, inner) => checkModified(modifier, inner)
+      case node => StateT[EitherS, Env, TypeRec[Decl]] { env =>
+        declRule(node.hmap([x] => (child: IndexedRec[x]) => check(child))).run(env).map { case (typedDecl, nextEnv) => (nextEnv, typedDecl) }
+      }
+    }
+    StateT(env => checked.run(env).left.map(_.at(decl.extract)))
+  }
 
   private def checkMain(env: Env): EitherS[Unit] = env.values.get(Variable("main")) match {
     case Some(t) if Equivalence.alpha(t, arrowT(unitTypeT, intTypeT)) => Right(())

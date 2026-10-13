@@ -1,0 +1,34 @@
+import "std/operators"
+import "std/option"
+import "std/option_instances"
+import "std/list"
+import "std/list_instances"
+
+let printInt: i32 → i32 = foreign[i32 → i32] print_int
+
+trait Traversable[t: * → *] {
+  def traverse[g: * → *][a][b](f: a → g[b])(xs: t[a]): g[t[b]] with Applicative[g]
+}
+
+impl Traversable[List] {
+  def traverse[g: * → *][a][b](f: a → g[b])(xs: List[a]): g[List[b]] with Applicative[g] =
+    let rec go(l: List[a]): g[List[b]] = match l {
+      Nil => pure[g][List[b]](Nil[b])
+      Cons(x)(rest) => apply[g][List[b]][List[b]](apply[g][b][List[b] → List[b]](pure[g][b → List[b] → List[b]](λh: b. λt: List[b]. Cons[b](h)(t)))(f(x)))(go(rest))
+    } in go(xs)
+}
+
+let halve(x: i32): Option[i32] = if x % 2 == 0 then Some[i32](x / 2) else None[i32]
+
+let sum(xs: List[i32]): i32 = foldLeft[List][i32][i32](λacc: i32. λx: i32. acc + x)(0)(xs)
+
+let score(xs: List[i32]): i32 = match traverse[List][Option][i32][i32](halve)(xs) {
+  None => 0 - 1
+  Some(ys) => sum(ys)
+}
+
+let main(): i32 = {
+  printInt(score(Cons[i32](2)(Cons[i32](4)(Cons[i32](6)(Nil[i32])))));
+  printInt(score(Cons[i32](2)(Cons[i32](3)(Nil[i32]))));
+  0
+}

@@ -53,6 +53,9 @@ val showAlg: Algebra[AST, ShowResult] = [x] => node => node match {
     }.mkString("\n")
     s"impl${if (recursive) " rec" else ""}$suffix ${v.name}$targetText$contextText {\n$methodText\n}"
   case AST.TopDerive(traitName, target) => s"derive ${traitName.name}[${target.name}]"
+  case AST.TopModule(name, decls)  => s"module $name {\n${decls.mkString("\n")}\n}"
+  case AST.TopOpen(path)           => s"open ${path.mkString(".")}"
+  case AST.TopModified(modifier, decl) => s"${modifier.keyword} $decl"
   case AST.Abs(v, types, body)     => s"λ${v.name}: $types. $body"
   case AST.TyAbs(v, Kind.Star, body) => s"Λ${v.name}. $body"
   case AST.TyAbs(v, k, body)         => s"Λ(${v.name}: ${k.show}). $body"

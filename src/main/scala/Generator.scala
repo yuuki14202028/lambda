@@ -10,10 +10,9 @@ object Generator {
     def name: String
   }
   case class HeapBinding(name: String) extends Binding
-  case class StackBinding(name: String, offset: Int) extends Binding
-  case class Env(values: Seq[Binding], directFunctions: Map[String, Label]) {
+  // tail: いま生成している式が関数本体の末尾位置にあるか（末尾位置の呼び出しはフレームを畳んでジャンプにする）
+  case class Env(values: Seq[Binding], directFunctions: Map[String, Label], tail: Boolean = false) {
     def withHeap(name: String): Env = copy(values = HeapBinding(name) +: values)
-    def withStack(name: String, offset: Int): Env = copy(values = StackBinding(name, offset) +: values)
     def withDirectFunction(name: String, label: Label): Env = copy(directFunctions = directFunctions.updated(name, label))
   }
 
@@ -187,12 +186,9 @@ object Generator {
     val found = env.values.foldLeft(Option.empty[(Binding, Int)]) {
       case (some @ Some(_), _) => some
       case (None, binding @ HeapBinding(`name`)) => Some(binding -> env.values.takeWhile(_ ne binding).count(_.isInstanceOf[HeapBinding]))
-      case (None, binding @ StackBinding(`name`, _)) => Some(binding -> 0)
       case (None, _) => None
     }
     found match {
-      case Some((StackBinding(_, offset), _)) =>
-        code(ins("ldr", r(x0), mem(x29, offset)))
       case Some((HeapBinding(_), idx)) =>
         code(ins("ldr", r(x0), mem(x29, -16))) ++
           Code.concat(List.fill(idx)(code(ins("ldr", r(x0), mem(x0, 8))))) ++
@@ -438,13 +434,22 @@ object Generator {
     ins("ret")
   )
 
-  private def directFn(label: Label, param: String, body: Code): FunctionDef =
+  // クロージャを介さず label へ直接飛ぶ関数。引数は通常の関数と同じくヒープの環境フレームに置く
+  // （本体の let や λ が [x29, -16] を環境ポインタとして使うため、引数をそこへ直接置くことはできない）
+  private def directFn(label: Label, body: Code): FunctionDef =
     function(label,
       code(
         ins("stp", r(x29), r(x30), pre(sp, -16)),
         ins("mov", r(x29), r(sp)),
         ins("sub", r(sp), r(sp), imm(16)),
-        ins("str", r(x1), mem(x29, -16))
+        ins("str", r(x1), pre(sp, -16)),
+        ins("mov", r(x0), imm(16)),
+        ins("bl", LabelOperand(Label("_malloc"))),
+        ins("ldr", r(x1), post(sp, 16)),
+        ins("str", r(x1), mem(x0)),
+        ins("mov", r(x9), imm(0)),
+        ins("str", r(x9), mem(x0, 8)),
+        ins("str", r(x0), mem(x29, -16))
       ) ++ body ++ epilogue
     )
 
@@ -461,6 +466,21 @@ object Generator {
     ins("ldr", r(x16), mem(x0)),
     ins("blr", r(x16))
   )
+
+  // 末尾呼び出し: 引数はレジスタ、束縛はヒープにあるので、自分のフレームを畳んでから飛べばよい
+  private val leaveFrame: Code = code(
+    ins("mov", r(sp), r(x29)),
+    ins("ldp", r(x29), r(x30), post(sp, 16))
+  )
+
+  private val tailAppSeq: Code = code(
+    ins("mov", r(x1), r(x0)),
+    ins("ldr", r(x0), post(sp, 16)),
+    ins("ldr", r(x16), mem(x0))
+  ) ++ leaveFrame ++ code(ins("br", r(x16)))
+
+  // 末尾位置でない子の式
+  private def nonTail[A](gen: Gen[A]): Gen[A] = gen.local((env: Env) => env.copy(tail = false))
 
   private def mainFunction(body: Code): FunctionDef =
     FunctionDef(Label("_main"),
@@ -492,7 +512,7 @@ object Generator {
     case AST.UnitLit() => pure(loadImm32(0))
 
     case AST.Block(discarded, result) => for {
-      discardedCode <- sequenceExprCode(discarded.map(_.result))
+      discardedCode <- sequenceExprCode(discarded.map(d => nonTail(d.result)))
       resultCode <- result match {
         case Some(expr) => expr.result
         case None => pure(loadImm32(0))
@@ -500,30 +520,30 @@ object Generator {
     } yield Code.concat(discardedCode) ++ resultCode
 
     case AST.UnaryOp(UnaryOps.Neg, body) =>
-      body.result.map(_ ++ (primitiveName(typeOf(body.original)) match {
+      nonTail(body.result).map(_ ++ (primitiveName(typeOf(body.original)) match {
         case Some("f32") => code(ins("fmov", r(s0), r(w0)), ins("fneg", r(s0), r(s0)), ins("fmov", r(w0), r(s0)))
         case Some("f64") => code(ins("fmov", r(d0), r(x0)), ins("fneg", r(d0), r(d0)), ins("fmov", r(x0), r(d0)))
         case Some(name) if is64BitScalar(name) => code(ins("neg", r(x0), r(x0)))
         case _ => code(ins("neg", r(w0), r(w0)))
       }))
     case AST.UnaryOp(UnaryOps.Not, body) =>
-      body.result.map(_ ++ code(
+      nonTail(body.result).map(_ ++ code(
         ins("cmp", r(w0), imm(0)),
         ins("cset", r(w0), Condition("eq"))
       ))
 
     case AST.BinOp(op, l, rExpr) => for {
-      lc <- l.result
-      rc <- rExpr.result
+      lc <- nonTail(l.result)
+      rc <- nonTail(rExpr.result)
     } yield lc ++ code(ins("str", r(x0), pre(sp, -16))) ++ rc ++ code(ins("ldr", r(x1), post(sp, 16))) ++ binInstr(op, typeOf(l.original))
 
     case AST.Intrinsic(IntrinsicOps.BinOp(op, _), Seq(l, rExpr)) => for {
-      lc <- l.result
-      rc <- rExpr.result
+      lc <- nonTail(l.result)
+      rc <- nonTail(rExpr.result)
     } yield lc ++ code(ins("str", r(x0), pre(sp, -16))) ++ rc ++ code(ins("ldr", r(x1), post(sp, 16))) ++ binInstr(op, typeOf(l.original))
 
     case AST.Intrinsic(IntrinsicOps.UnaryOp(UnaryOps.Neg, _), Seq(body)) =>
-      body.result.map(_ ++ (primitiveName(typeOf(body.original)) match {
+      nonTail(body.result).map(_ ++ (primitiveName(typeOf(body.original)) match {
         case Some("f32") => code(ins("fmov", r(s0), r(w0)), ins("fneg", r(s0), r(s0)), ins("fmov", r(w0), r(s0)))
         case Some("f64") => code(ins("fmov", r(d0), r(x0)), ins("fneg", r(d0), r(d0)), ins("fmov", r(x0), r(d0)))
         case Some(name) if is64BitScalar(name) => code(ins("neg", r(x0), r(x0)))
@@ -531,7 +551,7 @@ object Generator {
       }))
 
     case AST.Intrinsic(IntrinsicOps.UnaryOp(UnaryOps.Not, _), Seq(body)) =>
-      body.result.map(_ ++ code(
+      nonTail(body.result).map(_ ++ code(
         ins("cmp", r(w0), imm(0)),
         ins("cset", r(w0), Condition("eq"))
       ))
@@ -554,7 +574,7 @@ object Generator {
 
     case AST.Abs(Variable(param), _, body) => for {
       lbl <- liftS(fresh("lambda"))
-      bc  <- body.result.local((env: Env) => env.withHeap(param))
+      bc  <- body.result.local((env: Env) => env.withHeap(param).copy(tail = true))
       _   <- liftS(addFunc(liftedFn(lbl, bc)))
     } yield closureAlloc(lbl)
 
@@ -563,12 +583,12 @@ object Generator {
     case AST.InstApp(_, _) => pure(sys.error("InstApp must be desugared by TraitEncoder before code generation"))
 
     case AST.Let(Variable(param), _, value, body) => for {
-      vc <- value.result
+      vc <- nonTail(value.result)
       bc <- body.result.local((env: Env) => env.withHeap(param))
     } yield vc ++ bindValueToHeap ++ bc ++ restoreHeap
 
     case AST.LetRec(Variable(param), _, value, body) => for {
-      vc <- value.result.local((env: Env) => env.withHeap(param))
+      vc <- nonTail(value.result.local((env: Env) => env.withHeap(param)))
       bc <- body.result.local((env: Env) => env.withHeap(param))
     } yield allocateRecCell ++ vc ++ code(
       ins("ldr", r(x9), mem(x29, -16)),
@@ -590,11 +610,14 @@ object Generator {
       ask.flatMap { env =>
         directName(f.original).flatMap(env.directFunctions.get) match {
           case Some(label) =>
-            a.result.map(ac => ac ++ code(ins("mov", r(x1), r(x0)), ins("bl", LabelOperand(label))))
+            nonTail(a.result).map { ac =>
+              if (env.tail) ac ++ code(ins("mov", r(x1), r(x0))) ++ leaveFrame ++ code(ins("b", LabelOperand(label)))
+              else ac ++ code(ins("mov", r(x1), r(x0)), ins("bl", LabelOperand(label)))
+            }
           case None => for {
-            fc <- f.result
-            ac <- a.result
-          } yield fc ++ code(ins("str", r(x0), pre(sp, -16))) ++ ac ++ appSeq
+            fc <- nonTail(f.result)
+            ac <- nonTail(a.result)
+          } yield fc ++ code(ins("str", r(x0), pre(sp, -16))) ++ ac ++ (if (env.tail) tailAppSeq else appSeq)
         }
       }
 
@@ -602,7 +625,7 @@ object Generator {
 
     case AST.If(c, t, e) => for {
       l <- liftS(label())
-      cond <- c.result
+      cond <- nonTail(c.result)
       trB <- t.result
       elB <- e.result
     } yield cond ++ code(
@@ -626,6 +649,7 @@ object Generator {
     case AST.TopTrait(_, _, _, _) => pure(sys.error("TopTrait must be desugared before code generation"))
     case AST.TopImpl(_, _, _, _, _, _, _) => pure(sys.error("TopImpl must be desugared before code generation"))
     case AST.TopDerive(_, _) => pure(sys.error("TopDerive must be desugared before code generation"))
+    case AST.TopModule(_, _) | AST.TopOpen(_) | AST.TopModified(_, _) => pure(sys.error("modules must be desugared before code generation"))
 
     case AST.Primitive(_) => pure(Code.empty)
     case AST.TypeVar(_) => pure(Code.empty)
@@ -690,8 +714,8 @@ object Generator {
         case Some((arg, body)) => for {
           label <- fresh(s"direct_$param")
           valueEnv = env.withDirectFunction(param, label)
-          bodyCode <- body.para(genAlg).run(valueEnv.withStack(arg, -16))
-          _ <- addFunc(directFn(label, arg, bodyCode))
+          bodyCode <- body.para(genAlg).run(Env(Seq(HeapBinding(arg)), valueEnv.directFunctions, tail = true))
+          _ <- addFunc(directFn(label, bodyCode))
         } yield {
           (Code.empty, valueEnv)
         }
@@ -712,18 +736,21 @@ object Generator {
     case AST.TopTrait(_, _, _, _) => sys.error("TopTrait must be desugared before code generation")
     case AST.TopImpl(_, _, _, _, _, _, _) => sys.error("TopImpl must be desugared before code generation")
     case AST.TopDerive(_, _) => sys.error("TopDerive must be desugared before code generation")
+    case AST.TopModule(_, _) | AST.TopOpen(_) | AST.TopModified(_, _) => sys.error("modules must be desugared before code generation")
   }
 
   private def topLevelName(decl: TypeRec[Decl]): Option[Variable] = decl.project match {
     case AST.TopLet(variable, _, _) => Some(variable)
     case AST.TopLetRec(variable, _, _) => Some(variable)
-    case AST.TopImport(_) | AST.TopType(_, _, _) | AST.TopData(_, _, _, _) | AST.TopTrait(_, _, _, _) | AST.TopImpl(_, _, _, _, _, _, _) | AST.TopDerive(_, _) => None
+    case AST.TopImport(_) | AST.TopType(_, _, _) | AST.TopData(_, _, _, _) | AST.TopTrait(_, _, _, _) | AST.TopImpl(_, _, _, _, _, _, _) | AST.TopDerive(_, _) |
+        AST.TopModule(_, _) | AST.TopOpen(_) | AST.TopModified(_, _) => None
   }
 
   private def topLevelFreeVars(decl: TypeRec[Decl]): Set[Variable] = decl.project match {
     case AST.TopLet(_, _, value) => freeVars(value)
     case AST.TopLetRec(variable, _, value) => freeVars(value) - variable
-    case AST.TopImport(_) | AST.TopType(_, _, _) | AST.TopData(_, _, _, _) | AST.TopTrait(_, _, _, _) | AST.TopImpl(_, _, _, _, _, _, _) | AST.TopDerive(_, _) => Set.empty
+    case AST.TopImport(_) | AST.TopType(_, _, _) | AST.TopData(_, _, _, _) | AST.TopTrait(_, _, _, _) | AST.TopImpl(_, _, _, _, _, _, _) | AST.TopDerive(_, _) |
+        AST.TopModule(_, _) | AST.TopOpen(_) | AST.TopModified(_, _) => Set.empty
   }
 
   private def genProgram(decls: Seq[TypeRec[Decl]]): Gen[AssemblyProgram] = ReaderT { initialEnv =>

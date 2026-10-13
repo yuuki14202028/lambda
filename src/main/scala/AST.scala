@@ -19,6 +19,9 @@ enum AST[R[_], I] {
   case TopTrait(variable: TypeVariable, params: Seq[(TypeVariable, Kind)], supers: Seq[Constraint[R]], methods: Seq[MethodSig[R]]) extends AST[R, Decl]
   case TopImpl(variable: TypeVariable, params: Seq[(TypeVariable, Kind)], targets: Seq[R[Type]], context: Seq[Constraint[R]], methods: Seq[MethodImpl[R]], superEvidence: Seq[Evidence[R]], recursive: Boolean) extends AST[R, Decl]
   case TopDerive(traitName: TypeVariable, target: TypeVariable) extends AST[R, Decl]
+  case TopModule(name: String, decls: Seq[R[Decl]]) extends AST[R, Decl]
+  case TopOpen(path: Seq[String]) extends AST[R, Decl]
+  case TopModified(modifier: Modifier, decl: R[Decl]) extends AST[R, Decl]
   case Abs(variable: Variable, types: R[Type], body: R[Expr]) extends AST[R, Expr]
   case TyAbs(variable: TypeVariable, kind: Kind, body: R[Expr]) extends AST[R, Expr]
   case InstAbs(constraint: Constraint[R], body: R[Expr]) extends AST[R, Expr]
@@ -52,6 +55,19 @@ enum AST[R[_], I] {
   case InstArrow(constraint: Constraint[R], to: R[Type]) extends AST[R, Type]
   case TypeApp(function: R[Type], argument: R[Type]) extends AST[R, Type]
   case TypeAbs(variable: TypeVariable, kind: Kind, body: R[Type]) extends AST[R, Type]
+}
+
+/** module の中の宣言に付ける修飾子。
+ *   private: 宣言を module の外から見えなくする
+ *   opaque:  type は名前だけを公開し（外では中身のわからない型になる）、data は構成子を隠す
+ */
+enum Modifier {
+  case Private, Opaque
+
+  def keyword: String = this match {
+    case Private => "private"
+    case Opaque => "opaque"
+  }
 }
 
 case class DataConstructor[R[_]](name: Variable, fields: Seq[R[Type]])
@@ -187,6 +203,9 @@ def topTrait(v: TypeVariable, p: Seq[(TypeVariable, Kind)], s: Seq[Constraint[Re
 def topImpl(variable: TypeVariable, params: Seq[(TypeVariable, Kind)], targets: Seq[Rec[Type]], context: Seq[Constraint[Rec]], methods: Seq[MethodImpl[Rec]], recursive: Boolean = false): Rec[Decl] =
   HFix(AST.TopImpl(variable, params, targets, context, methods, Seq.empty, recursive))
 def topDerive(traitName: TypeVariable, target: TypeVariable): Rec[Decl] = HFix(AST.TopDerive(traitName, target))
+def topModule(name: String, decls: Seq[Rec[Decl]]): Rec[Decl] = HFix(AST.TopModule(name, decls))
+def topOpen(path: Seq[String]): Rec[Decl] = HFix(AST.TopOpen(path))
+def topModified(modifier: Modifier, decl: Rec[Decl]): Rec[Decl] = HFix(AST.TopModified(modifier, decl))
 def abs(variable: Variable, types: Rec[Type], body: Rec[Expr]): Rec[Expr] = HFix(AST.Abs(variable, types, body))
 def tyAbs(variable: TypeVariable, kind: Kind, body: Rec[Expr]): Rec[Expr] = HFix(AST.TyAbs(variable, kind, body))
 def instAbs(constraint: Constraint[Rec], body: Rec[Expr]): Rec[Expr] = HFix(AST.InstAbs(constraint, body))
@@ -260,6 +279,12 @@ def topImplT(variable: TypeVariable, params: Seq[(TypeVariable, Kind)], targets:
   HCofree(DeclAnn, AST.TopImpl(variable, params, targets, context, methods, superEvidence, recursive))
 def topDeriveT(traitName: TypeVariable, target: TypeVariable): TypeRec[Decl] =
   HCofree(DeclAnn, AST.TopDerive(traitName, target))
+def topModuleT(name: String, decls: Seq[TypeRec[Decl]]): TypeRec[Decl] =
+  HCofree(DeclAnn, AST.TopModule(name, decls))
+def topOpenT(path: Seq[String]): TypeRec[Decl] =
+  HCofree(DeclAnn, AST.TopOpen(path))
+def topModifiedT(modifier: Modifier, decl: TypeRec[Decl]): TypeRec[Decl] =
+  HCofree(DeclAnn, AST.TopModified(modifier, decl))
 def absT(variable: Variable, t: TypeRec[Type], types: TypeRec[Type], body: TypeRec[Expr]): TypeRec[Expr] =
   HCofree(ExprAnn(t), AST.Abs(variable, types, body))
 def tyAbsT(variable: TypeVariable, t: TypeRec[Type], kind: Kind, body: TypeRec[Expr]): TypeRec[Expr] =

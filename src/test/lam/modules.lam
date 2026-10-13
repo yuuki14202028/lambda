@@ -1,0 +1,84 @@
+import "std/operators"
+import "std/functor"
+
+let printInt: i32 → i32 = foreign[i32 → i32] print_int
+
+module Counter {
+  opaque type T = i32
+  private let step: i32 = 1
+  let zero: T = 0
+  let inc(c: T): T = c + step
+  let get(c: T): i32 = c
+}
+
+module Shape {
+  data Shape = { Circle(i32), Rect(i32)(i32) }
+
+  let area(s: Shape): i32 = match s {
+    Circle(r) => 3 * r * r
+    Rect(w)(h) => w * h
+  }
+
+  module Unit {
+    let square: Shape = Rect(1)(1)
+  }
+}
+
+module Stack {
+  opaque data rec Stack[a] = { Empty, Push(a)(Stack[a]) }
+
+  let empty[a]: Stack[a] = Empty[a]
+  let push[a](x: a)(s: Stack[a]): Stack[a] = Push[a](x)(s)
+  let rec size[a](s: Stack[a]): i32 = match s {
+    Empty => 0
+    Push(x)(rest) => 1 + size[a](rest)
+  }
+
+  derive Functor[Stack]
+
+  let rec sum(s: Stack[i32]): i32 = match s {
+    Empty => 0
+    Push(x)(rest) => x + sum(rest)
+  }
+}
+
+module Describe {
+  trait Weight[a] {
+    def weight(x: a): i32
+  }
+
+  impl Weight[i32] {
+    def weight = λx: i32. x
+  }
+
+  let twice[a](x: a): i32 with Weight[a] = weight[a](x) + weight[a](x)
+}
+
+impl Describe.Weight[Counter.T] {
+  def weight = λc: Counter.T. 100 + Counter.get(c)
+}
+
+impl Describe.Weight[Shape.Shape] {
+  def weight = λs: Shape.Shape. match s {
+    Shape.Circle(r) => r
+    Shape.Rect(w)(h) => w + h
+  }
+}
+
+let two: Counter.T = Counter.inc(Counter.inc(Counter.zero))
+
+open Stack
+
+let numbers: Stack.Stack[i32] = push[i32](3)(push[i32](4)(empty[i32]))
+
+let main(): i32 = {
+  printInt(Counter.get(two));
+  printInt(Shape.area(Shape.Rect(2)(5)));
+  printInt(Shape.area(Shape.Unit.square));
+  printInt(size[i32](numbers));
+  printInt(Stack.sum(map[Stack][i32][i32](λn: i32. n * 10)(numbers)));
+  printInt(Describe.weight[i32](7));
+  printInt(Describe.twice[Counter.T](two));
+  printInt(Describe.weight[Shape.Shape](Shape.Circle(9)));
+  0
+}

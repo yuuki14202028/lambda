@@ -10,6 +10,7 @@ Scala 3 で実装された、小さな型付きラムダ計算系言語（System
 
 ```bash
 sbt compile                # コンパイル
+sbt test                   # 全テスト（munit）。EndToEndSuite は .lam をコンパイル→リンク→実行して出力を確かめる（ARM64 macOS のみ）
 ./run.sh                   # main.lam をコンパイル→clang でリンク→実行（終了コード表示）
 sbt "run <src.lam> <out.s>"   # 任意のソースをアセンブリへコンパイル（デフォルト: main.lam → build/out.s）
 clang -arch arm64 build/out.s runtime/ffi.c -o build/out   # 手動リンク
@@ -23,6 +24,7 @@ clang -arch arm64 build/out.s runtime/ffi.c -o build/out   # 手動リンク
 
 ```
 ParserAST (cats-parse) → ImportResolver → TAnalyser (型検査)
+  → ModuleDesugar (module を平らな宣言列へ戻し、opaque type を表現へ読み替える)
   → Deriver (derive 宣言を型付き TopImpl へ合成) → ContextDesugar (context ブロックを bind/ret へ脱糖)
   → TraitEncoder (辞書渡しへ脱糖) → ChurchEncoder (data/match/fold を Church encoding 化)
   → Generator (ARM64 アセンブリ生成)
@@ -41,7 +43,17 @@ TAnalyser が検査して InstanceDef を Env に登録し、Deriver が手書�
 
 解決は型検査の一部で、その時点までに宣言されたインスタンスとスコープ中の制約だけを見る（インスタンスも「宣言してから使う」。impl 自身のメソッド本体からそのインスタンスはまだ見えない）。
 `impl rec` と書いた impl だけ、メソッド本体から自身のインスタンスが見え、辞書は `let rec` に落ちる。再帰は `let rec` / `data rec` / `impl rec` の印がある所に限り、`rec` を使った所の停止性は保証しない（`data rec` の正の出現検査も行わない）。
+自身を参照する `let rec` の値は関数（λ）に限る。文脈のない `impl rec` で自身のインスタンスを使うメソッドも同じ（初期化前の値を読まないため）。
 trait `C` は辞書のデータ型でもあり（`Env.dataTypes` に登録）、TraitEncoder は `InstArrow` / `InstAbs` / `InstApp` を通常の `→` / `λ` / 適用に置き換え、trait / impl を辞書のデータ型と値に落とすだけで、解決もユーザーエラーも持たない。
+
+### module（名前空間・private・opaque）
+
+`module M { … }` の中の宣言 `x` は、完全な名前 `M.x` で定義される（`Env.values` などの定義表は完全な名前で引く）。ソースに書かれた名前は TAnalyser が `Env.resolveValue` / `resolveType` で完全な名前に直し、型検査後の AST は完全な名前だけを持つ:
+
+- `Env.scope` が「修飾なしで書ける module メンバー（短い名前 → 完全な名前）と、見えている module」、`Env.members` が検査中の module の公開メンバー、`Env.modules` が宣言済みの module の公開メンバー。局所的な束縛（λ・let・型変数・式の中の `type` / `data`）は同名のメンバーを隠す
+- `private` / `opaque` は宣言を包むノード `TopModified`。`private` は `members` に載せないだけ、`opaque data` は構成子を `members` から外すだけ
+- `opaque type` は module の中では通常の別名（展開される）。module を閉じるとき（`sealDecls`）に `Env.abstractTypes` へ移し、中の宣言が Env に足した定義（値の型・別名・データ型・trait）を、型付きの宣言の注釈から別名を展開しない形で読み直す。そのため宣言の検査は「型付きの宣言」と「Env に足す定義」（`aliasOf` / `dataOf` / `traitOf`）に分かれている。インスタンスは読み直さず、module の中で登録した形のまま全体で有効
+- ModuleDesugar は module / private / opaque / open を外して宣言を平らに並べ、抽象型を表現へ読み替える（注釈・型ノード・Env）。impl のターゲットだけはインスタンスを引く鍵なので抽象型の名前のまま残す。以降のフェーズに module と抽象型は残らない
 
 エラー処理は 3 層に分かれる（Effects.scala / CompileError.scala）:
 
@@ -69,6 +81,8 @@ trait `C` は辞書のデータ型でもあり（`Env.dataTypes` に登録）、
 
 - `stdlib/*.lam` — `import std/...` で解決される標準ライブラリ。`StandardLibrary.scala` が演算子名（`add` 等）を組み込み演算へ対応付ける
 - `runtime/ffi.c` — `foreign` で参照する C 関数の実装。関数値はコードポインタ + 環境ポインタのクロージャ
+- Generator: 束縛はすべてヒープの環境フレームに置き、`[x29, -16]` が現在のフレームを指す。関数本体の末尾位置の呼び出し（`Env.tail`）はフレームを畳んでジャンプにするので、末尾再帰はスタックを消費しない。メモリは `malloc` するだけで解放しない
+- `src/test/lam/*.lam` — EndToEndSuite が実行するプログラム（期待する出力はスイート側に書く）。言語にコメント構文はない
 - パッケージは `com.yuuki14202028`（sbt の `idePackagePrefix`）。ソースは `src/main/scala/` 直下に置き、パッケージ宣言のみ行う
 
 ## 規約

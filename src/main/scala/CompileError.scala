@@ -22,13 +22,14 @@ enum DeclRef {
 }
 
 enum NameKind {
-  case TypeVariableName, TypeAliasName, DataTypeName, TraitName
+  case TypeVariableName, TypeAliasName, DataTypeName, TraitName, ModuleName
 
   def shown: String = this match {
     case TypeVariableName => "Type variable"
     case TypeAliasName => "Type alias"
     case DataTypeName => "Data type"
     case TraitName => "Trait"
+    case ModuleName => "Module"
   }
 }
 
@@ -90,6 +91,8 @@ enum CompileError {
   case UndefinedTypeVariable(name: TypeVariable)
   case UndefinedPrimitive(name: String)
   case UndefinedTrait(name: TypeVariable, site: Option[DeclRef])
+  case UndefinedModule(path: Seq[String])
+  case ModifierOutsideModule(modifier: Modifier)
   case AlreadyDefined(kind: NameKind, name: String)
   case ParamAlreadyDefined(owner: DeclRef)
   case DuplicateParams(owner: DeclRef)
@@ -108,6 +111,7 @@ enum CompileError {
   case ForeignNotFunction(t: TypeRec[Type])
   case NumericLiteralUnknown(typeName: String)
   case RecursiveDataNotDeclared(name: TypeVariable)
+  case RecursiveValueNotFunction(name: Variable)
 
   // ---- カインド ----
   case KindNotStar(t: TypeRec[Type], kind: Kind)
@@ -147,6 +151,7 @@ enum CompileError {
   case ExtraMethods(impl: DeclRef, methods: Seq[Variable])
   case MethodBodyTypeMismatch(impl: DeclRef, method: Variable, expected: TypeRec[Type], actual: TypeRec[Type])
   case MethodSigTypeMismatch(impl: DeclRef, method: Variable, declared: TypeRec[Type], expected: TypeRec[Type])
+  case RecursiveInstanceMethodNotFunction(impl: DeclRef, method: Variable)
 
   // ---- derive ----
   case DeriveUnsupportedTrait(traitName: TypeVariable)
@@ -197,6 +202,8 @@ enum CompileError {
     case UndefinedPrimitive(name) => s"Primitive type $name is not defined"
     case UndefinedTrait(name, site) =>
       site.fold(s"Trait ${name.name} is not defined")(s => s"${s.shown}: trait ${name.name} is not defined")
+    case UndefinedModule(path) => s"Module ${path.mkString(".")} is not defined"
+    case ModifierOutsideModule(modifier) => s"${modifier.keyword} can only be used inside a module"
     case AlreadyDefined(kind, name) => s"${kind.shown} $name is already defined"
     case ParamAlreadyDefined(owner) => s"${owner.shown} has a ${owner.paramNoun} that is already defined"
     case DuplicateParams(owner) => s"${owner.shown} has duplicate ${owner.paramNoun}s"
@@ -215,6 +222,8 @@ enum CompileError {
     case ForeignNotFunction(t) => s"Foreign function must have at least one argument: ${t.show}"
     case NumericLiteralUnknown(typeName) => s"Numeric literal type $typeName is not defined"
     case RecursiveDataNotDeclared(name) => s"Recursive data type ${name.name} must be declared with data rec"
+    case RecursiveValueNotFunction(name) =>
+      s"let rec ${name.name}: a definition that refers to itself must be a function (otherwise it is read before it is initialized)"
 
     case KindNotStar(t, kind) => s"Type ${t.show} has kind ${kind.show}, expected *"
     case KindMismatchInTypeApp(expected, actual, argument) =>
@@ -271,6 +280,8 @@ enum CompileError {
       s"Method type mismatch in ${impl.shown}: ${method.name} must have type ${expected.show}, actual ${actual.show}"
     case MethodSigTypeMismatch(impl, method, declared, expected) =>
       s"Method type mismatch in ${impl.shown}: ${method.name} is declared as ${declared.show}, expected ${expected.show}"
+    case RecursiveInstanceMethodNotFunction(impl, method) =>
+      s"${impl.shown}: method ${method.name} uses its own instance, so it must be a function (otherwise the instance is read before it is initialized)"
 
     case DeriveUnsupportedTrait(traitName) =>
       s"derive: trait ${traitName.name} is not derivable (supported: Functor, Foldable with canonical signatures)"

@@ -71,6 +71,12 @@ given HTraverse[AST] with {
       (targets.traverse(t => f(t)), contextG, methodsG, superEvidenceG).mapN(AST.TopImpl(v, params, _, _, _, _, recursive))
     case AST.TopDerive(traitName, target) =>
       Applicative[G].pure(AST.TopDerive(traitName, target))
+    case AST.TopModule(name, decls) =>
+      decls.traverse(d => f(d)).map(AST.TopModule(name, _))
+    case AST.TopOpen(path) =>
+      Applicative[G].pure(AST.TopOpen(path))
+    case AST.TopModified(modifier, decl) =>
+      f(decl).map(AST.TopModified(modifier, _))
     case AST.Abs(v, types, body) =>
       (f(types), f(body)).mapN(AST.Abs(v, _, _))
     case AST.TyAbs(v, k, body) =>

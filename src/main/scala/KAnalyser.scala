@@ -29,6 +29,7 @@ object KAnalyser {
         case Some(k) => Right(k)
         case None => env.dataTypes.get(v).map(d => dataKind(d.params))
           .orElse(env.typeAliases.get(v).map(a => dataKind(a.params)))
+          .orElse(env.abstractTypes.get(v).map(a => dataKind(a.params)))
           .toRight(CompileError.UndefinedTypeVariable(v))
       })
     } yield kind

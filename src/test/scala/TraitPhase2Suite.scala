@@ -266,6 +266,48 @@ class TraitPhase2Suite extends munit.FunSuite {
     assertRight(church(src))
   }
 
+  test("impl の型パラメータが trait のパラメータと同名でも、宣言シグネチャは impl 側を指す") {
+    val src =
+      """data Maybe[a] = { Nothing, Just(a) }
+        |trait Show[a] {
+        |  def show(x: a): i32
+        |}
+        |impl[a] Show[Maybe[a]] {
+        |  def show(m: Maybe[a]): i32 = 0
+        |}
+        |let main(): i32 = show[Maybe[bool]](Nothing[bool])
+        |""".stripMargin
+    assertRight(church(src))
+  }
+
+  test("宣言シグネチャの返り値型では trait のパラメータ名をターゲットとして使える") {
+    val src =
+      """data Maybe[a] = { Nothing, Just(a) }
+        |trait Empty[s] {
+        |  def empty(u: unit): s
+        |}
+        |impl[a] Empty[Maybe[a]] {
+        |  def empty(u: unit): s = Nothing[a]
+        |}
+        |let main(): i32 = 0
+        |""".stripMargin
+    assertRight(church(src))
+  }
+
+  test("宣言シグネチャが trait と合わなければ拒否") {
+    val src =
+      """data Maybe[a] = { Nothing, Just(a) }
+        |trait Show[a] {
+        |  def show(x: a): i32
+        |}
+        |impl[a] Show[Maybe[a]] {
+        |  def show(m: Maybe[a]): bool = 0
+        |}
+        |let main(): i32 = 0
+        |""".stripMargin
+    assertLeftContains(validate(src), "Method type mismatch")
+  }
+
   test("with 制約は in 式の let でも使える") {
     val src = showMaybe +
       """let main(): i32 =

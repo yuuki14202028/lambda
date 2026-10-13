@@ -63,8 +63,10 @@ object ParserAST {
   private val identStart: Parser[Char] = alpha | Parser.char('_').as('_')
   private val identChar: Parser[Char] = alpha | digit | '_'.as('_')
   private val identifier: Parser[String] = (identStart ~ identChar.rep0).map(_ :: _).map(_.mkString)
-  private val typeIdentifier: Parser[String] =
+  // module のメンバーは M.x と修飾して書ける（型・trait・値・コンストラクタに共通）
+  private val qualifiedIdentifier: Parser[String] =
     (identifier ~ ('.' *> identifier).backtrack.rep0).map(_ :: _).map(_.mkString("."))
+  private val typeIdentifier: Parser[String] = qualifiedIdentifier
   private val importPath: Parser[String] = {
     '"' *> Parser.charWhere(ch => ch != '"' && ch != '\n' && ch != '\r').rep0.map(_.mkString) <* '"'
   }
@@ -125,7 +127,7 @@ object ParserAST {
   }
 
   private lazy val constraintP: Parser[Constraint[IndexedRec]] =
-    (identifier.map(TypeVariable.apply) ~ typeP.brackets.rep0).map(Constraint.apply)
+    (qualifiedIdentifier.map(TypeVariable.apply) ~ typeP.brackets.rep0).map(Constraint.apply)
 
   private lazy val withClauseP: Parser0[Seq[Constraint[IndexedRec]]] =
     (spaced("with") *> constraintP.repSep(spaced(',').backtrack)).backtrack.?.map(_.fold(List.empty)(_.toList))
@@ -224,7 +226,7 @@ object ParserAST {
     // impl rec は、メソッド本体から自身のインスタンスを使える（let rec / data rec と同じ明示の印）
     val recursive = (gap *> "rec" <* Parser.not(identChar)).backtrack.?.map(_.isDefined)
     val implParams = (sp.with1 *> typeParamP.rep.map(_.toList)).backtrack | gap.as(List.empty[(TypeVariable, Kind)])
-    val head = ("impl" *> recursive) ~ implParams ~ (sp.with1 *> identifier.map(TypeVariable.apply))
+    val head = ("impl" *> recursive) ~ implParams ~ (sp.with1 *> qualifiedIdentifier.map(TypeVariable.apply))
     val targets = sp *> typeP.brackets.rep.map(_.toList)
     val typeParams = sp *> typeParamP.rep0
     val params = sp *> functionParamsP
@@ -242,12 +244,37 @@ object ParserAST {
   }
 
   private lazy val topDeriveP: Parser[IndexedRec[Decl]] =
-    ("derive" -+> identifier.map(TypeVariable.apply) ~ identifier.map(TypeVariable.apply).brackets).map {
+    ("derive" -+> qualifiedIdentifier.map(TypeVariable.apply) ~ qualifiedIdentifier.map(TypeVariable.apply).brackets).map {
       case (traitName, target) => AST.TopDerive[IndexedRec, Decl](traitName, target)
     }.indexed
 
+  // 宣言の先頭のキーワード。ここを過ぎたら後戻りしないので、中の構文エラーはその位置で報告される
+  private def keyword(word: String): Parser[Unit] = (Parser.string(word) *> gap).backtrack
+
+  private lazy val declsP: Parser0[List[IndexedRec[Decl]]] = {
+    val sep = (sp1.with1.soft *> Parser.charIn("\n;").rep.void) <* sp
+    topDeclP.repSep0(sep)
+  }
+
+  private lazy val moduleP: Parser[IndexedRec[Decl]] =
+    ((keyword("module") *> identifier) ~ (sp.with1 *> ('{' -*> declsP <*- '}'))).map {
+      case (name, decls) => AST.TopModule[IndexedRec, Decl](name, decls)
+    }.indexed
+
+  private lazy val openP: Parser[IndexedRec[Decl]] =
+    (keyword("open") *> identifier.repSep('.')).map(path => AST.TopOpen[IndexedRec, Decl](path.toList)).indexed
+
+  private lazy val opaqueP: Parser[IndexedRec[Decl]] =
+    (keyword("opaque") *> (topDataP.backtrack | topTypeP)).map(decl => AST.TopModified[IndexedRec, Decl](Modifier.Opaque, decl)).indexed
+
+  private lazy val privateP: Parser[IndexedRec[Decl]] = {
+    val decl = Parser.defer(moduleP | opaqueP | topDataP.backtrack | topTypeP.backtrack | traitP.backtrack | topLetP)
+    (keyword("private") *> decl).map(decl => AST.TopModified[IndexedRec, Decl](Modifier.Private, decl)).indexed
+  }
+
   private lazy val topDeclP: Parser[IndexedRec[Decl]] =
-    Parser.defer(topImportP.backtrack | topDataP.backtrack | topTypeP.backtrack | traitP.backtrack | implP.backtrack | topDeriveP.backtrack | topLetP)
+    Parser.defer(moduleP | openP | privateP | opaqueP |
+      topImportP.backtrack | topDataP.backtrack | topTypeP.backtrack | traitP.backtrack | implP.backtrack | topDeriveP.backtrack | topLetP)
 
   lazy val typeP: Parser[IndexedRec[Type]] = Parser.defer(forAllP | typeLambdaP | arrowTypeP)
 
@@ -289,7 +316,7 @@ object ParserAST {
   }
 
   private lazy val matchCaseP: Parser[MatchCase[IndexedRec]] = {
-    val name = identifier.map(Variable.apply)
+    val name = qualifiedIdentifier.map(Variable.apply)
     val binder = identifier.map(Variable.apply).parens
     val body = spaced("=>") *> Parser.defer(expr)
     (name ~ binder.rep0 ~ body).map { case ((name, binders), body) =>
@@ -340,7 +367,7 @@ object ParserAST {
     ('&' <* Parser.not(Parser.char('&'))).backtrack.as(BinOps.And)
 
   private val caseStartLookahead: Parser[Unit] =
-    (identifier *> identifier.parens.void.rep0 *> spaced("=>")).void
+    (qualifiedIdentifier *> identifier.parens.void.rep0 *> spaced("=>")).void
 
   private val bitOrOp: Parser[BinOps] =
     (Parser.not(caseStartLookahead.backtrack).with1 *> '|' <* Parser.not(Parser.char('|'))).backtrack.as(BinOps.Or)
@@ -351,7 +378,7 @@ object ParserAST {
     "in", "then", "else", "with", "as", "context",
     "let", "rec", "if", "match", "fold", "data", "type",
     "import", "trait", "impl", "def", "derive", "true", "false",
-    "foreign", "intrinsic"
+    "foreign", "intrinsic", "module", "open", "private", "opaque"
   )
 
   private val infixIdentOp: Parser[(IndexedRec[Expr], IndexedRec[Expr]) => IndexedRec[Expr]] =
@@ -412,7 +439,7 @@ object ParserAST {
     }.indexed
   }
 
-  val varP: Parser[IndexedRec[Expr]] = identifier.map(n => AST.Var[IndexedRec, Expr](Variable(n))).indexed
+  val varP: Parser[IndexedRec[Expr]] = qualifiedIdentifier.map(n => AST.Var[IndexedRec, Expr](Variable(n))).indexed
 
   private val intSuffixP: Parser[String] =
     Parser.string("isize").as("isize") |
@@ -480,7 +507,6 @@ object ParserAST {
   val unitP: Parser[IndexedRec[Expr]] = unitParens.as(AST.UnitLit[IndexedRec, Expr]()).indexed
 
   val programParser: Parser0[IndexedRec[AST.Program.type]] = {
-    val sep = sp1.with1 *> Parser.charIn("\n;").rep.void <* sp
-    sp *> topDeclP.repSep(sep).map(decls => programI(decls.toList)) <* sp
+    sp *> declsP.map(programI) <* sp
   }
 }

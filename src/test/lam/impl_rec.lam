@@ -1,0 +1,36 @@
+import "std/operators"
+import "std/list"
+import "std/list_instances"
+
+let printInt: i32 → i32 = foreign[i32 → i32] print_int
+
+trait Size[a] {
+  def size(x: a): i32
+}
+
+impl Size[i32] {
+  def size = λx: i32. 1
+}
+
+impl rec[a] Size[List[a]] with Size[a] {
+  def size = λl: List[a]. match l {
+    Nil => 0
+    Cons(x)(rest) => size[a](x) + size[List[a]](rest)
+  }
+}
+
+data rec Rose[a] = { Node(a)(List[Rose[a]]) }
+
+impl rec[a] Size[Rose[a]] with Size[a] {
+  def size = λr: Rose[a]. match r {
+    Node(x)(children) => size[a](x) + size[List[Rose[a]]](children)
+  }
+}
+
+let leaf(x: i32): Rose[i32] = Node[i32](x)(Nil[Rose[i32]])
+
+let main(): i32 = {
+  printInt(size[List[i32]](Cons[i32](1)(Cons[i32](2)(Cons[i32](3)(Nil[i32])))));
+  printInt(size[Rose[i32]](Node[i32](0)(Cons[Rose[i32]](leaf(1))(Cons[Rose[i32]](Node[i32](2)(Cons[Rose[i32]](leaf(3))(Nil[Rose[i32]])))(Nil[Rose[i32]])))));
+  0
+}
