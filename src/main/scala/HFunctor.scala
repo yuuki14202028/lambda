@@ -42,6 +42,8 @@ private def traverseEvidence[G[_]: Applicative, R[_], S[_]](e: Evidence[R])(f: [
     (traverseEvidence(of)(f), typeArgs.traverse(a => f(a)), premises.traverse(traverseEvidence(_)(f))).mapN(Evidence.Apply(_, _, _))
   case Evidence.Abs(constraint, body) =>
     (traverseConstraint(constraint)(f), traverseEvidence(body)(f)).mapN(Evidence.Abs(_, _))
+  case Evidence.Explicit(dictionary) =>
+    f(dictionary).map(Evidence.Explicit(_))
 }
 
 private def traversePattern[G[_]: Applicative, R[_], S[_]](p: Pattern[R])(f: [x] => R[x] => G[S[x]]): G[Pattern[S]] = p match {
@@ -137,6 +139,8 @@ given HTraverse[AST] with {
       (f(func), f(arg)).mapN(AST.TyApp(_, _))
     case AST.InstApp(func, evidence) =>
       (f(func), traverseEvidence(evidence)(f)).mapN(AST.InstApp(_, _))
+    case AST.Summon(constraint, evidence) =>
+      (traverseConstraint(constraint)(f), evidence.traverse(traverseEvidence(_)(f))).mapN(AST.Summon(_, _))
     case AST.Foreign(v, types) =>
       f(types).map(AST.Foreign(v, _))
     case AST.Var(v) => Applicative[G].pure(AST.Var(v))

@@ -1,0 +1,50 @@
+import "std/operators"
+
+let printInt: i32 → i32 = foreign[i32 → i32] print_int
+
+trait Order[a] {
+  def before(x: a)(y: a): bool
+}
+
+impl Order[i32] {
+  def before = λx: i32. λy: i32. x < y
+}
+
+let descending: Order[i32] = MkOrder[i32](λx: i32. λy: i32. y < x)
+
+let first[a](x: a)(y: a): a with Order[a] = if before[a](x)(y) then x else y
+
+rec data List[a] = { Nil, Cons(a)(List[a]) }
+
+rec let best[a](xs: List[a])(fallback: a): a with Order[a] = match xs {
+  Nil => fallback
+  Cons(x)(rest) => best[a](rest)(first[a](x)(fallback))
+}
+
+let ascending: Order[i32] = summon[Order[i32]]
+
+let reversed[a](order: Order[a]): Order[a] = MkOrder[a](λx: a. λy: a. before[a](with order)(y)(x))
+
+trait Named[a] with Order[a] {
+  def weight(x: a): i32
+}
+
+impl Named[i32] {
+  def weight = λx: i32. x
+}
+
+let heavier[a](x: a)(y: a): i32 with Named[a] = weight[a](first[a](y)(x))
+
+let numbers: List[i32] = Cons[i32](3)(Cons[i32](9)(Cons[i32](5)(Nil[i32])))
+
+let main(): i32 = {
+  printInt(first[i32](1)(2));
+  printInt(first[i32](with descending)(1)(2));
+  printInt(first[i32](with ascending)(1)(2));
+  printInt(first[i32](with reversed[i32](ascending))(1)(2));
+  printInt(best[i32](numbers)(4));
+  printInt(best[i32](with descending)(numbers)(4));
+  printInt(if before[i32](with descending)(1)(2) then 1 else 0);
+  printInt(heavier[i32](2)(7));
+  0
+}

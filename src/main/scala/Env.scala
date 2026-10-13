@@ -101,7 +101,8 @@ case class Env(
     scope: Names = Names.empty,                             // 修飾なしで書ける module メンバーと、見えている module
     members: Names = Names.empty,                           // 検査中の module が公開する名前
     modules: Map[String, Names] = Map.empty,                // 宣言済みの module（完全な名前）と、その公開メンバー
-    abstractTypes: Map[TypeVariable, TypeAlias] = Map.empty // 封印された opaque type と、その表現（ModuleDesugar が読み替える）
+    abstractTypes: Map[TypeVariable, TypeAlias] = Map.empty, // 封印された opaque type と、その表現（ModuleDesugar が読み替える）
+    keepConstraints: Boolean = false                         // 式の型に残った制約を解決しない（辞書を明示的に渡す適用 f(with d) の f の位置）
 ) {
   // 局所的な束縛は、同名の module メンバーを隠す
   def withValue(variable: Variable, t: TypeRec[Type]): Env =

@@ -31,6 +31,7 @@ private def showEvidence(e: Evidence[ShowResult]): String = e match {
   case Evidence.Apply(of, typeArgs, premises) =>
     s"(${showEvidence(of)})${typeArgs.map(a => s"[$a]").mkString}${premises.map(p => s"(${showEvidence(p)})").mkString}"
   case Evidence.Abs(constraint, body) => s"λ[${showConstraint(constraint)}]. ${showEvidence(body)}"
+  case Evidence.Explicit(dictionary) => s"with $dictionary"
 }
 
 private def showRecBindings(bindings: Seq[RecBinding[ShowResult]]): String = {
@@ -118,6 +119,7 @@ val showAlg: Algebra[AST, ShowResult] = [x] => node => node match {
   case AST.App(func, arg)          => s"$func($arg)"
   case AST.TyApp(func, arg)        => s"$func[$arg]"
   case AST.InstApp(func, evidence) => s"$func⟨${showEvidence(evidence)}⟩"
+  case AST.Summon(constraint, _)   => s"summon[${showConstraint(constraint)}]"
   case AST.Foreign(v, types)       => s"foreign[$types] ${v.name}"
   case AST.Var(v)                  => s"${v.name}"
   case AST.Num(v, t)               => if (t == "i32" || t == "f64" && v.exists(ch => ch == '.' || ch == 'e' || ch == 'E')) v else s"$v$t"

@@ -38,6 +38,8 @@ enum AST[R[_], I] {
   case App(function: R[Expr], argument: R[Expr]) extends AST[R, Expr]
   case TyApp(function: R[Expr], argument: R[Type]) extends AST[R, Expr]
   case InstApp(function: R[Expr], evidence: Evidence[R]) extends AST[R, Expr]
+  // summon[C[τ̄]]: 制約を解決して得た辞書そのもの（型は C[τ̄]）。evidence は型検査が埋める
+  case Summon(constraint: Constraint[R], evidence: Option[Evidence[R]]) extends AST[R, Expr]
   case Foreign(value: Variable, types: R[Type]) extends AST[R, Expr]
   case Var(value: Variable) extends AST[R, Expr]
   case Num(value: String, typeName: String) extends AST[R, Expr]
@@ -151,6 +153,7 @@ enum Evidence[R[_]] {
   case Super(traitName: TypeVariable, index: Int, of: Evidence[R])                                             // traitName[τ̄] の根拠 of から index 番目のスーパークラスを射影
   case Apply(of: Evidence[R], typeArgs: Seq[R[Type]], premises: Seq[Evidence[R]])                              // 量化された制約の根拠 of を、型引数と前提の根拠で具体化する
   case Abs(constraint: Constraint[R], body: Evidence[R])                                                       // 量化された制約の根拠。body では constraint の前提がスコープに入る
+  case Explicit(dictionary: R[Expr])                                                                           // f(with d): 解決せず、辞書の値 d を直接渡す
 }
 case class MethodSig[R[_]](name: Variable, sig: R[Type], body: Option[R[Expr]])
 case class MethodImpl[R[_]](name: Variable, sig: Option[R[Type]], body: R[Expr])
@@ -380,6 +383,8 @@ def tyAppT(t: TypeRec[Type], function: TypeRec[Expr], argument: TypeRec[Type]): 
   HCofree(ExprAnn(t), AST.TyApp(function, argument))
 def instAppT(t: TypeRec[Type], function: TypeRec[Expr], evidence: Evidence[TypeRec]): TypeRec[Expr] =
   HCofree(ExprAnn(t), AST.InstApp(function, evidence))
+def summonT(t: TypeRec[Type], constraint: Constraint[TypeRec], evidence: Evidence[TypeRec]): TypeRec[Expr] =
+  HCofree(ExprAnn(t), AST.Summon(constraint, Some(evidence)))
 def foreignT(variable: Variable, t: TypeRec[Type], types: TypeRec[Type]): TypeRec[Expr] = HCofree(ExprAnn(t), AST.Foreign(variable, types))
 def varrType(variable: Variable, t: TypeRec[Type]): TypeRec[Expr] = HCofree(ExprAnn(t), AST.Var(variable))
 def numT(value: String, typeName: String, t: TypeRec[Type]): TypeRec[Expr] = HCofree(ExprAnn(t), AST.Num(value, typeName))
@@ -466,12 +471,22 @@ def freeTypeVars(t: Rec[Type]): Set[TypeVariable] = {
 def freeTypeVars(t: TypeRec[Type]): Set[TypeVariable] = freeTypeVars(eraseAnn(t))
 
 def freeVars(expr: Rec[Expr]): Set[Variable] = {
+  // 根拠の中の式は、明示的に渡された辞書だけ
+  def inEvidence(evidence: Evidence[ConstI[Set[Variable]]]): Set[Variable] = evidence match {
+    case Evidence.Explicit(dictionary) => dictionary
+    case Evidence.Given(_) => Set.empty
+    case Evidence.Instance(_, _, _, context) => context.flatMap(inEvidence).toSet
+    case Evidence.Super(_, _, of) => inEvidence(of)
+    case Evidence.Apply(of, _, premises) => inEvidence(of) ++ premises.flatMap(inEvidence)
+    case Evidence.Abs(_, body) => inEvidence(body)
+  }
   val alg: Algebra[AST, ConstI[Set[Variable]]] = [x] => node => node match {
     case AST.Var(variable) => Set(variable)
     case AST.Abs(variable, _, body) => body - variable
     case AST.TyAbs(_, _, body) => body
     case AST.InstAbs(_, body) => body
-    case AST.InstApp(function, _) => function
+    case AST.InstApp(function, evidence) => function ++ inEvidence(evidence)
+    case AST.Summon(_, evidence) => evidence.fold(Set.empty[Variable])(inEvidence)
     case AST.Let(variable, _, value, body) => value ++ (body - variable)
     case AST.LetRec(bindings, body) => bindings.foldLeft(body)(_ ++ _.value) -- bindings.map(_.variable)
     case AST.TypeLet(_, _, _, body) => body

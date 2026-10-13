@@ -51,6 +51,10 @@ object TraitEncoder {
       val dictType = encodeType(dictionaryType(assumed), env)
       mkAbs(dictVar, dictType, body(scope :+ (assumed -> varrType(dictVar, dictType))))
 
+    case (ExprAnn(_), AST.Summon(_, evidence)) =>
+      val resolved = evidence.getOrElse(invariant("summon reached TraitEncoder without evidence"))
+      dictionary(resolved.hmap([y] => (child: Encoded[y]) => child(scope)), scope, env)
+
     case (ExprAnn(_), AST.InstApp(function, evidence)) =>
       mkApp(function(scope), dictionary(evidence.hmap([y] => (child: Encoded[y]) => child(scope)), scope, env))
 
@@ -72,6 +76,9 @@ object TraitEncoder {
       )
       val applied = typeArgs.foldLeft(varrType(inst.dictName, encodeType(instanceType(inst), env)))(mkTyApp)
       context.map(dictionary(_, scope, env)).foldLeft(applied)(mkApp)
+
+    // f(with d): 渡された辞書の値そのもの
+    case Evidence.Explicit(dictionary) => dictionary
 
     // 量化された制約の辞書 d を具体化する: d[型引数…](前提の辞書…)
     case Evidence.Apply(of, typeArgs, premises) =>

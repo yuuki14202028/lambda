@@ -149,9 +149,13 @@ object TAnalyser {
   // ---- 制約 ----
 
   // 式の型が [C[τ̄]] → τ になった時点で制約を解決し、根拠を InstApp ノードに記録する
-  private def discharge(e: TypeRec[Expr]): Check[TypeRec[Expr]] = destructInstArrow(typeOf(e)) match {
-    case Some((constraint, to)) => Resolver.resolve(constraint).flatMap(evidence => discharge(instAppT(to, e, evidence)))
-    case None => okT(e)
+  // ただし辞書を明示的に渡す適用 f(with d) の f の位置では、制約を残す（Env.keepConstraints）
+  private def discharge(e: TypeRec[Expr]): Check[TypeRec[Expr]] = ask.flatMap { env =>
+    destructInstArrow(typeOf(e)) match {
+      case Some((constraint, to)) if !env.keepConstraints =>
+        Resolver.resolve(constraint).flatMap(evidence => discharge(instAppT(to, e, evidence)))
+      case _ => okT(e)
+    }
   }
 
   private def resolveTrait(name: TypeVariable): Check[TypeVariable] =
@@ -286,6 +290,7 @@ object TAnalyser {
       case Evidence.Super(_, _, of) => inEvidence(of)
       case Evidence.Apply(of, _, premises) => inEvidence(of) ++ premises.flatMap(inEvidence)
       case Evidence.Abs(_, body) => inEvidence(body)
+      case Evidence.Explicit(dictionary) => dictionary
     }
     val alg: Algebra[TypedAST, Keys] = [x] => he => {
       val inChildren = he.ast.htraverse[[a] =>> cats.data.Const[Set[(TypeVariable, Seq[Variable])], a], Keys](
@@ -293,6 +298,7 @@ object TAnalyser {
       ).getConst
       he.ast match {
         case AST.InstApp(_, evidence) => inChildren ++ inEvidence(evidence)
+        case AST.Summon(_, evidence) => inChildren ++ evidence.fold(Set.empty)(inEvidence)
         case _ => inChildren
       }
     }
@@ -560,7 +566,23 @@ object TAnalyser {
       typedBody <- body.local((e: Env) => e.withGivens(Seq(assumed)))
     } yield instAbsT(instArrowT(assumed, typeOf(typedBody)), typed, typedBody)
 
-    case AST.InstApp(_, _) => invariant("InstApp is inserted by the type checker and cannot appear in its input")
+    // f(with d): f の型の先頭の制約を解決せず、辞書の値 d で満たす
+    case AST.InstApp(function, Evidence.Explicit(dictionary)) => for {
+      typedFunction <- function
+      typedDictionary <- dictionary
+      expected <- lift(destructInstArrow(typeOf(typedFunction)).toRight(CompileError.NoConstraintToSatisfy(typeOf(typedFunction))))
+      (constraint, to) = expected
+      _ <- expect(dictionaryType(constraint), typeOf(typedDictionary))
+      resolved <- discharge(instAppT(to, typedFunction, Evidence.Explicit(typedDictionary)))
+    } yield resolved
+
+    case AST.InstApp(_, _) => invariant("InstApp with resolved evidence is inserted by the type checker and cannot appear in its input")
+
+    case AST.Summon(constraint, _) => for {
+      typed <- typedConstraint(constraint)
+      expanded <- expandConstraint(typed, None)
+      evidence <- Resolver.resolve(expanded)
+    } yield summonT(dictionaryType(expanded), typed, evidence)
 
     case AST.Let(variable, types, value, body) => for {
       binding <- checkBinding(variable, types, value)
@@ -780,8 +802,16 @@ object TAnalyser {
     case AST.TypeApp(function, argument) => (function, argument).mapN(typeAppT)
   }
 
-  private val indexedAlg: Algebra[IndexedAST, TC] = [x] => he =>
-    ReaderT((env: Env) => tcAlg(he.lower).run(env).left.map(_.at(he.ask)))
+  // 子の式では、型に残った制約を解決する。残すのは f(with d) の f の位置だけ
+  private val indexedAlg: Algebra[IndexedAST, TC] = [x] => he => {
+    val resolving = [y] => (child: TC[y]) => child.local((e: Env) => e.copy(keepConstraints = false))
+    val node: AST[TC, x] = he.lower match {
+      case AST.InstApp(function, evidence) =>
+        AST.InstApp(function.local((e: Env) => e.copy(keepConstraints = true)), evidence.hmap(resolving))
+      case other => other.hmap(resolving)
+    }
+    ReaderT((env: Env) => tcAlg(node).run(env).left.map(_.at(he.ask)))
+  }
 
   private def check[I](t: IndexedRec[I]): TC[I] = t.cata(indexedAlg)
 

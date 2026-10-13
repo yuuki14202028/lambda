@@ -428,7 +428,7 @@ object ParserAST {
     "in", "then", "else", "with", "as", "context",
     "let", "rec", "if", "match", "fold", "data", "type",
     "import", "trait", "impl", "def", "derive", "true", "false",
-    "foreign", "intrinsic", "module", "open", "private", "opaque"
+    "foreign", "intrinsic", "module", "open", "private", "opaque", "summon"
   )
 
   private val infixIdentOp: Parser[(IndexedRec[Expr], IndexedRec[Expr]) => IndexedRec[Expr]] =
@@ -453,20 +453,31 @@ object ParserAST {
   }
 
   lazy val appP: Parser[IndexedRec[Expr]] = {
-    type Postfix = Either[IndexedRec[Expr], IndexedRec[Type]]
-    val unitArg: Parser[Postfix] = (Parser.index.with1 <* unitParens).map(offset => Left(at(offset, AST.UnitLit()))).backtrack
-    val exprArg: Parser[Postfix] = Parser.defer(expr).parens.map(Left.apply)
-    val typeArg: Parser[Postfix] = Parser.defer(typeP).brackets.map(Right.apply)
-    (atom ~ (unitArg | exprArg | typeArg).rep0).map { case (f, args) =>
+    enum Postfix {
+      case Value(argument: IndexedRec[Expr])
+      case Types(argument: IndexedRec[Type])
+      case Dictionary(argument: IndexedRec[Expr]) // f(with d): 制約を解決せず、辞書を直接渡す
+    }
+    val unitArg: Parser[Postfix] = (Parser.index.with1 <* unitParens).map(offset => Postfix.Value(at(offset, AST.UnitLit()))).backtrack
+    val dictArg: Parser[Postfix] =
+      ((Parser.char('(') *> sp *> Parser.string("with") *> gap).backtrack *> Parser.defer(expr) <*- ')').map(Postfix.Dictionary.apply)
+    val exprArg: Parser[Postfix] = Parser.defer(expr).parens.map(Postfix.Value.apply)
+    val typeArg: Parser[Postfix] = Parser.defer(typeP).brackets.map(Postfix.Types.apply)
+    (atom ~ (unitArg | dictArg | exprArg | typeArg).rep0).map { case (f, args) =>
       args.foldLeft(f) {
-        case (acc, Left(a)) => at(acc.extract, AST.App(acc, a))
-        case (acc, Right(t)) => at(acc.extract, AST.TyApp(acc, t))
+        case (acc, Postfix.Value(a)) => at(acc.extract, AST.App(acc, a))
+        case (acc, Postfix.Types(t)) => at(acc.extract, AST.TyApp(acc, t))
+        case (acc, Postfix.Dictionary(d)) => at(acc.extract, AST.InstApp(acc, Evidence.Explicit(d)))
       }
     }
   }
 
   lazy val atom: Parser[IndexedRec[Expr]] =
-    Parser.defer(blockP | unitP.backtrack | numP | charP | stringP | interpStringP | boolP | foreignP | intrinsicP | varP | Parser.defer(expr).parens)
+    Parser.defer(blockP | unitP.backtrack | numP | charP | stringP | interpStringP | boolP | foreignP | intrinsicP | summonP | varP | Parser.defer(expr).parens)
+
+  // summon[C[τ̄]]: 解決されたインスタンスの辞書
+  lazy val summonP: Parser[IndexedRec[Expr]] =
+    ((Parser.string("summon") *> Parser.char('[')).backtrack *> sp *> constraintP <*- ']').map(c => AST.Summon[IndexedRec, Expr](c, None)).indexed
 
   lazy val blockP: Parser[IndexedRec[Expr]] = {
     val discarded = (Parser.defer(expr) <* spaced(';')).backtrack.rep0

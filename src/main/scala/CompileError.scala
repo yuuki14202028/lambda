@@ -95,6 +95,7 @@ enum CompileError {
   case UndefinedModule(path: Seq[String])
   case ModifierOutsideModule(modifier: Modifier)
   case MixedRecursiveGroup
+  case NoConstraintToSatisfy(actual: TypeRec[Type])
   case QuantifiedSuperclassUnsupported(traitName: TypeVariable)
   case DefaultMethodTypeMismatch(traitName: TypeVariable, method: Variable, expected: TypeRec[Type], actual: TypeRec[Type])
   case QuantifiedParamUnused(traitName: TypeVariable, param: TypeVariable)
@@ -216,6 +217,7 @@ enum CompileError {
     case QuantifiedSuperclassUnsupported(traitName) => s"Trait ${traitName.name}: a superclass cannot be a quantified constraint"
     case QuantifiedParamUnused(traitName, param) =>
       s"Quantified constraint on ${traitName.name}: type variable ${param.name} does not appear in the constraint's arguments"
+    case NoConstraintToSatisfy(actual) => s"Cannot pass an instance with (with …): the expression has type ${actual.show}, which takes no instance"
     case MixedRecursiveGroup => "rec { } must contain declarations of one kind: let, data, or impl / derive"
     case ModifierOutsideModule(modifier) => s"${modifier.keyword} can only be used inside a module"
     case AlreadyDefined(kind, name) => s"${kind.shown} $name is already defined"
