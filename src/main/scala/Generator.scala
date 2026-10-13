@@ -600,6 +600,7 @@ object Generator {
 
     case AST.TypeLet(_, _, _, body) => body.result
     case AST.DataLet(_, _, _, _) | AST.DataLetRec(_, _) => pure(sys.error("DataLet must be Church encoded before code generation"))
+    case AST.PatternMatch(_, _) => pure(sys.error("PatternMatch must be desugared by PatternDesugar before code generation"))
     case AST.Match(_, _) => pure(sys.error("Match must be Church encoded before code generation"))
     case AST.Fold(_, _, _) => pure(sys.error("Fold must be Church encoded before code generation"))
 

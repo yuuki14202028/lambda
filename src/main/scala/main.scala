@@ -10,7 +10,7 @@ object Compiler {
     resolved <- ImportResolver.resolve(ast, srcPath)
     _ = trace(eraseIndex(resolved).show)
     typed <- TAnalyser.validate(resolved)
-    encoded = ChurchEncoder.encode(TraitEncoder.encode(ContextDesugar.desugar(Deriver.desugar(ModuleDesugar.desugar(typed)))))
+    encoded = ChurchEncoder.encode(TraitEncoder.encode(ContextDesugar.desugar(Deriver.desugar(PatternDesugar.desugar(ModuleDesugar.desugar(typed))))))
     _ = trace(eraseAnn(encoded).show)
   } yield Generator.generate(encoded)
 }

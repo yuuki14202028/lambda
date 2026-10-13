@@ -1,0 +1,73 @@
+import "std/operators"
+
+let printInt: i32 → i32 = foreign[i32 → i32] print_int
+
+data Option[a] = { None, Some(a) }
+rec data List[a] = { Nil, Cons(a)(List[a]) }
+data Pair[a][b] = { MkPair(a)(b) }
+
+let describe(n: i32): i32 = match n {
+  0 => 100
+  1 => 101
+  other => other
+}
+
+let both(a: bool)(b: bool): i32 = match MkPair[bool][bool](a)(b) {
+  MkPair(true)(true) => 3
+  MkPair(true)(false) => 2
+  MkPair(false)(true) => 1
+  MkPair(false)(false) => 0
+}
+
+let firstTwo(xs: List[i32]): i32 = match xs {
+  Cons(x)(Cons(y)(_)) => x * 10 + y
+  Cons(x)(Nil) => x
+  Nil => 0 - 1
+}
+
+rec let zip(xs: List[i32])(ys: List[i32]): i32 = match MkPair[List[i32]][List[i32]](xs)(ys) {
+  MkPair(Cons(x)(xt))(Cons(y)(yt)) => x * y + zip(xt)(yt)
+  _ => 0
+}
+
+let unwrap(o: Option[Option[i32]]): i32 = match o {
+  Some(Some(0)) => 1000
+  Some(Some(n)) => n
+  Some(None) => 0 - 1
+  None => 0 - 2
+}
+
+let letter(c: char): i32 = match c {
+  'a' => 1
+  'b' => 2
+  _ => 0
+}
+
+let whole(o: Option[i32]): i32 = match o {
+  x => match x {
+    Some(v) => v
+    None => 7
+  }
+}
+
+let list(a: i32)(b: i32)(c: i32): List[i32] = Cons[i32](a)(Cons[i32](b)(Cons[i32](c)(Nil[i32])))
+
+let main(): i32 = {
+  printInt(describe(0));
+  printInt(describe(1));
+  printInt(describe(42));
+  printInt(both(true)(false));
+  printInt(both(false)(false));
+  printInt(firstTwo(list(1)(2)(3)));
+  printInt(firstTwo(Cons[i32](5)(Nil[i32])));
+  printInt(firstTwo(Nil[i32]));
+  printInt(zip(list(1)(2)(3))(list(4)(5)(6)));
+  printInt(unwrap(Some[Option[i32]](Some[i32](0))));
+  printInt(unwrap(Some[Option[i32]](Some[i32](9))));
+  printInt(unwrap(Some[Option[i32]](None[i32])));
+  printInt(unwrap(None[Option[i32]]));
+  printInt(letter('b'));
+  printInt(letter('z'));
+  printInt(whole(None[i32]));
+  0
+}

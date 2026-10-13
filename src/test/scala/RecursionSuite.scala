@@ -113,7 +113,7 @@ class RecursionSuite extends munit.FunSuite {
   // ---- rec { … }: 相互再帰 ----
 
   private def encode(src: String): Either[String, TypeRec[AST.Program.type]] =
-    validate(src).map(p => ChurchEncoder.encode(TraitEncoder.encode(ContextDesugar.desugar(Deriver.desugar(ModuleDesugar.desugar(p))))))
+    validate(src).map(p => ChurchEncoder.encode(TraitEncoder.encode(ContextDesugar.desugar(Deriver.desugar(PatternDesugar.desugar(ModuleDesugar.desugar(p)))))))
 
   private val main = "let main(): i32 = 0\n"
 

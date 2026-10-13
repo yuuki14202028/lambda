@@ -44,6 +44,15 @@ private def traverseEvidence[G[_]: Applicative, R[_], S[_]](e: Evidence[R])(f: [
     (traverseConstraint(constraint)(f), traverseEvidence(body)(f)).mapN(Evidence.Abs(_, _))
 }
 
+private def traversePattern[G[_]: Applicative, R[_], S[_]](p: Pattern[R])(f: [x] => R[x] => G[S[x]]): G[Pattern[S]] = p match {
+  case Pattern.Wildcard() => Applicative[G].pure(Pattern.Wildcard[S]())
+  case Pattern.Bind(name) => Applicative[G].pure(Pattern.Bind[S](name))
+  case Pattern.Constructor(name, args, siblings) =>
+    val siblingsG = siblings.traverse(s => s.fields.traverse(field => f(field)).map(ConstructorShape[S](s.name, _)))
+    (args.traverse(traversePattern(_)(f)), siblingsG).mapN(Pattern.Constructor[S](name, _, _))
+  case Pattern.Literal(value, equals) => equals.traverse(e => f(e)).map(Pattern.Literal[S](value, _))
+}
+
 extension [R[_]](self: Evidence[R]) {
   def hmap[S[_]](f: R ~> S): Evidence[S] = traverseEvidence[Id, R, S](self)([x] => (r: R[x]) => f(r): Id[S[x]])
 }
@@ -109,6 +118,9 @@ given HTraverse[AST] with {
           .map(DataBinding[S](d.variable, d.params, _))
       }
       (datasG, f(body)).mapN(AST.DataLetRec(_, _))
+    case AST.PatternMatch(scrut, cases) =>
+      val casesG = cases.traverse(c => (traversePattern(c.pattern)(f), f(c.body)).mapN(PatternCase[S](_, _)))
+      (f(scrut), casesG).mapN(AST.PatternMatch(_, _))
     case AST.Match(scrut, cases) =>
       val casesG = cases.traverse { c =>
         f(c.body).map(b => MatchCase[S](c.constructor, c.binders, b))

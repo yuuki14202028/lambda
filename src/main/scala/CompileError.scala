@@ -139,6 +139,10 @@ enum CompileError {
   case NonExhaustive(kind: MatchKindRef, missing: Seq[Variable], invalid: Seq[Variable])
   case BinderArityMismatch(constructor: Variable, expected: Int, actual: Int)
   case EmptyMatch
+  case NonExhaustivePatterns(example: String)
+  case UnreachableCase(index: Int)
+  case NotAConstructor(name: Variable)
+  case PatternConstructorMismatch(constructor: Variable, scrutinee: TypeRec[Type])
 
   // ---- trait / impl / with ----
   case TraitNeedsParameter(name: TypeVariable)
@@ -265,6 +269,11 @@ enum CompileError {
     case BinderArityMismatch(constructor, expected, actual) =>
       s"Constructor ${constructor.name} expects $expected binders, got $actual"
     case EmptyMatch => "Match must have at least one case"
+    case NonExhaustivePatterns(example) => s"Match is not exhaustive: no case matches $example"
+    case UnreachableCase(index) => s"Match case $index is unreachable: earlier cases already match everything it matches"
+    case NotAConstructor(name) => s"${name.name} is not a constructor"
+    case PatternConstructorMismatch(constructor, scrutinee) =>
+      s"Constructor ${constructor.name} does not belong to type ${scrutinee.show}"
 
     case TraitNeedsParameter(name) => s"Trait ${name.name} must have at least one parameter"
     case DefaultMethodsUnsupported(name) => s"Trait ${name.name}: default method implementations are not supported yet"

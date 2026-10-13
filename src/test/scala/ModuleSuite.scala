@@ -7,7 +7,7 @@ class ModuleSuite extends munit.FunSuite {
 
   // 型検査の後の全フェーズ（コード生成の手前まで）
   private def encode(src: String): Either[String, TypeRec[AST.Program.type]] =
-    validate(src).map(p => ChurchEncoder.encode(TraitEncoder.encode(ContextDesugar.desugar(Deriver.desugar(ModuleDesugar.desugar(p))))))
+    validate(src).map(p => ChurchEncoder.encode(TraitEncoder.encode(ContextDesugar.desugar(Deriver.desugar(PatternDesugar.desugar(ModuleDesugar.desugar(p)))))))
 
   private def assertRight(result: Either[String, ?]): Unit = result match {
     case Right(_)  => ()

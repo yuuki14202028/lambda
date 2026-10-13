@@ -7,7 +7,7 @@ Scala 3 で実装した、小さな型付きラムダ計算系言語（System F�
 
 - **System Fω**: 値のラムダ `λx: T. e`、型抽象 `ΛA. e`、型適用 `f[T]`、型レベルラムダとカインド（`*`, `* → *`）。型注釈と型適用はすべて明示で、HM 型推論は行いません
 - **再帰**: 再帰は `rec` を付けた宣言に限ります。`rec let f(n: i32): i32 = …`、`rec data List[a] = …`、`rec impl[a] Show[List[a]] with Show[a] { … }`。相互再帰は、同じ種類の宣言を `rec { … }` で囲みます（`rec { let isEven …  let isOdd … }`、`rec { data Tree …  data Forest … }`、`rec { impl …  impl … }`）。`derive` は `impl` と同じ組に入れられ、相互再帰のデータ型には `rec { derive Functor[Tree]  derive Functor[Forest] }` と書きます。式の中（`rec let … in e`、`rec { … } in e`）と context ブロックの中（`rec { … };`）でも同じに書けます。`rec` を使った所の停止性は保証しません
-- **代数的データ型**: `data` / 再帰型は `rec data`。`match e { C(x) => … }` は全コンストラクタの網羅が必須、`fold e as T { C(x)(acc) => … }` で再帰型を畳み込みます（再帰位置の束縛子は畳み込み済みの結果）。バックエンドでは Church encoding に変換されます
+- **代数的データ型**: `data` / 再帰型は `rec data`。`match e { パターン => … }` のパターンには、構成子（入れ子にできる。`Cons(x)(Cons(y)(_))`）・変数・`_`・リテラル（整数・文字・bool）が書けます。すべての値がどれかの分岐に当たること（網羅性）が必須で、当たらない値があればその例を示し、到達不能な分岐もエラーにします。`fold e as T { C(x)(acc) => … }` で再帰型を畳み込みます（再帰位置の束縛子は畳み込み済みの結果）。バックエンドでは Church encoding に変換されます
 - **trait**: `trait` / `impl` による型クラス。高階カインドの trait（`Monad[m: * → *]` など）、`with C[a]` 節（宣言末尾）による制約・スーパークラスに対応。メソッド自身の型変数にも制約を付けられます（`def traverse[g: * → *][a][b](f: a → g[b])(xs: t[a]): g[t[b]] with Applicative[g]`。impl 側のメソッドにも同じ `with` 節を書きます）。制約には量化された制約も書けます（`with ∀a. Show[a] ⇒ Show[f[a]]`。「どの `a` についても、`Show[a]` があれば `Show[f[a]]` がある」ことを要求し、本体の中ではインスタンスのように使えます。`Fix[f]` のような高階の不動点型のインスタンスに使います）。型適用が明示なので辞書解決は決定的で、型検査の中で行われ、辞書渡しコードへ脱糖されます。インスタンスは値や関数と同じく、宣言してから使います。メソッド本体から自身のインスタンスを使う再帰的なインスタンスは `rec impl[a] Show[List[a]] with Show[a] { ... }` と明示します
 - **derive**: `derive Functor[Option]` / `derive Foldable[List]` で、データ型の構造から `map` / `foldRight` / `foldLeft` のインスタンスを自動導出します。導出対象は構造から一意に決まる trait（正準シグネチャと α 同値なもの）に限り、負の位置の出現や畳み込めないフィールドはコンパイルエラーになります
 - **context 記法**: do 記法相当。`context[M] { x: T = e; ...; result }` を `Monad` trait の `pure` / `flatMap` 呼び出しへ脱糖します
@@ -49,6 +49,7 @@ ParserAST (cats-parse)
   → ImportResolver   import の解決・展開
   → TAnalyser        型検査（trait / context / derive / module は構文を保ったまま型付け。制約と名前の解決もここで行う）
   → ModuleDesugar    module を平らな宣言列に戻し、opaque type を表現へ読み替える
+  → PatternDesugar   match のパターンを、構成子 1 段の分岐と if / let へ展開
   → Deriver          derive 宣言を手書きと同形の impl へ合成
   → ContextDesugar   context ブロックを pure / flatMap へ脱糖
   → TraitEncoder     trait / impl を辞書渡しへ脱糖

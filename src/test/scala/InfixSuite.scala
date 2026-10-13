@@ -55,7 +55,7 @@ class InfixSuite extends munit.FunSuite {
 
   test("キーワードは infix にならない: match") {
     parseExpr("match e { Just(x) => x Nothing => y }").unfix match {
-      case AST.Match(_, _) => ()
+      case AST.PatternMatch(_, _) => ()
       case other => fail(s"not Match: $other")
     }
   }

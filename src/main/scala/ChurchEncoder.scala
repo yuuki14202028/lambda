@@ -224,6 +224,7 @@ object ChurchEncoder {
       encodeDataLet(Seq(DataBinding[Para[TypeRec, Encoded]](variable, params, constructors)), Set.empty, body)
     case (ExprAnn(_), AST.DataLetRec(datas, body)) =>
       encodeDataLet(datas, datas.map(_.variable).toSet, body)
+    case (ExprAnn(_), AST.PatternMatch(_, _)) => invariant("PatternMatch must be desugared by PatternDesugar before Church encoding")
     case (ExprAnn(t), AST.Match(scrutinee, cases)) => for {
       scrutType = typeOf(scrutinee.original)
       resultType <- encodeType(t)

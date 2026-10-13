@@ -31,6 +31,8 @@ enum AST[R[_], I] {
   case TypeLet(variable: TypeVariable, params: Seq[(TypeVariable, Kind)], alias: R[Type], body: R[Expr]) extends AST[R, Expr]
   case DataLet(variable: TypeVariable, params: Seq[(TypeVariable, Kind)], constructors: Seq[DataConstructor[R]], body: R[Expr]) extends AST[R, Expr]
   case DataLetRec(datas: Seq[DataBinding[R]], body: R[Expr]) extends AST[R, Expr]
+  // match e { パターン => 本体 … }。型検査の後、PatternDesugar が下の Match（構成子 1 段の分岐）と if / let へ展開する
+  case PatternMatch(scrutinee: R[Expr], cases: Seq[PatternCase[R]]) extends AST[R, Expr]
   case Match(scrutinee: R[Expr], cases: Seq[MatchCase[R]]) extends AST[R, Expr]
   case Fold(scrutinee: R[Expr], resultType: R[Type], cases: Seq[MatchCase[R]]) extends AST[R, Expr]
   case App(function: R[Expr], argument: R[Expr]) extends AST[R, Expr]
@@ -76,6 +78,39 @@ enum Modifier {
 case class RecBinding[R[_]](variable: Variable, types: R[Type], value: R[Expr])
 case class DataConstructor[R[_]](name: Variable, fields: Seq[R[Type]])
 case class MatchCase[R[_]](constructor: Variable, binders: Seq[Variable], body: R[Expr])
+
+/** match のパターン。パーサは引数のない名前を Constructor(x, Nil, Nil) として読み、
+ * 型検査が「スコープ中の構成子でなければ変数の束縛」と決めて Bind に直す。
+ */
+enum Pattern[R[_]] {
+  case Wildcard()                                                                            // _
+  case Bind(name: Variable)                                                                  // x
+  case Constructor(name: Variable, args: Seq[Pattern[R]], siblings: Seq[ConstructorShape[R]]) // C(p)(q)。siblings は型検査が埋める
+  case Literal(value: LiteralValue, equals: Option[R[Expr]])                                 // 1 / 'a' / true。equals は型検査が解決した ==
+}
+
+// スクルーティニーのデータ型の構成子と、型引数を適用したフィールドの型（脱糖が Env なしで分岐を組み立てるため）
+case class ConstructorShape[R[_]](name: Variable, fields: Seq[R[Type]])
+
+enum LiteralValue {
+  case Num(value: String, typeName: String)
+  case Char(value: scala.Char)
+  case Bool(value: Boolean)
+
+  def shown: String = this match {
+    case Num(value, _) => value
+    case Char(value) => s"'$value'"
+    case Bool(value) => value.toString
+  }
+}
+
+case class PatternCase[R[_]](pattern: Pattern[R], body: R[Expr])
+
+def patternVariables[R[_]](pattern: Pattern[R]): Seq[Variable] = pattern match {
+  case Pattern.Bind(name) => Seq(name)
+  case Pattern.Constructor(_, args, _) => args.flatMap(patternVariables)
+  case Pattern.Wildcard() | Pattern.Literal(_, _) => Seq.empty
+}
 // rec data / rec { data …  data … } のデータ型。フィールドからは組の全員が見える
 case class DataBinding[R[_]](variable: TypeVariable, params: Seq[(TypeVariable, Kind)], constructors: Seq[DataConstructor[R]])
 
@@ -333,6 +368,8 @@ def dataLetT(variable: TypeVariable, params: Seq[(TypeVariable, Kind)], t: TypeR
   HCofree(ExprAnn(t), AST.DataLet(variable, params, constructors, body))
 def dataLetRecT(datas: Seq[DataBinding[TypeRec]], t: TypeRec[Type], body: TypeRec[Expr]): TypeRec[Expr] =
   HCofree(ExprAnn(t), AST.DataLetRec(datas, body))
+def patternMatchT(t: TypeRec[Type], scrutinee: TypeRec[Expr], cases: Seq[PatternCase[TypeRec]]): TypeRec[Expr] =
+  HCofree(ExprAnn(t), AST.PatternMatch(scrutinee, cases))
 def matchExprT(t: TypeRec[Type], scrutinee: TypeRec[Expr], cases: Seq[MatchCase[TypeRec]]): TypeRec[Expr] =
   HCofree(ExprAnn(t), AST.Match(scrutinee, cases))
 def foldExprT(t: TypeRec[Type], scrutinee: TypeRec[Expr], resultType: TypeRec[Type], cases: Seq[MatchCase[TypeRec]]): TypeRec[Expr] =
@@ -440,6 +477,15 @@ def freeVars(expr: Rec[Expr]): Set[Variable] = {
     case AST.TypeLet(_, _, _, body) => body
     case AST.DataLet(_, _, _, body) => body
     case AST.DataLetRec(_, body) => body
+    case AST.PatternMatch(scrutinee, cases) =>
+      def inPattern(p: Pattern[ConstI[Set[Variable]]]): Set[Variable] = p match {
+        case Pattern.Constructor(_, args, _) => args.flatMap(inPattern).toSet
+        case Pattern.Literal(_, equals) => equals.getOrElse(Set.empty)
+        case Pattern.Wildcard() | Pattern.Bind(_) => Set.empty
+      }
+      scrutinee ++ cases.foldLeft(Set.empty[Variable]) { (acc, c) =>
+        acc ++ inPattern(c.pattern) ++ (c.body -- patternVariables(c.pattern))
+      }
     case AST.Match(scrutinee, cases) =>
       scrutinee ++ cases.foldLeft(Set.empty[Variable]) { (acc, c) =>
         acc ++ (c.body -- c.binders.toSet)

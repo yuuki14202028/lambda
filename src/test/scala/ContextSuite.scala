@@ -12,7 +12,7 @@ class ContextSuite extends munit.FunSuite {
     ParserAST.programParser.parseAll(src).left.map(e => s"Parse error: $e").flatMap(p => TAnalyser.validate(p).left.map(_.render))
 
   private def desugarContext(src: String): Either[String, TypeRec[AST.Program.type]] =
-    validate(src).map(ContextDesugar.desugar)
+    validate(src).map(PatternDesugar.desugar).map(ContextDesugar.desugar)
 
   private def desugar(src: String): Either[String, TypeRec[AST.Program.type]] =
     desugarContext(src).map(TraitEncoder.encode)

@@ -463,6 +463,57 @@ object TAnalyser {
     }
   } yield typedCases
 
+  // パターンを型 expected の値に対して検査する: (解決済みのパターン, 束縛される変数と型)
+  private def checkPattern(pattern: Pattern[TC], expected: TypeRec[Type]): Check[(Pattern[TypeRec], Seq[(Variable, TypeRec[Type])])] = pattern match {
+    case Pattern.Wildcard() => Check.pure((Pattern.Wildcard[TypeRec](), Seq.empty))
+    case Pattern.Bind(name) => Check.pure((Pattern.Bind[TypeRec](name), Seq(name -> expected)))
+
+    case Pattern.Literal(value, _) =>
+      val (literalType, typeName) = value match {
+        case LiteralValue.Num(_, name) => (primitiveT(name), name)
+        case LiteralValue.Char(_) => (charTypeT, "char")
+        case LiteralValue.Bool(_) => (boolTypeT, "bool")
+      }
+      for {
+        env <- ask
+        _ <- guard(BuiltinTypes.equatableTypes.contains(typeName), CompileError.NumericLiteralUnknown(typeName))
+        _ <- expect(expected, literalType)
+        // bool は if で分岐するので == は要らない
+        equals <- if (typeName == "bool") Check.pure(Option.empty[TypeRec[Expr]]) else {
+          val operator = StandardLibrary.binaryOperatorName(BinOps.Eq, typeName)
+          for {
+            found <- lift(env.lookupValue(operator).toRight(CompileError.OperatorUndefined(BinOps.Eq, literalType, operator)))
+            (fn, fnType) = found
+            _ <- guard(
+              Equivalence.alpha(fnType, arrowT(literalType, arrowT(literalType, boolTypeT))),
+              CompileError.OperatorNotBinary(fn, fnType)
+            )
+          } yield Option(varrType(fn, fnType))
+        }
+      } yield (Pattern.Literal[TypeRec](value, equals), Seq.empty)
+
+    // 引数のない名前は、スコープ中の構成子でなければ変数の束縛
+    case Pattern.Constructor(written, args, _) => for {
+      env <- ask
+      name <- lift(env.resolveValue(written).toRight(CompileError.UndefinedVariable(written)))
+      result <- env.constructors.get(name) match {
+        case None if args.isEmpty && !written.name.contains('.') => Check.pure((Pattern.Bind[TypeRec](written), Seq(written -> expected)))
+        case None => fail(CompileError.NotAConstructor(written))
+        case Some(constructor) => for {
+          dataApp <- lift(dataTypeApplication(expected, env.dataTypes)(_.paramVars))
+          (dataName, dataDef, typeArgs) = dataApp
+          _ <- guard(constructor.owner == dataName, CompileError.PatternConstructorMismatch(written, expected))
+          _ <- guard(args.length == constructor.fields.length, CompileError.BinderArityMismatch(written, constructor.fields.length, args.length))
+          shapes = dataDef.constructors.map { c =>
+            ConstructorShape[TypeRec](c.name, c.fields.map(field => Equivalence.normalize(substMany(dataDef.paramVars, typeArgs, field))))
+          }
+          fieldTypes = shapes.find(_.name == name).map(_.fields).getOrElse(invariant(s"constructor ${name.name} is missing from its data type"))
+          checked <- args.zip(fieldTypes).traverse { case (arg, fieldType) => checkPattern(arg, fieldType) }
+        } yield (Pattern.Constructor[TypeRec](name, checked.map(_._1), shapes), checked.flatMap(_._2))
+      }
+    } yield result
+  }
+
   // context[M] が使うメソッド参照 name[M]（M の制約もここで解決する）
   private def contextMethod(name: Variable, monad: TypeRec[Type]): Check[TypeRec[Expr]] = for {
     env <- ask
@@ -545,6 +596,25 @@ object TAnalyser {
         (typedDatas, extend) = checked
         typedBody <- body.local(extend)
       } yield dataLetRecT(typedDatas, typeOf(typedBody), typedBody)
+
+    case AST.PatternMatch(scrutinee, cases) => for {
+      typedScrutinee <- scrutinee
+      typedCases <- cases.traverse { c =>
+        for {
+          checked <- checkPattern(c.pattern, typeOf(typedScrutinee))
+          (pattern, bindings) = checked
+          names = bindings.map(_._1)
+          _ <- guard(names.distinct.length == names.length, CompileError.AlreadyDefined(NameKind.VariableName, names.diff(names.distinct).head.name))
+          typedBody <- c.body.local((e: Env) => e.withValues(bindings))
+        } yield PatternCase[TypeRec](pattern, typedBody)
+      }
+      resultType <- typedCases.headOption match {
+        case Some(first) => typedCases.tail.traverse(c => expect(typeOf(first.body), typeOf(c.body))).as(typeOf(first.body))
+        case None => fail(CompileError.EmptyMatch)
+      }
+      // ノードは保持したまま、網羅性と到達不能な分岐は脱糖と同じ決定木で調べる
+      _ <- lift(PatternDesugar.check(typeOf(typedScrutinee), typedCases.map(_.pattern)))
+    } yield patternMatchT(resultType, typedScrutinee, typedCases)
 
     case AST.Match(scrutinee, cases) => for {
       typedScrutinee <- scrutinee
