@@ -319,6 +319,28 @@ object Diagnostic {
             "remove the names and write the functions the module should offer")
         }
         Description(s"data type ${name(data.name)} cannot have named fields", label, notes = Seq(note), helps = Seq(help))
+      case NamedArgumentsInvalid(constructor, reason) =>
+        val target = constructor.fold("this")(c => name(c.name))
+        val noteNamed = "named arguments `C(x = e, …)` give every field of a constructor whose fields all have names, in any order"
+        reason match {
+          case NamedArgumentsReason.NotConstructor => Description(
+            "named arguments can only be given to a constructor", "this is not a constructor", notes = Seq(noteNamed),
+            helps = Seq("pass the arguments by position: `f(x)(y)`"))
+          case NamedArgumentsReason.UnnamedFields => Description(
+            s"$target cannot take named arguments", "some of its fields have no name", notes = Seq(noteNamed),
+            helps = Seq("pass the arguments by position, or name every field in the data declaration: `C(x: T)(y: U)`"))
+          case NamedArgumentsReason.TypeArgumentsMissing(count) => Description(
+            s"$target needs ${plural(count, "type argument")} before the named arguments", "the type arguments are missing here",
+            helps = Seq("write the type arguments after the constructor: `C[T](x = e, …)`"))
+          case NamedArgumentsReason.UnknownField(field, fields) => Description(
+            s"$target has no field ${name(field)}", "unknown field",
+            notes = Seq(s"the fields are ${fields.map(name).mkString(", ")}"))
+          case NamedArgumentsReason.DuplicateField(field) => Description(
+            s"the field ${name(field)} is given twice", "given again here")
+          case NamedArgumentsReason.MissingFields(fields) => Description(
+            s"$target is missing ${plural(fields.length, "field")}: ${fields.map(name).mkString(", ")}", "every field must be given",
+            notes = Seq(noteNamed))
+        }
       case ModifierOutsideModule(modifier) => Description(
         s"${name(modifier.keyword)} is only allowed inside a module",
         "this declaration is not inside a `module { … }`",

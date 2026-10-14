@@ -1,0 +1,7 @@
+error: `MkPoint` is missing 1 field: `y`
+ --> record_construct_missing.lam:2:16
+  |
+2 | let p: Point = MkPoint(x = 1)
+  |                ^^^^^^^ every field must be given
+  |
+  = note: named arguments `C(x = e, …)` give every field of a constructor whose fields all have names, in any order

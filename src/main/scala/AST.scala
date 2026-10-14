@@ -46,6 +46,8 @@ enum AST[R[_], I] {
   case Path(name: Variable, typeArgs: Seq[R[Type]]) extends AST[R, Expr]
   // x.f[T]: x の型の module にある関数 f の呼び出し。resolved は、型検査が決めた関数（型引数と制約を適用済み）
   case Select(receiver: R[Expr], name: String, typeArgs: Seq[R[Type]], resolved: Option[R[Expr]]) extends AST[R, Expr]
+  // C[T](x = e, …): 名前付きフィールドを名前で渡す構築。positions は、型検査が決めた各引数のフィールドの位置（書かれた順。検査前は空）
+  case NamedApp(constructor: R[Expr], arguments: Seq[NamedArg[R]], positions: Seq[Int]) extends AST[R, Expr]
   case InstApp(function: R[Expr], evidence: Evidence[R]) extends AST[R, Expr]
   // impl C[τ̄] { def m = e … }（式）: 辞書の値を作る。インスタンスとしては登録しない。省略したメソッドはデフォルトで埋まり、
   // スーパークラスの辞書はその位置で解決する（superEvidence は型検査が埋める）
@@ -223,6 +225,9 @@ enum IntrinsicOps {
 
 // 演算子の並びの 1 歩: 演算子（とその位置）と、右の被演算子
 case class OpStep[R[_]](op: String, span: Span, operand: R[Expr])
+
+// 名前付きの構築の引数 name = value（span は名前の位置）
+case class NamedArg[R[_]](name: String, span: Span, value: R[Expr])
 
 // 二項演算子の結合性と優先順位（0〜9。大きいほど強く結び付く）
 enum Assoc {
@@ -450,6 +455,8 @@ def tyAppT(t: TypeRec[Type], function: TypeRec[Expr], argument: TypeRec[Type]): 
   HCofree(ExprAnn(t), AST.TyApp(function, argument))
 def selectT(t: TypeRec[Type], receiver: TypeRec[Expr], name: String, typeArgs: Seq[TypeRec[Type]], resolved: TypeRec[Expr]): TypeRec[Expr] =
   HCofree(ExprAnn(t), AST.Select(receiver, name, typeArgs, Some(resolved)))
+def namedAppT(t: TypeRec[Type], constructor: TypeRec[Expr], arguments: Seq[NamedArg[TypeRec]], positions: Seq[Int]): TypeRec[Expr] =
+  HCofree(ExprAnn(t), AST.NamedApp(constructor, arguments, positions))
 def instAppT(t: TypeRec[Type], function: TypeRec[Expr], evidence: Evidence[TypeRec]): TypeRec[Expr] =
   HCofree(ExprAnn(t), AST.InstApp(function, evidence))
 def instanceT(t: TypeRec[Type], traitName: TypeVariable, targets: Seq[TypeRec[Type]], methods: Seq[MethodImpl[TypeRec]], superEvidence: Seq[Evidence[TypeRec]]): TypeRec[Expr] =
@@ -592,6 +599,7 @@ def freeVars(expr: Rec[Expr]): Set[Variable] = {
     case AST.TyApp(function, _) => function
     case AST.Path(name, _) => Set(name)
     case AST.Select(receiver, _, _, resolved) => receiver ++ resolved.getOrElse(Set.empty)
+    case AST.NamedApp(constructor, arguments, _) => arguments.foldLeft(constructor)(_ ++ _.value)
     case AST.Foreign(_, _) => Set.empty
     case AST.Block(discarded, result) => discarded.foldLeft(Set.empty[Variable])(_ ++ _) ++ result.getOrElse(Set.empty)
     case AST.BinOp(_, left, right, resolved) => left ++ right ++ resolved.getOrElse(Set.empty)

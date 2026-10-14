@@ -78,7 +78,7 @@ ParserAST (cats-parse)
   → ImportResolver   import の解決・展開
   → TAnalyser        型検査（trait / context / derive / module は構文を保ったまま型付け。制約と名前の解決もここで行う）
   → ModuleDesugar    module を平らな宣言列に戻し、opaque type を表現へ読み替える
-  → RecordDesugar    名前付きフィールドを読む関数（アクセサ）を生成
+  → RecordDesugar    名前付きフィールドを読む関数（アクセサ）を生成し、名前付きの構築を位置の適用へ
   → Deriver          derive 宣言を手書きと同形の impl へ合成
   → ContextDesugar   context ブロックを pure / flatMap へ脱糖
   → PatternDesugar   match と束縛のパターンを、構成子 1 段の分岐と if / let へ展開

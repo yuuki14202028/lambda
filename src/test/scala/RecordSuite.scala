@@ -111,4 +111,45 @@ class RecordSuite extends FunSuite {
   test("opaque data には、名前付きフィールドを書けない") {
     assertLeftContains(validate("module M {\n  opaque data P = { MkP(x: i32) }\n}\n" + main), "Data type M.P cannot have named fields: it is opaque")
   }
+
+  // ---- 名前付きの構築 ----
+
+  private val tagged = "data Tagged[a] = { MkTagged(tag: i32)(value: a) }\ndata Line = { MkLine(from: Point)(Point) }\n"
+
+  test("名前付きの構築: フィールドを名前で、好きな順に渡せる") {
+    assertRight(encode(point + "let q: Point = MkPoint(x = 1, y = true)\nlet r: Point = MkPoint(y = false, x = 2)\n" + main))
+    assertRight(encode(point + tagged + "let t: Tagged[bool] = MkTagged[bool](value = true, tag = 1)\n" + main))
+    assertRight(encode(point + "let q: Point = MkPoint(\n  x = 1,\n  y = true\n)\n" + main))
+  }
+
+  test("名前付きの構築: 順番が違えば、書いた順に評価するよう let で束縛する") {
+    val shown = validate(point + "let r: Point = MkPoint(y = false, x = 2)\n" + main).map(typed => RecordDesugar.desugar(ModuleDesugar.desugar(typed))).fold(fail(_), _.show)
+    assert(shown.contains("$named_0"), clue(shown))
+    val inOrder = validate(point + "let r: Point = MkPoint(x = 2, y = false)\n" + main).map(typed => RecordDesugar.desugar(ModuleDesugar.desugar(typed))).fold(fail(_), _.show)
+    assert(!inOrder.contains("$named_0"), clue(inOrder))
+  }
+
+  test("名前付きの構築: フィールドの型が合わなければエラー") {
+    assertLeftContains(validate(point + "let q: Point = MkPoint(x = true, y = true)\n" + main), "Type mismatch")
+  }
+
+  test("名前付きの構築: 構成子以外・名前のないフィールド・型引数の不足はエラー") {
+    assertLeftContains(validate(point + "let f(x: i32): i32 = x\nlet n: i32 = f(x = 1)\n" + main), "only a constructor can take named arguments")
+    assertLeftContains(validate(point + tagged + "let l: Line = MkLine(from = p)\n" + main), "fields without names")
+    assertLeftContains(validate(point + tagged + "let t: Tagged[bool] = MkTagged(tag = 1, value = true)\n" + main), "needs 1 type argument")
+  }
+
+  test("名前付きの構築: 知らない名前・重複・不足はエラー") {
+    assertLeftContains(validate(point + "let q: Point = MkPoint(x = 1, z = true)\n" + main), "has no field z")
+    assertLeftContains(validate(point + "let q: Point = MkPoint(x = 1, x = 2, y = true)\n" + main), "given twice")
+    assertLeftContains(validate(point + "let q: Point = MkPoint(x = 1)\n" + main), "missing field(s) y")
+  }
+
+  test("名前付きの構築: 括弧の中の == は名前付きの引数ではない") {
+    assert(ParserAST.expr.parseAll("f(x == 1)").isRight)
+    ParserAST.expr.parseAll("f(x == 1)").foreach(e => eraseIndex(e).unfix match {
+      case AST.NamedApp(_, _, _) => fail("read as named arguments")
+      case _ => ()
+    })
+  }
 }

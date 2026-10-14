@@ -25,7 +25,7 @@ clang -arch arm64 build/out.s runtime/ffi.c -o build/out   # 手動リンク
 ```
 ParserAST (cats-parse) → ImportResolver → TAnalyser (型検査)
   → ModuleDesugar (module を平らな宣言列へ戻し、opaque type を表現へ読み替える)
-  → RecordDesugar (名前付きフィールドのアクセサを生成する)
+  → RecordDesugar (名前付きフィールドのアクセサを生成し、名前付きの構築を位置の適用に直す)
   → Deriver (derive 宣言を型付き TopImpl へ合成) → ContextDesugar (context ブロックを bind/ret へ脱糖)
   → PatternDesugar (match と束縛のパターンを、構成子 1 段の分岐と if / let へ展開する)
   → SelectDesugar (ドット記法 x.f を、型の module の関数か trait のメソッドの適用へ展開する)
@@ -76,7 +76,8 @@ trait `C` は辞書のデータ型でもあり（`Env.dataTypes` に登録）、
 
 ### 名前付きフィールド
 
-構成子が 1 つの data は、構成子の引数に名前を付けられる（`MkStudent(name: String)(math: i32)`。`DataConstructor.fieldNames`）。名前付きフィールドは、型の module のメンバーとしてアクセサ `Student.name: ∀ā. Student[ā] → フィールドの型` を持つ。型検査（`checkTopData`）がアクセサの名前と型を Env に登録し（`defineAccessors`。module を閉じるときの読み直しでも同じ関数を使う）、型の module を作る（または足す）。`s.name` はドット記法の規則で `Student.name(s)` になるので、レコード専用の解決はない。アクセサの本体は RecordDesugar（ModuleDesugar の直後）が `Λā. λr. match r { C(x̄) => xᵢ }` として宣言の後ろに生成する。構築とパターンは位置のまま。構成子が複数の data・式の中の data・opaque data には書けない（`FieldNamesNotAllowed`）。
+構成子が 1 つの data は、構成子の引数に名前を付けられる（`MkStudent(name: String)(math: i32)`。`DataConstructor.fieldNames`）。名前付きフィールドは、型の module のメンバーとしてアクセサ `Student.name: ∀ā. Student[ā] → フィールドの型` を持つ。型検査（`checkTopData`）がアクセサの名前と型を Env に登録し（`defineAccessors`。module を閉じるときの読み直しでも同じ関数を使う）、型の module を作る（または足す）。`s.name` はドット記法の規則で `Student.name(s)` になるので、レコード専用の解決はない。アクセサの本体は RecordDesugar（ModuleDesugar の直後）が `Λā. λr. match r { C(x̄) => xᵢ }` として宣言の後ろに生成する。パターンは位置のまま。
+すべてのフィールドに名前がある構成子は、名前でも構築できる（`MkStudent(name = "a", math = 1)`。`NamedApp(constructor, arguments, positions)`。パーサは式の続きの `(x = e, …)` を読む）。型検査（`checkNamedApp`）は、名前の前が構成子に型引数を渡し終えたもの（`ConstructorDef.fieldNames`）であることと、すべてのフィールドが 1 回ずつ渡されていることを確かめ、各引数のフィールドの位置を記録する（エラーは `NamedArgumentsInvalid`）。RecordDesugar が位置の適用に直す（順番がフィールドの順と違えば、書いた順に評価するよう let で先に束縛する）。構成子が複数の data・式の中の data・opaque data には書けない（`FieldNamesNotAllowed`）。
 
 ### match のパターン
 

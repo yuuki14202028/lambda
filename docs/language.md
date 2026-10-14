@@ -205,13 +205,14 @@ let boxed: Box[i32] = MkBox[i32](42)
 
 ### 名前付きフィールド
 
-構成子が 1 つの data では、構成子の引数に名前を付けられます（関数の引数と同じ書き方です）。名前を付けたフィールドごとに、その値を読む関数が**型の module** にできます。
+構成子が 1 つの data では、構成子の引数に名前を付けられます（関数の引数と同じ書き方です）。名前を付けたフィールドごとに、その値を読む関数が**型の module** にできます。すべてのフィールドに名前があれば、構築も名前で書けます。
 
 ```lam
 data Student = { MkStudent(name: String)(math: i32)(english: i32) }
 
-// 構築は位置で書く
+// 構築は位置でも、名前でも書ける（名前なら順番は自由）
 let alice: Student = MkStudent("Alice")(80)(90)
+let bob: Student = MkStudent(name = "Bob", english = 70, math = 85)
 
 // alice.math は Student.math(alice)（ドット記法は 9 章）
 let total(s: Student): i32 = s.math + s.english
@@ -228,6 +229,8 @@ let ok: bool = alice.passed
 ```
 
 名前のないフィールドと混ぜられ、型引数を持つ data（`data Box[a] = { MkBox(content: a) }`）や `rec data` でも使えます。パターンは今までどおり位置で書きます（`MkStudent(n)(_)(_)`）。構成子が複数ある data、式の中の data、`opaque data` には書けません。
+
+名前での構築 `C(x = e, …)` には、すべてのフィールドを 1 回ずつ渡します。値は書いた順に評価されます。型引数は構成子の後に書きます（`MkBox[i32](content = 1)`）。名前のないフィールドがある構成子は、名前では構築できません。
 
 ### match
 

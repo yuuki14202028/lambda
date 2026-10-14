@@ -128,6 +128,7 @@ val showAlg: Algebra[AST, ShowResult] = [x] => node => node match {
   case AST.TyApp(func, arg)        => s"$func[$arg]"
   case AST.Path(name, typeArgs)    => s"${name.name}${typeArgs.map(t => s"[$t]").mkString}"
   case AST.Select(receiver, name, typeArgs, _) => s"$receiver.$name${typeArgs.map(t => s"[$t]").mkString}"
+  case AST.NamedApp(constructor, arguments, _) => s"$constructor(${arguments.map(a => s"${a.name} = ${a.value}").mkString(", ")})"
   case AST.InstApp(func, evidence) => s"$func⟨${showEvidence(evidence)}⟩"
   case AST.Summon(constraint, _)   => s"summon[${showConstraint(constraint)}]"
   case AST.Using(dictionary, body) => s"using $dictionary in $body"

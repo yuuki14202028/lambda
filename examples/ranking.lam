@@ -96,7 +96,7 @@ let main(): i32 = {
   // 入れ子の module の型と、導出したインスタンス
   println("totals:");
   display[List[Summary.Scored[i32]]](students.map[Summary.Scored[i32]](Summary.of));
-  display[Summary.Scored[bool]](Summary.of(MkStudent("erin")(80)(80)).map[bool](λt: i32. t >= 150));
+  display[Summary.Scored[bool]](Summary.of(MkStudent(name = "erin", math = 80, english = 80)).map[bool](λt: i32. t >= 150));
   // 点数の検査: 1 つでも範囲の外なら全体が None
   display[Option[List[i32]]](students.map[i32](Student.math).traverse[Option][i32](valid));
   display[Option[Summary.Scored[i32]]](Summary.of(MkStudent("frank")(90)(90)).traverse[Option][i32](valid));

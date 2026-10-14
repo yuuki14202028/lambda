@@ -44,6 +44,25 @@ enum FieldNamesReason {
   }
 }
 
+// 名前付きの構築 C(x = e, …) が書けない理由
+enum NamedArgumentsReason {
+  case NotConstructor                                 // 名前の前が構成子（に型引数を渡したもの）でない
+  case UnnamedFields                                  // 構成子に名前のないフィールドがある
+  case TypeArgumentsMissing(count: Int)               // 構成子に型引数を渡していない
+  case UnknownField(field: String, fields: Seq[String])
+  case DuplicateField(field: String)
+  case MissingFields(fields: Seq[String])
+
+  def shown: String = this match {
+    case NotConstructor => "only a constructor can take named arguments"
+    case UnnamedFields => "the constructor has fields without names"
+    case TypeArgumentsMissing(count) => s"the constructor needs $count type argument(s) before the named arguments"
+    case UnknownField(field, _) => s"the constructor has no field $field"
+    case DuplicateField(field) => s"the field $field is given twice"
+    case MissingFields(fields) => s"missing field(s) ${fields.mkString(", ")}"
+  }
+}
+
 enum MemberKind {
   case ConstructorMember
   case MethodMember
@@ -148,6 +167,7 @@ enum CompileError {
   case ModifierOutsideModule(modifier: Modifier)
   // 名前付きフィールドを書けない data: 構成子が 1 つでない / 式の中の data / opaque data
   case FieldNamesNotAllowed(data: TypeVariable, reason: FieldNamesReason)
+  case NamedArgumentsInvalid(constructor: Option[Variable], reason: NamedArgumentsReason)
   case MixedRecursiveGroup
   case NoConstraintToSatisfy(actual: TypeRec[Type])
   case NotADictionary(actual: TypeRec[Type])
@@ -352,6 +372,8 @@ enum CompileError {
     case MixedRecursiveGroup => "rec { } must contain declarations of one kind: let, data, or impl / derive"
     case ModifierOutsideModule(modifier) => s"${modifier.keyword} can only be used inside a module"
     case FieldNamesNotAllowed(data, reason) => s"Data type ${data.name} cannot have named fields: ${reason.shown}"
+    case NamedArgumentsInvalid(constructor, reason) =>
+      s"Invalid named arguments${constructor.fold("")(c => s" for ${c.name}")}: ${reason.shown}"
     case AlreadyDefined(kind, name) => s"${kind.shown} $name is already defined"
     case ParamAlreadyDefined(owner) => s"${owner.shown} has a ${owner.paramNoun} that is already defined"
     case DuplicateParams(owner) => s"${owner.shown} has duplicate ${owner.paramNoun}s"

@@ -1,0 +1,7 @@
+error: `MkPoint` has no field `z`
+ --> record_construct_unknown.lam:2:31
+  |
+2 | let p: Point = MkPoint(x = 1, z = 2)
+  |                               ^ unknown field
+  |
+  = note: the fields are `x`, `y`

@@ -294,6 +294,53 @@ object TAnalyser {
     _ <- guard(Equivalence.alpha(param, receiverType), notApplicable)
   } yield selectT(resultType, receiver, member, typeArgs, resolved)
 
+  // ---- 名前付きの構築: C[T̄](x = e, …) は、すべてのフィールドに名前がある構成子に、フィールドを名前で渡す ----
+
+  private def checkNamedApp(constructor: TypeRec[Expr], arguments: Seq[NamedArg[TypeRec]]): Check[TypeRec[Expr]] = {
+    // 構成子に型引数を渡したもの C[T̄] の、構成子の名前
+    @annotation.tailrec
+    def head(e: TypeRec[Expr]): Option[Variable] = e.project match {
+      case AST.TyApp(function, _) => head(function)
+      case AST.Var(name) => Some(name)
+      case _ => None
+    }
+    def invalid[A](reason: NamedArgumentsReason, name: Option[Variable]): Check[A] =
+      failAt(constructor, CompileError.NamedArgumentsInvalid(name, reason))
+    for {
+      env <- ask
+      definition <- head(constructor).flatMap(env.constructors.get) match {
+        case Some(found) => Check.pure(found)
+        case None => invalid[ConstructorDef](NamedArgumentsReason.NotConstructor, None)
+      }
+      name = Some(definition.name)
+      fieldNames <- definition.names.sequence match {
+        case Some(all) if all.nonEmpty => Check.pure(all)
+        case _ => invalid[Seq[String]](NamedArgumentsReason.UnnamedFields, name)
+      }
+      // 型引数を渡し終えた構成子の型は、フィールドの型を順に取る関数
+      _ <- destructForAllK(typeOf(constructor)) match {
+        case Some(_) =>
+          val remaining = Iterator.iterate(Option(typeOf(constructor)))(_.flatMap(t => destructForAllK(t).map(_._3))).drop(1).takeWhile(_.nonEmpty).length
+          invalid[Unit](NamedArgumentsReason.TypeArgumentsMissing(remaining), name)
+        case None => Check.pure(())
+      }
+      positions <- arguments.zipWithIndex.traverse { case (argument, index) =>
+        val position = fieldNames.indexOf(argument.name)
+        if (position < 0) lift[Int](Left(CompileError.NamedArgumentsInvalid(name, NamedArgumentsReason.UnknownField(argument.name, fieldNames)).at(argument.span)))
+        else if (arguments.take(index).exists(_.name == argument.name))
+          lift[Int](Left(CompileError.NamedArgumentsInvalid(name, NamedArgumentsReason.DuplicateField(argument.name)).at(argument.span)))
+        else Check.pure(position)
+      }
+      missing = fieldNames.indices.filterNot(positions.contains).map(fieldNames)
+      _ <- if (missing.isEmpty) Check.pure(()) else invalid[Unit](NamedArgumentsReason.MissingFields(missing), name)
+      (fieldTypes, resultType) = fieldNames.foldLeft((Seq.empty[TypeRec[Type]], typeOf(constructor))) { case ((acc, t), _) =>
+        val (from, to) = destructArrow(t).getOrElse(invariant(s"constructor ${definition.name.name} has type ${typeOf(constructor).show}"))
+        (acc :+ from, to)
+      }
+      _ <- arguments.zip(positions).traverse_ { case (argument, position) => expectAt(fieldTypes(position), argument.value) }
+    } yield namedAppT(resultType, constructor, arguments, positions)
+  }
+
   // . を含む名前 a.b.c: 値を指すいちばん長い前半（a.b.c か a.b か a）を値として読み、残りをドット記法として読む。
   // 全体が修飾された名前（M.x）として読めるなら、それが優先される。前半のどれも値でなければ、全体を修飾された名前として報告する
   private def checkPath(name: Variable, typeArgs: Seq[TypeRec[Type]]): Check[TypeRec[Expr]] = ask.flatMap { env =>
@@ -728,7 +775,7 @@ object TAnalyser {
       peers: Seq[DataHead]
   ): Check[DataDef] =
     constructors.zipWithIndex.traverse { case (c, tag) =>
-      c.fields.traverse(field => expandChecked(field).local(fieldScope(variable, params, peers))).map(ConstructorDef(c.name, variable, _, tag))
+      c.fields.traverse(field => expandChecked(field).local(fieldScope(variable, params, peers))).map(ConstructorDef(c.name, variable, _, tag, c.names))
     }.map(DataDef(params, _, peers.map(_._1).toSet))
 
   private def defineData(variable: TypeVariable, dataDef: DataDef)(e: Env): Env =
@@ -1136,6 +1183,12 @@ object TAnalyser {
       typedArgs <- typeArgs.traverse(identity)
       selected <- checkSelect(typedReceiver, member, typedArgs)
     } yield selected
+
+    case AST.NamedApp(constructor, arguments, _) => for {
+      typedConstructor <- constructor
+      typedValues <- arguments.traverse(_.value)
+      checked <- checkNamedApp(typedConstructor, arguments.zip(typedValues).map { case (a, v) => NamedArg[TypeRec](a.name, a.span, v) })
+    } yield checked
 
     case AST.Foreign(value, types) => for {
       typedTypes <- types

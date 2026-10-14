@@ -1,4 +1,4 @@
-// 名前付きフィールド: 構成子の引数に名前を付けると、型の module にフィールドを読む関数ができる。
+// 名前付きフィールド: 構成子の引数に名前を付けると、型の module にフィールドを読む関数ができ、名前で構築できる。
 // 期待する出力は EndToEndSuite に書いてある。
 
 import "std/operators"
@@ -56,6 +56,10 @@ let main(): i32 = {
     printInt(Geometry.unit.radius + Geometry.unit.center.x);
     // 位置でのパターンは今までどおり
     printInt(match p { MkPoint(a)(b) => a * b });
+    // 名前付きの構築: 順番は自由で、書いた順に評価する
+    printInt(MkPoint(y = printInt(5), x = printInt(6)).x);
+    printInt(MkTagged[i32](value = 8, tag = 0).value);
+    printInt(Geometry.MkCircle(radius = 2, center = MkPoint(x = 1, y = 0)).center.x);
     0
   }
 }

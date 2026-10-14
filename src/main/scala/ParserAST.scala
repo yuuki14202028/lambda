@@ -477,8 +477,9 @@ object ParserAST {
 
   // 演算子の記号: 記号文字の並びを最長一致で 1 つの演算子と読む（コメントの始まりと、構文に使う記号は除く）
   private val reservedSymbols: Set[String] = Set("=", "=>", "->", ":")
+  private val symbolChars: String = "+-*/%<>=!&|^~?$@:"
   private val operatorSymbol: Parser[String] =
-    (Parser.not(Parser.string("//") | Parser.string("/*")).with1 *> Parser.charIn("+-*/%<>=!&|^~?$@:")).rep.string
+    (Parser.not(Parser.string("//") | Parser.string("/*")).with1 *> Parser.charIn(symbolChars)).rep.string
       .filter(symbol => !reservedSymbols(symbol)).backtrack
 
   private lazy val caseStartLookahead: Parser[Unit] =
@@ -521,6 +522,7 @@ object ParserAST {
       case Types(argument: IndexedRec[Type])
       case Dictionary(argument: IndexedRec[Expr]) // f(with d): 制約を解決せず、辞書を直接渡す
       case Member(name: String, typeArgs: Seq[IndexedRec[Type]]) // e.f[T]: e の型の module にある関数 f
+      case Named(arguments: Seq[NamedArg[IndexedRec]])           // C(x = e, …): 名前付きの構築
     }
     // 式の続きの .f は、行を変えて書ける
     val member: Parser[Postfix] =
@@ -530,12 +532,20 @@ object ParserAST {
       ((Parser.char('(') *> sp *> Parser.string("with") *> gap).backtrack *> Parser.defer(expr) <*- ')').map(Postfix.Dictionary.apply)
     val exprArg: Parser[Postfix] = Parser.defer(expr).parens.map(Postfix.Value.apply)
     val typeArg: Parser[Postfix] = Parser.defer(typeP).brackets.map(Postfix.Types.apply)
-    (atom ~ (unitArg | dictArg | exprArg | typeArg | member).spanned.rep0).map { case (f, args) =>
+    // name = の後の = は、== などの演算子の一部ではない
+    val namedHead: Parser[(Span, String)] = identifier.spanned <* sp <* Parser.char('=') <* Parser.not(Parser.charIn(symbolChars))
+    def namedValue(head: Parser[(Span, String)]): Parser[NamedArg[IndexedRec]] =
+      (head ~ (sp *> Parser.defer(expr))).map { case ((span, name), value) => NamedArg(name, span, value) }
+    val namedArgs: Parser[Postfix] =
+      (namedValue((Parser.char('(') *> sp *> namedHead).backtrack) ~ namedValue((spaced(',').backtrack *> namedHead)).rep0 <*- ')')
+        .map { case (first, rest) => Postfix.Named(first +: rest) }
+    (atom ~ (unitArg | dictArg | namedArgs | exprArg | typeArg | member).spanned.rep0).map { case (f, args) =>
       args.foldLeft(f) {
         case (acc, (span, Postfix.Value(a))) => at(acc.extract.to(span), AST.App(acc, a))
         case (acc, (span, Postfix.Types(t))) => at(acc.extract.to(span), AST.TyApp(acc, t))
         case (acc, (span, Postfix.Dictionary(d))) => at(acc.extract.to(span), AST.InstApp(acc, Evidence.Explicit(d)))
         case (acc, (span, Postfix.Member(name, typeArgs))) => at(acc.extract.to(span), AST.Select(acc, name, typeArgs, None))
+        case (acc, (span, Postfix.Named(arguments))) => at(acc.extract.to(span), AST.NamedApp(acc, arguments, Seq.empty))
       }
     }
   }

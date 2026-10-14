@@ -10,7 +10,10 @@ case class DataDef(params: Seq[(TypeVariable, Kind)], constructors: Seq[Construc
   def recursive: Boolean = group.nonEmpty
 }
 
-case class ConstructorDef(name: Variable, owner: TypeVariable, fields: Seq[TypeRec[Type]], tag: Int)
+// fieldNames は fields と同じ長さ（名前のないフィールドは None）
+case class ConstructorDef(name: Variable, owner: TypeVariable, fields: Seq[TypeRec[Type]], tag: Int, fieldNames: Seq[Option[String]] = Nil) {
+  def names: Seq[Option[String]] = if (fieldNames.isEmpty) fields.map(_ => None) else fieldNames
+}
 
 // 引数が展開済み（別名解決・β 正規化済み）の制約
 type TypeConstraint = Constraint[TypeRec]
