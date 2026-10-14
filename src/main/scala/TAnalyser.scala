@@ -301,7 +301,26 @@ object TAnalyser {
     }
   }
 
-  private def checkSelect(receiver: TypeRec[Expr], member: String, typeArgs: Seq[TypeRec[Type]]): Check[TypeRec[Expr]] = for {
+  /** 式 e の型の先頭に並ぶ制約を満たす。dictionaries が残っていれば先頭から順にそれで満たし（f(with d) と同じ）、なくなれば解決する。
+   *  使わなかった辞書を返す */
+  private def satisfyConstraints(e: TypeRec[Expr], dictionaries: List[TypeRec[Expr]]): Check[(TypeRec[Expr], List[TypeRec[Expr]])] =
+    destructInstArrow(typeOf(e)) match {
+      case Some((constraint, to)) => dictionaries match {
+        case dictionary :: rest => for {
+          _ <- expectAt(dictionaryType(constraint), dictionary)
+          satisfied <- satisfyConstraints(instAppT(to, e, Evidence.Explicit(dictionary)), rest)
+        } yield satisfied
+        case Nil => Resolver.resolve(constraint).flatMap(evidence => satisfyConstraints(instAppT(to, e, evidence), Nil))
+      }
+      case None => Check.pure((e, dictionaries))
+    }
+
+  private def checkSelect(
+      receiver: TypeRec[Expr],
+      member: String,
+      typeArgs: Seq[TypeRec[Type]],
+      dictionaries: Seq[TypeRec[Expr]] = Seq.empty
+  ): Check[TypeRec[Expr]] = for {
     env <- ask
     receiverType = typeOf(receiver)
     function <- selectTarget(receiver, member)
@@ -328,13 +347,17 @@ object TAnalyser {
     _ <- guard(explicit.length == typeArgs.length, CompileError.SelectTypeArguments(function, fnType, explicit.length, typeArgs.length))
     written <- typeArgs.traverse(expandWellKinded)
     arguments = fromReceiver.map { case (variable, kind) => (matched(variable), kind) } ++ written
-    // 制約はここで解決する（x.f(with d) とは書けない）。量化の間にある制約は、その前の型引数を渡した時点で解決する
-    resolved <- arguments.foldLeft(Check.pure(varrType(function, fnType))) { case (acc, (argument, kind)) =>
-      acc.flatMap(discharge).flatMap(f => lift(ContextDesugar.applyTypeArg(f, argument, kind)))
-    }.flatMap(discharge).local((e: Env) => e.copy(keepConstraints = false))
+    // 制約はここで満たす。x.f(with d) の d は先頭の制約から順に使い、残りは解決する。量化の間にある制約は、その前の型引数を渡した時点で満たす
+    satisfied <- arguments.foldLeft(Check.pure((varrType(function, fnType), dictionaries.toList))) { case (acc, (argument, kind)) =>
+      acc.flatMap { case (f, rest) => satisfyConstraints(f, rest) }.flatMap { case (f, rest) =>
+        lift(ContextDesugar.applyTypeArg(f, argument, kind)).map(_ -> rest)
+      }
+    }.flatMap { case (f, rest) => satisfyConstraints(f, rest) }.local((e: Env) => e.copy(keepConstraints = false))
+    (resolved, unused) = satisfied
+    _ <- unused.headOption.fold(Check.pure(()))(extra => failAt[Unit](extra, CompileError.NoConstraintToSatisfy(fnType)))
     (param, resultType) <- lift(destructArrow(typeOf(resolved)).toRight(notApplicable))
     _ <- guard(Equivalence.alpha(param, receiverType), notApplicable)
-  } yield selectT(resultType, receiver, member, typeArgs, resolved)
+  } yield selectT(resultType, receiver, member, typeArgs, dictionaries, resolved)
 
   // ---- 名前付きの構築: C[T̄](x = e, …) は、すべてのフィールドに名前がある構成子に、フィールドを名前で渡す ----
 
@@ -385,7 +408,7 @@ object TAnalyser {
 
   // . を含む名前 a.b.c: 値を指すいちばん長い前半（a.b.c か a.b か a）を値として読み、残りをドット記法として読む。
   // 全体が修飾された名前（M.x）として読めるなら、それが優先される。前半のどれも値でなければ、全体を修飾された名前として報告する
-  private def checkPath(name: Variable, typeArgs: Seq[TypeRec[Type]]): Check[TypeRec[Expr]] = ask.flatMap { env =>
+  private def checkPath(name: Variable, typeArgs: Seq[TypeRec[Type]], dictionaries: Seq[TypeRec[Expr]]): Check[TypeRec[Expr]] = ask.flatMap { env =>
     val segments = name.name.split('.').toSeq
     val prefix = (segments.length to 1 by -1).find(n => env.lookupValue(Variable(segments.take(n).mkString("."))).nonEmpty)
     def variable(written: Variable): Check[TypeRec[Expr]] = for {
@@ -398,16 +421,24 @@ object TAnalyser {
         for {
           base <- variable(Variable(segments.take(n).mkString("."))).local((e: Env) => e.copy(keepConstraints = false))
           inner <- selectors.init.foldLeft(Check.pure(base))((receiver, member) => receiver.flatMap(checkSelect(_, member, Seq.empty)))
-          selected <- checkSelect(inner, selectors.last, typeArgs)
+          selected <- checkSelect(inner, selectors.last, typeArgs, dictionaries)
         } yield selected
       case _ =>
+        // 修飾された名前の後の (with d) は f(with d) と同じ: 型引数を渡し終えた所で制約を残し、先頭から d で満たす
+        val keep = (e: Env) => if (dictionaries.nonEmpty) e.copy(keepConstraints = true) else e
         for {
-          base <- if (typeArgs.isEmpty) variable(name) else variable(name).local((e: Env) => e.copy(keepConstraints = false))
-          applied <- typeArgs.zipWithIndex.foldLeft(Check.pure(base)) { case (function, (argument, index)) =>
-            val last = index == typeArgs.length - 1
-            function.flatMap(f => if (last) checkTyApp(f, argument) else checkTyApp(f, argument).local((e: Env) => e.copy(keepConstraints = false)))
-          }
-        } yield applied
+          applied <- (for {
+            base <- if (typeArgs.isEmpty) variable(name) else variable(name).local((e: Env) => e.copy(keepConstraints = false))
+            applied <- typeArgs.zipWithIndex.foldLeft(Check.pure(base)) { case (function, (argument, index)) =>
+              val last = index == typeArgs.length - 1
+              function.flatMap(f => if (last) checkTyApp(f, argument) else checkTyApp(f, argument).local((e: Env) => e.copy(keepConstraints = false)))
+            }
+          } yield applied).local(keep)
+          satisfied <- if (dictionaries.isEmpty) Check.pure((applied, Nil))
+            else satisfyConstraints(applied, dictionaries.toList).local((e: Env) => e.copy(keepConstraints = false))
+          (filled, unused) = satisfied
+          _ <- unused.headOption.fold(Check.pure(()))(extra => failAt[Unit](extra, CompileError.NoConstraintToSatisfy(typeOf(applied))))
+        } yield filled
     }
   }
 
@@ -1194,12 +1225,17 @@ object TAnalyser {
       resolved <- checkTyApp(typedFunction, typedArgument)
     } yield resolved
 
-    case AST.Path(name, typeArgs) => typeArgs.traverse(identity).flatMap(checkPath(name, _))
+    case AST.Path(name, typeArgs, dictionaries) => for {
+      typedArgs <- typeArgs.traverse(identity)
+      typedDictionaries <- dictionaries.traverse(identity)
+      checked <- checkPath(name, typedArgs, typedDictionaries)
+    } yield checked
 
-    case AST.Select(receiver, member, typeArgs, _) => for {
+    case AST.Select(receiver, member, typeArgs, dictionaries, _) => for {
       typedReceiver <- receiver
       typedArgs <- typeArgs.traverse(identity)
-      selected <- checkSelect(typedReceiver, member, typedArgs)
+      typedDictionaries <- dictionaries.traverse(identity)
+      selected <- checkSelect(typedReceiver, member, typedArgs, typedDictionaries)
     } yield selected
 
     case AST.NamedApp(constructor, arguments, _) => for {

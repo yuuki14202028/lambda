@@ -45,9 +45,11 @@ enum AST[R[_], I] {
   case App(function: R[Expr], argument: R[Expr]) extends AST[R, Expr]
   case TyApp(function: R[Expr], argument: R[Type]) extends AST[R, Expr]
   // パーサが読んだ . を含む名前 a.b.c[T]。module の修飾か、値へのドット記法かは、型検査がスコープで決める（型検査後には残らない）
-  case Path(name: Variable, typeArgs: Seq[R[Type]]) extends AST[R, Expr]
+  // dictionaries は直後に書かれた (with d)（module の修飾なら f(with d) と同じ、ドット記法なら x.f(with d)）
+  case Path(name: Variable, typeArgs: Seq[R[Type]], dictionaries: Seq[R[Expr]]) extends AST[R, Expr]
   // x.f[T]: x の型の module にある関数 f の呼び出し。resolved は、型検査が決めた関数（型引数と制約を適用済み）
-  case Select(receiver: R[Expr], name: String, typeArgs: Seq[R[Type]], resolved: Option[R[Expr]]) extends AST[R, Expr]
+  // dictionaries は x.f(with d) の d（関数の制約を先頭から満たす。残りの制約は解決する）
+  case Select(receiver: R[Expr], name: String, typeArgs: Seq[R[Type]], dictionaries: Seq[R[Expr]], resolved: Option[R[Expr]]) extends AST[R, Expr]
   // C[T](x = e, …): 名前付きフィールドを名前で渡す構築。positions は、型検査が決めた各引数のフィールドの位置（書かれた順。検査前は空）
   case NamedApp(constructor: R[Expr], arguments: Seq[NamedArg[R]], positions: Seq[Int]) extends AST[R, Expr]
   case InstApp(function: R[Expr], evidence: Evidence[R]) extends AST[R, Expr]
@@ -479,8 +481,8 @@ def appT(t: TypeRec[Type], function: TypeRec[Expr], argument: TypeRec[Expr]): Ty
   HCofree(ExprAnn(t), AST.App(function, argument))
 def tyAppT(t: TypeRec[Type], function: TypeRec[Expr], argument: TypeRec[Type]): TypeRec[Expr] =
   HCofree(ExprAnn(t), AST.TyApp(function, argument))
-def selectT(t: TypeRec[Type], receiver: TypeRec[Expr], name: String, typeArgs: Seq[TypeRec[Type]], resolved: TypeRec[Expr]): TypeRec[Expr] =
-  HCofree(ExprAnn(t), AST.Select(receiver, name, typeArgs, Some(resolved)))
+def selectT(t: TypeRec[Type], receiver: TypeRec[Expr], name: String, typeArgs: Seq[TypeRec[Type]], dictionaries: Seq[TypeRec[Expr]], resolved: TypeRec[Expr]): TypeRec[Expr] =
+  HCofree(ExprAnn(t), AST.Select(receiver, name, typeArgs, dictionaries, Some(resolved)))
 def namedAppT(t: TypeRec[Type], constructor: TypeRec[Expr], arguments: Seq[NamedArg[TypeRec]], positions: Seq[Int]): TypeRec[Expr] =
   HCofree(ExprAnn(t), AST.NamedApp(constructor, arguments, positions))
 def instAppT(t: TypeRec[Type], function: TypeRec[Expr], evidence: Evidence[TypeRec]): TypeRec[Expr] =
@@ -623,8 +625,8 @@ def freeVars(expr: Rec[Expr]): Set[Variable] = {
       }
     case AST.App(function, argument) => function ++ argument
     case AST.TyApp(function, _) => function
-    case AST.Path(name, _) => Set(name)
-    case AST.Select(receiver, _, _, resolved) => receiver ++ resolved.getOrElse(Set.empty)
+    case AST.Path(name, _, dictionaries) => dictionaries.foldLeft(Set(name))(_ ++ _)
+    case AST.Select(receiver, _, _, dictionaries, resolved) => dictionaries.foldLeft(receiver ++ resolved.getOrElse(Set.empty))(_ ++ _)
     case AST.NamedApp(constructor, arguments, _) => arguments.foldLeft(constructor)(_ ++ _.value)
     case AST.Foreign(_, _) => Set.empty
     case AST.Block(discarded, result) => discarded.foldLeft(Set.empty[Variable])(_ ++ _) ++ result.getOrElse(Set.empty)

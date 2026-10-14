@@ -185,9 +185,19 @@ class SelectSuite extends FunSuite {
     assertLeftContains(validate(program(src + "let m: i32 = Counter.zero.twice")), "Module Counter.T has no member twice")
   }
 
-  test("x.f(with d) とは書けない（制約はドットの時点で解決する）") {
-    assertLeftContains(validate(program("let d: Show[i32] = summon[Show[i32]]\nlet n: i32 = numbers.shown(with d)")), "Cannot pass an instance with (with …)")
+  test("x.f(with d): 関数の制約を先頭から d で満たす") {
+    val dict = "let d: Show[i32] = impl Show[i32] { def show = λn: i32. 7 }\n"
+    assertRight(encode(program(dict + "let n: i32 = numbers.shown(with d)")))
+    // 修飾された名前の後も同じ
+    assertRight(encode(program(dict + "let n: i32 = List.shown[i32](with d)(numbers)")))
+    // 式の続きのドットでも
+    assertRight(encode(program(dict + "let n: i32 = numbers.prepend(1).shown(with d)")))
     assertRight(encode(program("let d: Show[i32] = summon[Show[i32]]\nlet n: i32 = using d in numbers.shown")))
+  }
+
+  test("x.f(with d): 辞書の型が制約と合わなければエラー、制約がなければエラー") {
+    assertLeftContains(validate(program("let n: i32 = numbers.shown(with 1)")), "Type mismatch")
+    assertLeftContains(validate(program("let d: Show[i32] = summon[Show[i32]]\nlet n: bool = numbers.isEmpty(with d)")), "Cannot pass an instance with (with …)")
   }
 
   // ---- trait のメソッド ----

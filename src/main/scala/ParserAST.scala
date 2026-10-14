@@ -553,8 +553,13 @@ object ParserAST {
       args.foldLeft(f) {
         case (acc, (span, Postfix.Value(a))) => at(acc.extract.to(span), AST.App(acc, a))
         case (acc, (span, Postfix.Types(t))) => at(acc.extract.to(span), AST.TyApp(acc, t))
-        case (acc, (span, Postfix.Dictionary(d))) => at(acc.extract.to(span), AST.InstApp(acc, Evidence.Explicit(d)))
-        case (acc, (span, Postfix.Member(name, typeArgs))) => at(acc.extract.to(span), AST.Select(acc, name, typeArgs, None))
+        // .f[T] や a.b[T] の直後の (with d) は、その関数の制約を満たす辞書（x.f(with d)）
+        case (acc, (span, Postfix.Dictionary(d))) => acc.project match {
+          case AST.Select(receiver, name, typeArgs, dictionaries, None) => at(acc.extract.to(span), AST.Select(receiver, name, typeArgs, dictionaries :+ d, None))
+          case AST.Path(name, typeArgs, dictionaries) => at(acc.extract.to(span), AST.Path(name, typeArgs, dictionaries :+ d))
+          case _ => at(acc.extract.to(span), AST.InstApp(acc, Evidence.Explicit(d)))
+        }
+        case (acc, (span, Postfix.Member(name, typeArgs))) => at(acc.extract.to(span), AST.Select(acc, name, typeArgs, Seq.empty, None))
         case (acc, (span, Postfix.Named(arguments))) => at(acc.extract.to(span), AST.NamedApp(acc, arguments, Seq.empty))
       }
     }
@@ -603,7 +608,7 @@ object ParserAST {
   // . を含む名前 a.b.c と、その直後の型引数。module の修飾か値へのドット記法かは、型検査が決める
   lazy val pathP: Parser[IndexedRec[Expr]] = {
     val dotted = (identifier.filter(n => !exprKeywords(n)) ~ ('.' *> identifier).backtrack.rep).backtrack.map { case (head, rest) => (head :: rest.toList).mkString(".") }
-    (dotted ~ Parser.defer(typeP).brackets.rep0).map { case (name, typeArgs) => AST.Path[IndexedRec, Expr](Variable(name), typeArgs) }.indexed
+    (dotted ~ Parser.defer(typeP).brackets.rep0).map { case (name, typeArgs) => AST.Path[IndexedRec, Expr](Variable(name), typeArgs, Seq.empty) }.indexed
   }
 
   private val intSuffixP: Parser[String] =

@@ -510,7 +510,7 @@ rec impl[f: * → *] Show[Fix[f]] with ∀a. Show[a] ⇒ Show[f[a]] {
 | --- | --- |
 | `summon[C[T]]` | 解決されたインスタンスの辞書 |
 | `impl C[T] { def m = … }`（式） | 辞書をその場で作る。インスタンスとしては登録されない |
-| `f[T](with d)` | 解決の代わりに、辞書 `d` を渡す |
+| `f[T](with d)`、`x.f(with d)` | 解決の代わりに、辞書 `d` を渡す（先頭の制約から順に満たし、残りは解決する） |
 | `using d in e` | `e` の中では、`d` をインスタンスとして解決に使う |
 
 同じ型に、場所によって違う実装を使えます。
@@ -534,6 +534,9 @@ let reversed[a](order: Ranked[a]): Ranked[a] = impl Ranked[a] {
 let smallest: i32 = first[i32](1)(2)
 let largest: i32 = first[i32](with reversed[i32](summon[Ranked[i32]]))(1)(2)
 let alsoLargest: i32 = using reversed[i32](summon[Ranked[i32]]) in first[i32](1)(first[i32](2)(3))
+
+// ドット記法の後にも書ける（List.sorted の制約 Ord[i32] を、この辞書で満たす）
+let descending: List[i32] = [3, 1, 2].sorted(with impl Ord[i32] { def lt(x: i32)(y: i32): bool = y < x })
 ```
 
 式としての `impl` は、スーパークラスの辞書をその位置で解決します。インスタンスがなければ、`using` で先に辞書をスコープに入れます。

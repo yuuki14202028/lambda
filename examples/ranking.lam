@@ -83,11 +83,11 @@ let main(): i32 = {
   // 解決に任せる: 数の昇順（xs.sorted は List.sorted[i32](xs)）
   display[List[i32]](students.map[i32](Student.total).sorted);
   // 辞書を渡す: 数の降順
-  display[List[i32]](List.sorted[i32](with reversed[i32](summon[Ord[i32]]))(students.map[i32](Student.total)));
+  display[List[i32]](students.map[i32](Student.total).sorted(with reversed[i32](summon[Ord[i32]])));
 
   // Student にはインスタンスがないので、順序はその場で決める
   println("by name:");
-  display[List[Student]](List.sorted[Student](with byName)(students));
+  display[List[Student]](students.sorted(with byName));
   println("by total, highest first:");
   display[List[Student]](using reversed[Student](byTotal) in students.sorted);
   println("by math (highest first), then by name:");
