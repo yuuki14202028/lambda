@@ -9,6 +9,9 @@ import "std/ord"
 
 rec data List[a] = { Nil, Cons(a)(List[a]) }
 
+// [1, 2, 3] は Cons[i32](1)(Cons[i32](2)(Cons[i32](3)(Nil[i32])))（要素の型は最初の要素の型）
+literal [] = Nil, Cons
+
 module List {
   // 2 つのリストをつなぐ（Semigroup の append と同じ）
   rec let concat[a](xs: List[a])(ys: List[a]): List[a] = match xs {

@@ -33,7 +33,7 @@ rec impl[a] Size[Rose[a]] with Size[a] {
 let leaf(x: i32): Rose[i32] = Node[i32](x)(Nil[Rose[i32]])
 
 let main(): i32 = {
-  printInt(size[List[i32]](Cons[i32](1)(Cons[i32](2)(Cons[i32](3)(Nil[i32])))));
-  printInt(size[Rose[i32]](Node[i32](0)(Cons[Rose[i32]](leaf(1))(Cons[Rose[i32]](Node[i32](2)(Cons[Rose[i32]](leaf(3))(Nil[Rose[i32]])))(Nil[Rose[i32]])))));
+  printInt(size[List[i32]]([1, 2, 3]));
+  printInt(size[Rose[i32]](Node[i32](0)([leaf(1), Node[i32](2)([leaf(3)])])));
   0
 }

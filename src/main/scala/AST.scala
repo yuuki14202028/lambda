@@ -65,6 +65,8 @@ enum AST[R[_], I] {
   case StringLit(value: String) extends AST[R, Expr]
   // `a = {x}`: 文字列と埋め込みの並び。埋め込みの resolved は、型検査が決めた「interpolate に宣言された関数を x の型で具体化したもの」
   case StrInterp(parts: Seq[InterpPart[R]]) extends AST[R, Expr]
+  // [x, y]: リストリテラル。nil / cons は、型検査が決めた「literal [] に宣言された関数を最初の要素の型で具体化したもの」
+  case ListLit(elements: Seq[R[Expr]], nil: Option[R[Expr]], cons: Option[R[Expr]]) extends AST[R, Expr]
   case Bool(value: Boolean) extends AST[R, Expr]
   case UnitLit() extends AST[R, Expr]
   case Block(discarded: Seq[R[Expr]], result: Option[R[Expr]]) extends AST[R, Expr]
@@ -381,6 +383,8 @@ def char(value: scala.Char): Rec[Expr] = HFix(AST.Char(value))
 def stringLit(value: String): Rec[Expr] = HFix(AST.StringLit(value))
 def strInterp(parts: Seq[InterpPart[Rec]]): Rec[Expr] = HFix(AST.StrInterp(parts))
 def strInterpT(t: TypeRec[Type], parts: Seq[InterpPart[TypeRec]]): TypeRec[Expr] = HCofree(ExprAnn(t), AST.StrInterp(parts))
+def listLitT(t: TypeRec[Type], elements: Seq[TypeRec[Expr]], nil: TypeRec[Expr], cons: TypeRec[Expr]): TypeRec[Expr] =
+  HCofree(ExprAnn(t), AST.ListLit(elements, Some(nil), Some(cons)))
 def bool(value: Boolean): Rec[Expr] = HFix(AST.Bool(value))
 def unitLit: Rec[Expr] = HFix(AST.UnitLit())
 def block(discarded: Seq[Rec[Expr]], result: Option[Rec[Expr]]): Rec[Expr] = HFix(AST.Block(discarded, result))
@@ -627,6 +631,7 @@ def freeVars(expr: Rec[Expr]): Set[Variable] = {
     case AST.BinOp(_, left, right, resolved) => left ++ right ++ resolved.getOrElse(Set.empty)
     case AST.OpSeq(first, rest) => first ++ rest.flatMap(_.operand)
     case AST.Intrinsic(_, args) => args.foldLeft(Set.empty[Variable])(_ ++ _)
+    case AST.ListLit(elements, nil, cons) => elements.foldLeft(nil.getOrElse(Set.empty) ++ cons.getOrElse(Set.empty))(_ ++ _)
     case AST.StrInterp(parts) => parts.foldLeft(Set.empty[Variable]) {
       case (acc, InterpPart.Embed(value, resolved)) => acc ++ value ++ resolved.getOrElse(Set.empty)
       case (acc, InterpPart.Text(_)) => acc

@@ -113,6 +113,7 @@ enum Related {
   case FirstCase(found: TypeRec[Type])               // 最初の分岐はこの型
   case Scrutinee(found: TypeRec[Type])               // match の対象はこの型
   case LeftOperand(found: TypeRec[Type])             // 演算子の左の被演算子はこの型
+  case FirstElement(found: TypeRec[Type])            // リストリテラルの最初の要素はこの型
 }
 
 /** Env から得られる、直し方の手がかり */
@@ -263,6 +264,7 @@ enum CompileError {
 
   // ---- 構文に宣言された関数（文字列埋め込み・リストリテラル） ----
   case SyntaxNotDeclared(hook: SyntaxHook)
+  case EmptyListLiteral
   case SyntaxTargetInvalid(hook: SyntaxHook, functions: Seq[Variable], types: Seq[TypeRec[Type]])
 
   // ---- エントリポイント ----
@@ -488,6 +490,7 @@ enum CompileError {
     case InContext(error) => s"context: ${error.render}"
 
     case SyntaxNotDeclared(hook) => s"${hook.keyword} is not declared"
+    case EmptyListLiteral => "An empty list literal [] cannot be written: the element type is read from the first element"
     case SyntaxTargetInvalid(hook, functions, types) =>
       s"${functions.map(_.name).mkString(", ")} cannot be declared for ${hook.keyword}: ${types.map(_.show).mkString(", ")}"
 

@@ -45,11 +45,11 @@ let main(): i32 = {
   let bob: Student = MkStudent(name = "bob", math = 70) in {
     display[Student](alice);
     println(`{alice == alice} {alice == bob} {alice < bob} {MkStudent("alice")(80) < alice}`);
-    display[List[Student]](Cons[Student](bob)(Cons[Student](alice)(Nil[Student])).sorted)
+    display[List[Student]]([bob, alice].sorted)
   };
   display[Tree[i32]](node(leaf)(1)(node(leaf)(2)(leaf)));
   println(`{node(leaf)(1)(leaf) == node(leaf)(1)(leaf)} {node(leaf)(1)(leaf) == node(leaf)(2)(leaf)} {leaf < node(leaf)(1)(leaf)} {node(leaf)(2)(leaf) < node(leaf)(1)(leaf)}`);
-  display[Wrap[i32]](MkWrap[i32](Cons[i32](1)(Cons[i32](2)(Nil[i32])))(Some[i32](3)));
+  display[Wrap[i32]](MkWrap[i32]([1, 2])(Some[i32](3)));
   println(`{MkWrap[i32](Nil[i32])(None[i32]) == MkWrap[i32](Nil[i32])(None[i32])}`);
   println(`{E(O(Zero)) == E(O(Zero))} {E(O(Zero)) == Zero}`);
   0

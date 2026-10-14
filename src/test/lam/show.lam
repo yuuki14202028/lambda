@@ -12,7 +12,7 @@ impl Show[Color] {
   }
 }
 
-let numbers: List[i32] = Cons[i32](1)(Cons[i32](2)(Cons[i32](3)(Nil[i32])))
+let numbers: List[i32] = [1, 2, 3]
 
 let main(): i32 = {
   display[i32](42);
@@ -21,7 +21,7 @@ let main(): i32 = {
   display[String]("text");
   display[List[i32]](numbers);
   display[Option[Pair[i32][Color]]](Some[Pair[i32][Color]](Pair[i32][Color](1)(Green)));
-  display[Either[String][List[Color]]](Right[String][List[Color]](Cons[Color](Red)(Nil[Color])));
+  display[Either[String][List[Color]]](Right[String][List[Color]]([Red]));
   println(`sum of {numbers} is {numbers.foldLeft[i32](0)(λacc: i32. λx: i32. acc + x)}`);
   print("no newline");
   print("\n");

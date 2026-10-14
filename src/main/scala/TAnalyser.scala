@@ -200,6 +200,25 @@ object TAnalyser {
   private def syntaxFunctions(hook: SyntaxHook): Check[Seq[Variable]] =
     ask.flatMap(env => lift(env.scope.syntax.get(hook).toRight(CompileError.SyntaxNotDeclared(hook))))
 
+  // ---- リストリテラル: [x, y] は、literal [] に宣言された nil / cons を最初の要素の型で具体化したもので組み立てる ----
+
+  private def checkListLiteral(elements: Seq[TypeRec[Expr]]): Check[TypeRec[Expr]] = elements match {
+    case Seq() => fail(CompileError.EmptyListLiteral)
+    case first +: _ => for {
+      functions <- syntaxFunctions(SyntaxHook.ListLiteral)
+      (nilFunction, consFunction) = functions match {
+        case Seq(n, c) => (n, c)
+        case _ => invariant("literal [] must declare two functions")
+      }
+      elementType = typeOf(first)
+      nil <- instantiateDeclared(nilFunction, elementType)
+      cons <- instantiateDeclared(consFunction, elementType)
+      // 宣言のときに形（cons: T → R → R）を確かめている
+      (param, _) = destructArrow(typeOf(cons)).getOrElse(invariant(s"literal []: ${typeOf(cons).show} is not a function"))
+      _ <- elements.drop(1).traverse_(element => expectAt(param, element, first -> Related.FirstElement(elementType)))
+    } yield listLitT(typeOf(nil), elements, nil, cons)
+  }
+
   // ---- 文字列埋め込み: `{x}` は、interpolate に宣言された関数 f を x の型で具体化して x に適用したもの ----
 
   private def checkInterpolation(parts: Seq[InterpPart[TypeRec]]): Check[TypeRec[Expr]] =
@@ -1207,6 +1226,8 @@ object TAnalyser {
       else fail(CompileError.NumericLiteralUnknown(typeName))
     case AST.Char(value) => okT(charT(value, charTypeT))
     case AST.StringLit(value) => okT(stringLitT(value, stringTypeT))
+    case AST.ListLit(elements, _, _) => elements.traverse(identity).flatMap(checkListLiteral)
+
     case AST.StrInterp(parts) => for {
       typedParts <- parts.traverse {
         case InterpPart.Text(value) => Check.pure(InterpPart.Text[TypeRec](value))

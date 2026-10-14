@@ -1,0 +1,6 @@
+error: mismatched types
+ --> list_literal_mismatch.lam:2:28
+  |
+2 | let xs: List[i32] = [1, 2, true]
+  |                            ^^^^ expected `i32`, found `bool`
+  |                      - the first element has type `i32`

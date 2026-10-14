@@ -149,6 +149,7 @@ val showAlg: Algebra[AST, ShowResult] = [x] => node => node match {
     case '\u0000' => "\\0"
     case ch => ch.toString
   } + "\""
+  case AST.ListLit(elements, _, _) => elements.mkString("[", ", ", "]")
   case AST.StrInterp(parts)        => parts.map {
       case InterpPart.Text(value) => value
       case InterpPart.Embed(value, _) => s"{$value}"

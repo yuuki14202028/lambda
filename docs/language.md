@@ -85,6 +85,17 @@ let message(n: i32): String = `n = {n}, doubled = {n + n}`
 
 文字列埋め込みも、演算子と同じく宣言された関数の呼び出しです。`std/show` が `interpolate = show` と宣言しているので、`{x}` は `show[T](x)`（`T` は `x` の型）になります。文字列を埋め込むときも同じで、`Show[String]` は文字列をそのまま返します。`interpolate` に宣言できるのは `∀a. … → a → String` の形の関数で、宣言はスコープに従います（module の中の宣言は `open` で見えます）。
 
+リストリテラル `[x, y, z]` も宣言された関数の呼び出しです。`std/list` が `literal [] = Nil, Cons` と宣言しているので、`[1, 2]` は `Cons[i32](1)(Cons[i32](2)(Nil[i32]))` になります。要素の型は**最初の要素の型**で、残りの要素はその型でなければなりません（演算子が左の値の型を読むのと同じです）。読む要素のない空の `[]` は書けないので、`Nil[i32]` と書きます。
+
+```lam
+let scores: List[i32] = [70, 95, 82]
+let names: List[String] = ["alice", "bob"]
+let nested: List[List[i32]] = [[1], [2, 3]]
+let empty: List[i32] = Nil[i32]
+```
+
+`literal []` には、`nil: ∀a. … → R` と `cons: ∀a. … → a → R → R`（`R` は両方で同じ）の組を宣言できます。構成子でなくてもかまいません。
+
 演算子（`+ - * / %`、`== != < <= > >=`、`!`、ビット演算 `& | ^`）は関数の呼び出しです。どの関数を呼ぶかは演算子の宣言（`infixl 6 + = add`）で決まり、`a + b` は「`+` に宣言された関数に、`a` の型を型引数として渡したもの」を `a` と `b` に適用します。`std/operators` は演算子ごとに trait（`Add` / `Sub` / `Mul` / `Div` / `Mod` / `Neg` / `Not` / `BitAnd` / `BitOr` / `BitXor`、比較は `Eq` / `Ord`）を用意し、そのメソッドを演算子に宣言しています。自分の型で演算子を使うには、その trait を実装します。
 
 ```lam
@@ -442,7 +453,7 @@ rec data Rose[a] = { Node(a)(List[Rose[a]]) }
 derive Functor[Rose]
 derive Foldable[Rose]
 
-let tree: Rose[i32] = Node[i32](1)(Cons[Rose[i32]](Node[i32](2)(Nil[Rose[i32]]))(Nil[Rose[i32]]))
+let tree: Rose[i32] = Node[i32](1)([Node[i32](2)(Nil[Rose[i32]])])
 
 let total: i32 = tree.map[i32](λx: i32. x * 10).foldLeft[i32](0)(λacc: i32. λx: i32. acc + x)
 ```
@@ -468,7 +479,7 @@ rec data Tree[a] = { Leaf, Node(Tree[a])(a)(Tree[a]) }
 derive Eq[Tree]
 derive Show[Tree]
 
-let sorted: List[Student] = Cons[Student](MkStudent(name = "bob", math = 70))(Cons[Student](MkStudent(name = "alice", math = 90))(Nil[Student])).sorted
+let sorted: List[Student] = [MkStudent(name = "bob", math = 70), MkStudent(name = "alice", math = 90)].sorted
 let shown: String = Node[i32](Leaf[i32])(1)(Leaf[i32]).show
 ```
 
@@ -648,10 +659,10 @@ import "std/prelude"
 let twice[f: * → *](xs: f[i32]): f[i32] with Functor[f] =
   xs.map[i32](λn: i32. n * 2).map[i32](λn: i32. n * 2)
 
-let shown: String = Cons[i32](1)(Cons[i32](2)(Nil[i32])).map[String](λn: i32. n.show).foldLeft[String]("")(λacc: String. λs: String. acc + s)
+let shown: String = [1, 2].map[String](λn: i32. n.show).foldLeft[String]("")(λacc: String. λs: String. acc + s)
 
 // Option[List[i32]]: どれかが None なら None
-let halves: Option[List[i32]] = Cons[i32](2)(Cons[i32](4)(Nil[i32]))
+let halves: Option[List[i32]] = [2, 4]
   .traverse[Option][i32](λn: i32. if n % 2 == 0 then Some[i32](n / 2) else None[i32])
 ```
 
@@ -699,7 +710,7 @@ let printNumber: i32 → i32 = foreign[i32 → i32] print_int
 型ごとの関数は、その型の module にあり、どれも値を最初の引数に取ります。trait のメソッド（`map`・`foldLeft`・`flatMap`・`show` など）も受け手が最初の引数です。そのためドット記法でつなげて書けます。
 
 ```lam
-let scores: List[i32] = Cons[i32](70)(Cons[i32](95)(Cons[i32](82)(Nil[i32])))
+let scores: List[i32] = [70, 95, 82]
 
 let best: i32 = scores.sorted.last.getOrElse(0)
 
@@ -709,7 +720,7 @@ let report: String = scores
   .foldLeft[String]("")(λacc: String. λs: String. if acc.isEmpty then s else acc + ", " + s)
 
 // 関数として渡すときは、module の名前で修飾する
-let lengths: List[i32] = Cons[String]("ab")(Cons[String]("cde")(Nil[String])).map[i32](String.length)
+let lengths: List[i32] = ["ab", "cde"].map[i32](String.length)
 ```
 
 | ファイル | 内容 |

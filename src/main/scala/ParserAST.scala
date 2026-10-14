@@ -499,7 +499,7 @@ object ParserAST {
     "in", "then", "else", "with", "as", "context",
     "let", "rec", "if", "match", "fold", "data", "type",
     "import", "trait", "impl", "def", "derive", "true", "false",
-    "foreign", "intrinsic", "module", "open", "private", "opaque", "summon", "using", "infixl", "infixr", "infix"
+    "foreign", "intrinsic", "module", "open", "private", "opaque", "summon", "using", "infixl", "infixr", "infix", "interpolate", "literal"
   )
 
   private val infixIdentOp: Parser[(IndexedRec[Expr], IndexedRec[Expr]) => IndexedRec[Expr]] =
@@ -561,7 +561,11 @@ object ParserAST {
   }
 
   lazy val atom: Parser[IndexedRec[Expr]] =
-    Parser.defer(blockP | unitP.backtrack | numP | charP | stringP | interpStringP | boolP | foreignP | intrinsicP | summonP | pathP | varP | Parser.defer(expr).parens)
+    Parser.defer(blockP | listP | unitP.backtrack | numP | charP | stringP | interpStringP | boolP | foreignP | intrinsicP | summonP | pathP | varP | Parser.defer(expr).parens)
+
+  // [x, y, z]（空の [] も読み、型検査がエラーにする）
+  lazy val listP: Parser[IndexedRec[Expr]] =
+    ('[' -*> Parser.defer(expr).repSep0(spaced(',').backtrack) <*- ']').map(elements => AST.ListLit[IndexedRec, Expr](elements, None, None)).indexed
 
   // using d in e: e の中では、辞書 d をインスタンスとして解決に使う
   lazy val usingP: Parser[IndexedRec[Expr]] =

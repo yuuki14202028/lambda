@@ -30,7 +30,7 @@ derive Traversable[Rose]
 let leaf(x: i32): Rose[i32] = Node[i32](x)(Nil[Rose[i32]])
 
 let rose(a: i32)(b: i32)(c: i32): Rose[i32] =
-  Node[i32](a)(Cons[Rose[i32]](leaf(b))(Cons[Rose[i32]](Node[i32](c)(Cons[Rose[i32]](leaf(a))(Nil[Rose[i32]])))(Nil[Rose[i32]])))
+  Node[i32](a)([leaf(b), Node[i32](c)([leaf(a)])])
 
 let roseScore(t: Rose[i32]): i32 = match t.traverse[Option][i32](halve) {
   None => 0 - 1
@@ -51,12 +51,12 @@ let optional(o: Option[i32]): i32 = match o.traverse[Option][i32](halve) {
 }
 
 let main(): i32 = {
-  printInt(score(Cons[i32](2)(Cons[i32](4)(Cons[i32](6)(Nil[i32])))));
-  printInt(score(Cons[i32](2)(Cons[i32](3)(Nil[i32]))));
+  printInt(score([2, 4, 6]));
+  printInt(score([2, 3]));
   printInt(roseScore(rose(2)(4)(6)));
   printInt(roseScore(rose(2)(5)(6)));
-  printInt(firstBad(Cons[i32](1)(Cons[i32](2)(Nil[i32]))));
-  printInt(firstBad(Cons[i32](1)(Cons[i32](0 - 7)(Cons[i32](0 - 9)(Nil[i32])))));
+  printInt(firstBad([1, 2]));
+  printInt(firstBad([1, 0 - 7, 0 - 9]));
   printInt(optional(Some[i32](8)));
   printInt(optional(None[i32]));
   printInt(optional(Some[i32](3)));

@@ -69,7 +69,7 @@ let main(): i32 = {
   printInt(2 ^^ 3 ^^ 2);
   printInt(2 * 3 ^^ 2);
   // :: と ++ は同じ優先順位の右結合
-  printInt(digits(1 :: Cons[i32](2)(Nil[i32]) ++ 3 :: Nil[i32]));
+  printInt(digits(1 :: [2] ++ 3 :: Nil[i32]));
   // いちばん弱い演算子: 左は 1 + 2 + 3 まで
   printInt(1 :: 2 :: Nil[i32] ++ 3 :: Nil[i32] |> sum);
   // 比較は && より強く、&& は || より強い

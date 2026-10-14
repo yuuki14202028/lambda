@@ -6,6 +6,7 @@ package com.yuuki14202028
  *   a ⊕ b  ↦  f[T](a)(b)        ⊖a  ↦  g[T](a)
  *   a && b ↦  if a then b else false        a || b ↦  if a then true else b
  *   `s{x}`  ↦  concat("s")(interpolate[T](x))（文字列どうしは組み込みの concat でつなぐ）
+ *   [x, y]  ↦  cons[T](x)(cons[T](y)(nil[T]))
  */
 object OperatorDesugar {
 
@@ -28,6 +29,9 @@ object OperatorDesugar {
       }
       strings.reduceLeftOption((acc, part) => mkApp(mkApp(foreignT(Variable("concat"), concatType, concatType), acc), part))
         .getOrElse(stringLitT("", stringTypeT))
+    case (ExprAnn(_), AST.ListLit(elements, Some(nil), Some(cons))) =>
+      elements.foldRight(nil)((element, rest) => mkApp(mkApp(cons, element), rest))
+    case (ExprAnn(_), AST.ListLit(_, _, _)) => invariant("a list literal reached OperatorDesugar without resolved functions")
     case (ann, node) => HCofree(ann, node)
   }
 }

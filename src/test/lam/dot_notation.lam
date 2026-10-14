@@ -27,7 +27,7 @@ module List {
 
 module List {
   private rec let place[a](x: a)(sorted: List[a]): List[a] with Ord[a] = match sorted {
-    Nil => Cons[a](x)(Nil[a])
+    Nil => [x]
     Cons(y)(rest) => if x < y then Cons[a](x)(sorted) else Cons[a](y)(place[a](x)(rest))
   }
 
@@ -71,7 +71,7 @@ module Shape {
   let unit: T = Rect(1)(1)
 }
 
-let numbers: List[i32] = Cons[i32](3)(Cons[i32](1)(Cons[i32](2)(Nil[i32])))
+let numbers: List[i32] = [3, 1, 2]
 
 let main(): i32 = {
   printInt(numbers.size);

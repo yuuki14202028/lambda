@@ -18,12 +18,12 @@ let testEither(): bool =
   }
 
 let testList(): bool =
-  let nums: List[i32] = Cons[i32](1)(Cons[i32](2)(Cons[i32](3)(Nil[i32]))) in
+  let nums: List[i32] = [1, 2, 3] in
   let total: i32 = foldLeft[List][i32][i32](nums)(0)(λacc: i32. λx: i32. add[i32](acc)(x)) in
   eq[i32](total)(6)
 
 let testListFunctor(): bool =
-  let nums: List[i32] = Cons[i32](1)(Cons[i32](2)(Nil[i32])) in
+  let nums: List[i32] = [1, 2] in
   let doubled: List[i32] = nums.map[i32](λx: i32. mul[i32](x)(2)) in
   let total: i32 = doubled.foldRight[i32](0)(λx: i32. λacc: i32. add[i32](x)(acc)) in
   eq[i32](total)(6)
@@ -123,14 +123,14 @@ let testShow(): bool =
     show[Either[String][i32]](Left[String][i32]("e")) == "Left(e)" &&
     show[Pair[i32][bool]](Pair[i32][bool](1)(false)) == "(1, false)" &&
     show[List[i32]](Nil[i32]) == "[]" &&
-    show[List[i32]](Cons[i32](1)(Cons[i32](2)(Cons[i32](3)(Nil[i32])))) == "[1, 2, 3]" &&
-    show[List[Option[i32]]](Cons[Option[i32]](Some[i32](1))(Cons[Option[i32]](None[i32])(Nil[Option[i32]]))) == "[Some(1), None]" &&
-    `n = {1}, xs = {Cons[i32](1)(Nil[i32])}, ok = {true}` == "n = 1, xs = [1], ok = true"
+    show[List[i32]]([1, 2, 3]) == "[1, 2, 3]" &&
+    show[List[Option[i32]]]([Some[i32](1), None[i32]]) == "[Some(1), None]" &&
+    `n = {1}, xs = {[1]}, ok = {true}` == "n = 1, xs = [1], ok = true"
 
 let testContainerOrder(): bool =
-  let one: List[i32] = Cons[i32](1)(Nil[i32]) in
-  let oneTwo: List[i32] = Cons[i32](1)(Cons[i32](2)(Nil[i32])) in
-  let two: List[i32] = Cons[i32](2)(Nil[i32]) in
+  let one: List[i32] = [1] in
+  let oneTwo: List[i32] = [1, 2] in
+  let two: List[i32] = [2] in
   eq[Option[i32]](Some[i32](1))(Some[i32](1)) && neq[Option[i32]](Some[i32](1))(None[i32]) &&
     lt[Option[i32]](None[i32])(Some[i32](0)) && lt[Option[i32]](Some[i32](1))(Some[i32](2)) && !lt[Option[i32]](Some[i32](1))(None[i32]) &&
     eq[Either[String][i32]](Left[String][i32]("a"))(Left[String][i32]("a")) && neq[Either[String][i32]](Left[String][i32]("a"))(Right[String][i32](1)) &&
@@ -139,7 +139,7 @@ let testContainerOrder(): bool =
     lt[Pair[i32][String]](Pair[i32][String](1)("b"))(Pair[i32][String](2)("a")) && lt[Pair[i32][String]](Pair[i32][String](1)("a"))(Pair[i32][String](1)("b")) &&
     eq[List[i32]](oneTwo)(oneTwo) && neq[List[i32]](one)(oneTwo) && eq[List[i32]](Nil[i32])(Nil[i32]) &&
     lt[List[i32]](one)(oneTwo) && lt[List[i32]](oneTwo)(two) && geq[List[i32]](two)(one) && !lt[List[i32]](one)(one) &&
-    eq[List[Option[i32]]](Cons[Option[i32]](None[i32])(Nil[Option[i32]]))(Cons[Option[i32]](None[i32])(Nil[Option[i32]]))
+    eq[List[Option[i32]]]([None[i32]])([None[i32]])
 
 let testListFunctions(): bool =
   let xs: List[i32] = List.range(1)(6) in
@@ -154,14 +154,14 @@ let testListFunctions(): bool =
     xs.any(λx: i32. x == 5) && !xs.any(λx: i32. x == 6) &&
     xs.all(λx: i32. x > 0) && !xs.all(λx: i32. x > 1) &&
     xs.contains(3) && !xs.contains(7) &&
-    show[List[Pair[i32][bool]]](xs.zip[bool](Cons[bool](true)(Cons[bool](false)(Nil[bool])))) == "[(1, true), (2, false)]" &&
+    show[List[Pair[i32][bool]]](xs.zip[bool]([true, false])) == "[(1, true), (2, false)]" &&
     show[List[i32]](xs.zipWith[i32][i32](xs)(λa: i32. λb: i32. a * b)) == "[1, 4, 9, 16, 25]" &&
-    show[List[i32]](Cons[List[i32]](List.range(1)(3))(Cons[List[i32]](Nil[i32])(Cons[List[i32]](List.range(7)(9))(Nil[List[i32]]))).flatten) == "[1, 2, 7, 8]" &&
+    show[List[i32]]([List.range(1)(3), Nil[i32], List.range(7)(9)].flatten) == "[1, 2, 7, 8]" &&
     show[List[i32]](xs.map[i32](λx: i32. x * 2).filter(λx: i32. x > 4).reverse) == "[10, 8, 6]" &&
     xs.foldLeft[i32](0)(λacc: i32. λx: i32. acc * 10 + x) == 12345 && xs.foldRight[i32](0)(λx: i32. λacc: i32. acc * 10 + x) == 54321 &&
-    show[List[i32]](xs.flatMap[i32](λx: i32. Cons[i32](x)(Cons[i32](x)(Nil[i32]))).take(4)) == "[1, 1, 2, 2]" &&
-    show[List[i32]](Cons[i32](3)(Cons[i32](1)(Cons[i32](2)(Nil[i32]))).sorted) == "[1, 2, 3]" &&
-    show[List[String]](Cons[String]("b")(Cons[String]("a")(Nil[String])).sorted.append(Nil[String])) == "[a, b]" &&
+    show[List[i32]](xs.flatMap[i32](λx: i32. [x, x]).take(4)) == "[1, 1, 2, 2]" &&
+    show[List[i32]]([3, 1, 2].sorted) == "[1, 2, 3]" &&
+    show[List[String]](["b", "a"].sorted.append(Nil[String])) == "[a, b]" &&
     Pair[i32][bool](1)(true).first == 1 && Pair[i32][bool](1)(true).swap.first &&
     Some[i32](1).isSome && None[i32].isNone && Some[i32](2).map[i32](λx: i32. x + 1).getOrElse(0) == 3 &&
     42.toString == "42" && 'x'.toString == "x"

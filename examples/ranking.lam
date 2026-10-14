@@ -67,10 +67,12 @@ open Ordering
 open Grades
 
 let students: List[Student] =
-  Cons[Student](MkStudent("carol")(70)(90))(
-  Cons[Student](MkStudent("alice")(85)(75))(
-  Cons[Student](MkStudent("dave")(85)(60))(
-  Cons[Student](MkStudent("bob")(50)(95))(Nil[Student]))))
+  [
+    MkStudent("carol")(70)(90),
+    MkStudent("alice")(85)(75),
+    MkStudent("dave")(85)(60),
+    MkStudent("bob")(50)(95)
+  ]
 
 // フィールドを読む関数は普通の関数なので、そのまま渡せる
 let byName: Ord[Student] = by[Student][String](Student.name)

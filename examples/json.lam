@@ -171,7 +171,7 @@ rec let total(j: Json): i32 = match j {
   JNull | JBool(_) | JString(_) => 0
 }
 
-let path(a: String)(b: String): List[String] = Cons[String](a)(Cons[String](b)(Nil[String]))
+let path(a: String)(b: String): List[String] = [a, b]
 
 let report(text: String): unit = match Reading.read(text) {
   None => println(`cannot read: {text}`)

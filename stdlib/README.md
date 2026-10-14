@@ -98,7 +98,7 @@ let divSafe(x: i32)(y: i32): Option[i32] =
 ```lambda
 import "std/prelude"
 
-let nums(): List[i32] = Cons[i32](1)(Cons[i32](2)(Cons[i32](3)(Nil[i32])))
+let nums(): List[i32] = [1, 2, 3]
 
 let total(): i32 =
   nums().foldLeft[i32](0)(λacc: i32. λx: i32. acc + x)

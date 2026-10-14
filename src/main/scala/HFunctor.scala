@@ -168,6 +168,8 @@ given HTraverse[AST] with {
     case AST.Num(v, t) => Applicative[G].pure(AST.Num(v, t))
     case AST.Char(v) => Applicative[G].pure(AST.Char(v))
     case AST.StringLit(v) => Applicative[G].pure(AST.StringLit(v))
+    case AST.ListLit(elements, nil, cons) =>
+      (elements.traverse(e => f(e)), nil.traverse(e => f(e)), cons.traverse(e => f(e))).mapN(AST.ListLit(_, _, _))
     case AST.StrInterp(parts) =>
       parts.traverse {
         case InterpPart.Text(value) => Applicative[G].pure(InterpPart.Text[S](value))

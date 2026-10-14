@@ -181,6 +181,7 @@ object Diagnostic {
     case Related.FirstCase(found) => s"the first case has type ${ty(found)}"
     case Related.Scrutinee(found) => s"this has type ${ty(found)}"
     case Related.LeftOperand(found) => s"the left operand has type ${ty(found)}"
+    case Related.FirstElement(found) => s"the first element has type ${ty(found)}"
   }
 
   // (補足, 直し方)
@@ -641,6 +642,10 @@ object Diagnostic {
         "list literals are not declared", "this list",
         notes = Seq("`[x, y]` calls the functions declared with `literal [] = nil, cons`, with the type of the first element: `cons[T](x)(cons[T](y)(nil[T]))`"),
         helps = Seq("the standard library declares `literal [] = Nil, Cons`: add `import \"std/list\"`"))
+      case EmptyListLiteral => Description(
+        "an empty list cannot be written as `[]`", "no element to read the type from",
+        notes = Seq("the element type of `[x, y]` is the type of its first element"),
+        helps = Seq("write the empty value with its type argument, for example `Nil[i32]`"))
       case SyntaxTargetInvalid(hook, functions, types) =>
         val shape = hook match {
           case SyntaxHook.Interpolate => "`interpolate` needs a function of type `∀a. … → a → String`: its type parameter receives the type of the embedded value"

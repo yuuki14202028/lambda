@@ -93,7 +93,7 @@ PatternDesugar は行列から決定木を作り、構成子 1 段の `Match`（
 
 ### 構文に宣言された関数（interpolate / literal []）
 
-演算子と同じく、文字列埋め込みとリストリテラルも、ライブラリが宣言した関数を呼ぶ（`TopSyntax(hook, functions)`、`SyntaxHook`。スコープは `Names.syntax` で演算子と同じ規則）。`interpolate = show` の下で `` `a{x}` `` の `{x}` は `show[T](x)`（T は x の型。String も例外なく通す）。型検査は `StrInterp(parts: Seq[InterpPart])` を保ち、埋め込みごとに具体化した関数を `InterpPart.Embed.resolved` に記録し、OperatorDesugar が組み込みの concat でつなぐ。宣言できる関数の形は `syntaxShape` が確かめる（`∀a. … → a → String`）。
+演算子と同じく、文字列埋め込みとリストリテラルも、ライブラリが宣言した関数を呼ぶ（`TopSyntax(hook, functions)`、`SyntaxHook`。スコープは `Names.syntax` で演算子と同じ規則）。`interpolate = show` の下で `` `a{x}` `` の `{x}` は `show[T](x)`（T は x の型。String も例外なく通す）。型検査は `StrInterp(parts: Seq[InterpPart])` を保ち、埋め込みごとに具体化した関数を `InterpPart.Embed.resolved` に記録し、OperatorDesugar が組み込みの concat でつなぐ。`literal [] = Nil, Cons` の下で `[x, y]` は `Cons[T](x)(Cons[T](y)(Nil[T]))`（T は最初の要素の型。空の `[]` はエラー `EmptyListLiteral`）。型検査は `ListLit(elements, nil, cons)` に具体化した 2 つの関数を記録し、OperatorDesugar が組み立てる。宣言できる関数の形は `syntaxShape` が確かめる（`∀a. … → a → String`、`nil: ∀a. … → R` と `cons: ∀a. … → a → R → R`）。`interpolate` と `literal` は式のキーワード（宣言の前の行の式の続きと読まないため）。
 
 ### エラー表示（Diagnostic.scala）
 

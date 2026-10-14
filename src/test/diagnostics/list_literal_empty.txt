@@ -1,0 +1,8 @@
+error: an empty list cannot be written as `[]`
+ --> list_literal_empty.lam:2:21
+  |
+2 | let xs: List[i32] = []
+  |                     ^^ no element to read the type from
+  |
+  = note: the element type of `[x, y]` is the type of its first element
+  = help: write the empty value with its type argument, for example `Nil[i32]`

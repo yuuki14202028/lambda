@@ -60,7 +60,7 @@ let main(): i32 = {
     println(`double = {double[Vec](v)}, {double[i32](21)}, {double[String]("ab")}`);
     println(`equal = {v + v == double[Vec](v)}`);
     println(`compute = {compute(5)}, {compute(0)}`);
-    println(`classify = {Cons[i32](0)(Cons[i32](-4)(Cons[i32](2)(Cons[i32](9)(Nil[i32])))).map[String](classify)}`);
+    println(`classify = {[0, -4, 2, 9].map[String](classify)}`);
     println(`squares = {squares}, sum = {squares.foldLeft[i32](0)(λacc: i32. λn: i32. acc + n)}`);
     println(`dot = {sumPairs(numbers.zip[i32](squares))}`);
     0
