@@ -189,4 +189,53 @@ class SelectSuite extends FunSuite {
     assertLeftContains(validate(program("let d: Show[i32] = summon[Show[i32]]\nlet n: i32 = numbers.shown(with d)")), "Cannot pass an instance with (with …)")
     assertRight(encode(program("let d: Show[i32] = summon[Show[i32]]\nlet n: i32 = using d in numbers.shown")))
   }
+
+  // ---- trait のメソッド ----
+
+  private val traits =
+    """rec data List[a] = { Nil, Cons(a)(List[a]) }
+      |data Option[a] = { Some(a), None }
+      |trait Functor[f: * → *] { def map[a][b](x: f[a])(g: a → b): f[b] }
+      |trait Applicative[f: * → *] with Functor[f] { def pure[a](x: a): f[a] }
+      |trait Traversable[t: * → *] with Functor[t] { def traverse[a][g: * → *][b](xs: t[a])(f: a → g[b]): g[t[b]] with Applicative[g] }
+      |trait Show[a] { def show(x: a): i32 }
+      |impl Show[i32] { def show = λn: i32. n }
+      |impl Functor[Option] { def map[a][b](x: Option[a])(g: a → b): Option[b] = match x { Some(v) => Some[b](g(v))  None => None[b] } }
+      |impl Applicative[Option] { def pure[a](x: a): Option[a] = Some[a](x) }
+      |rec impl Functor[List] { def map[a][b](x: List[a])(g: a → b): List[b] = match x { Nil => Nil[b]  Cons(v)(rest) => Cons[b](g(v))(map[List][a][b](rest)(g)) } }
+      |impl Traversable[Option] { def traverse[a][g: * → *][b](xs: Option[a])(f: a → g[b]): g[Option[b]] with Applicative[g] = match xs {
+      |  Some(v) => f(v).map[Option[b]](λy: b. Some[b](y))
+      |  None => pure[g][Option[b]](None[b])
+      |} }
+      |let numbers: List[i32] = Cons[i32](1)(Nil[i32])
+      |""".stripMargin
+
+  private def withTraits(body: String): String = traits + body + "\nlet main(): i32 = 0\n"
+
+  test("trait のメソッドも、受け手を最初の引数としてドットで呼べる") {
+    assertRight(encode(withTraits("let doubled: List[bool] = numbers.map[bool](λn: i32. true)")))
+    assertRight(encode(withTraits("let n: i32 = (3).show")))
+  }
+
+  test("trait のメソッド: 受け手の型が型変数でも、スコープ中の制約で解決する") {
+    assertRight(encode(withTraits("let twice[f: * → *](xs: f[i32]): f[i32] with Functor[f] = xs.map[i32](λn: i32. n).map[i32](λn: i32. n)")))
+  }
+
+  test("trait のメソッド: メソッド自身の制約は、型引数を書いた時点で解決する") {
+    assertRight(encode(withTraits("let o: Option[Option[i32]] = Some[i32](1).traverse[Option][i32](λn: i32. Some[i32](n))")))
+  }
+
+  test("trait のメソッド: インスタンスがなければ、ふつうのインスタンスのエラー") {
+    assertLeftContains(validate(withTraits("let b: i32 = true.show")), "No instance")
+  }
+
+  test("型の module の関数と trait のメソッドが同じ名前なら、曖昧さのエラー") {
+    assertLeftContains(
+      validate(withTraits("module List { let map[a][b](xs: List[a])(f: a → b): List[b] = Nil[b] }\nlet m: List[i32] = numbers.map[i32](λn: i32. n)")),
+      "Ambiguous .map")
+  }
+
+  test("局所的な束縛に隠された trait のメソッドは、候補にならない") {
+    assertLeftContains(validate(withTraits("let f(show: i32 → i32): i32 = (1).show")), "Module i32 has no member show")
+  }
 }

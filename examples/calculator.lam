@@ -65,8 +65,8 @@ module Parsing {
   })
 
   impl Functor[Parser] {
-    def map[a][b](f: a → b): Parser[a] → Parser[b] =
-      λp: Parser[a]. MkParser[b](λinput: Input. map[Reply][a][b](f)(step[a](p)(input)))
+    def map[a][b](p: Parser[a])(f: a → b): Parser[b] =
+      MkParser[b](λinput: Input. step[a](p)(input).map[b](f))
   }
 
   // apply は flatMap で書き、Monad は Applicative をスーパークラスに持つので、2 つのインスタンスは互いを必要とする
@@ -74,7 +74,7 @@ module Parsing {
     impl Applicative[Parser] {
       def pure[a](x: a): Parser[a] = MkParser[a](λinput: Input. Parsed[a](x)(input))
       def apply[a][b](pf: Parser[a → b]): Parser[a] → Parser[b] =
-        λp: Parser[a]. flatMap[Parser][a → b][b](pf)(λf: a → b. map[Parser][a][b](f)(p))
+        λp: Parser[a]. pf.flatMap[b](λf: a → b. p.map[b](f))
     }
 
     impl Monad[Parser] {
@@ -116,10 +116,10 @@ let token[a](p: Parser[a]): Parser[a] = context[Parser] {
 let symbol(c: char): Parser[char] = token[char](satisfy(`\`{String.fromChar(c)}\``)(λfound: char. found == c))
 
 let number: Parser[i32] = token[i32](
-  map[Parser][List[char]][i32](λdigits: List[char]. String.toInt(String.fromList(digits)))(some[char](satisfy("a number")(char.isDigit)))
+  some[char](satisfy("a number")(char.isDigit)).map[i32](λdigits: List[char]. String.toInt(String.fromList(digits)))
 )
 
-let word: Parser[Name] = token[Name](map[Parser][List[char]][Name](String.fromList)(some[char](satisfy("a name")(char.isLower))))
+let word: Parser[Name] = token[Name](some[char](satisfy("a name")(char.isLower)).map[Name](String.fromList))
 
 // 決まった単語。別の単語だったら、読まなかったことにする
 let keyword(text: String): Parser[Name] = attempt[Name](context[Parser] {
@@ -149,10 +149,10 @@ let chain(operand: Parser[Expr])(operation: Parser[Operator]): Parser[Expr] =
       more: Expr = rest(Binary(op)(left)(right));
       more
     })(pure[Parser][Expr](left))
-  in flatMap[Parser][Expr][Expr](operand)(rest)
+  in operand.flatMap[Expr](rest)
 
 let operatorOf(c: char)(op: Operator): Parser[Operator] =
-  map[Parser][char][Operator](λfound: char. op)(symbol(c))
+  symbol(c).map[Operator](λfound: char. op)
 
 // 互いを呼ぶ構文解析器。値のままでは初期化前の相手を読むことになるので、unit を取る関数にする
 rec {
@@ -179,8 +179,8 @@ rec {
       minus: char = symbol('-');
       operand: Expr = unary(());
       Negate(operand)
-    })(orElse[Expr](map[Parser][i32][Expr](Number)(number))(
-      orElse[Expr](map[Parser][Name][Expr](Variable)(word))(context[Parser] {
+    })(orElse[Expr](number.map[Expr](Number))(
+      orElse[Expr](word.map[Expr](Variable))(context[Parser] {
         opening: char = symbol('(');
         inner: Expr = expr(());
         closing: char = symbol(')');
@@ -278,7 +278,7 @@ rec let lookup(name: Name)(bindings: Bindings): Result[i32] = match bindings {
 rec let evaluate(bindings: Bindings)(e: Expr): Result[i32] = match e {
   Number(n) => Right[Failure][i32](n)
   Variable(name) => lookup(name)(bindings)
-  Negate(inner) => map[Result][i32][i32](λv: i32. 0 - v)(evaluate(bindings)(inner))
+  Negate(inner) => evaluate(bindings)(inner).map[i32](λv: i32. 0 - v)
   Binary(op)(left)(right) => context[Result] {
     a: i32 = evaluate(bindings)(left);
     b: i32 = evaluate(bindings)(right);

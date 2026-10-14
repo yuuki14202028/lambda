@@ -82,7 +82,7 @@ ParserAST (cats-parse)
   → Deriver          derive 宣言を手書きと同形の impl へ合成
   → ContextDesugar   context ブロックを pure / flatMap へ脱糖
   → PatternDesugar   match と束縛のパターンを、構成子 1 段の分岐と if / let へ展開
-  → SelectDesugar    ドット記法 x.f を、x の型の module の関数の適用へ
+  → SelectDesugar    ドット記法 x.f を、x の型の module の関数か trait のメソッドの適用へ
   → OperatorDesugar  演算子を、宣言された関数の適用へ（&& と || は if へ）
   → TraitEncoder     trait / impl を辞書渡しへ脱糖
   → ChurchEncoder    data / match / fold を Church encoding 化

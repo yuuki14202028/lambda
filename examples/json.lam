@@ -140,9 +140,9 @@ rec impl Show[Json] {
     JNumber(n) => show[i32](n)
     JString(s) => `"{s}"`
     JArray(items) => show[List[Json]](items)
-    JObject(fields) => `\{{foldLeft[List][Pair[String][Json]][String](λacc: String. λfield: Pair[String][Json]. match field {
+    JObject(fields) => `\{{fields.foldLeft[String]("")(λacc: String. λfield: Pair[String][Json]. match field {
       Pair(key)(value) => if acc == "" then `"{key}": {value}` else `{acc}, "{key}": {value}`
-    })("")(fields)}\}`
+    })}\}`
   }
 }
 
@@ -157,17 +157,17 @@ rec let field(key: String)(fields: List[Pair[String][Json]]): Option[Json] = mat
 // キーの列をたどる
 rec let at(path: List[String])(j: Json): Option[Json] = match Pair[List[String]][Json](path)(j) {
   Pair(Nil)(_) => Some[Json](j)
-  Pair(Cons(key)(rest))(JObject(fields)) => flatMap[Option][Json][Json](field(key)(fields))(at(rest))
+  Pair(Cons(key)(rest))(JObject(fields)) => field(key)(fields).flatMap[Json](at(rest))
   _ => None[Json]
 }
 
 // 中にある数をすべて足す
 rec let total(j: Json): i32 = match j {
   JNumber(n) => n
-  JArray(items) => foldLeft[List][Json][i32](λacc: i32. λitem: Json. acc + total(item))(0)(items)
-  JObject(fields) => foldLeft[List][Pair[String][Json]][i32](λacc: i32. λf: Pair[String][Json]. match f {
+  JArray(items) => items.foldLeft[i32](0)(λacc: i32. λitem: Json. acc + total(item))
+  JObject(fields) => fields.foldLeft[i32](0)(λacc: i32. λf: Pair[String][Json]. match f {
     Pair(_)(value) => acc + total(value)
-  })(0)(fields)
+  })
   JNull | JBool(_) | JString(_) => 0
 }
 
@@ -186,7 +186,7 @@ let main(): i32 = {
   report("[1, 2");
   report("{\"a\": }");
   report("[1] 2");
-  display[Option[Json]](flatMap[Option][Json][Json](Reading.read("{\"point\": {\"x\": 3, \"y\": 4}}"))(at(path("point")("y"))));
-  display[Option[Json]](flatMap[Option][Json][Json](Reading.read("{\"point\": {\"x\": 3}}"))(at(path("point")("y"))));
+  display[Option[Json]](Reading.read("{\"point\": {\"x\": 3, \"y\": 4}}").flatMap[Json](at(path("point")("y"))));
+  display[Option[Json]](Reading.read("{\"point\": {\"x\": 3}}").flatMap[Json](at(path("point")("y"))));
   0
 }

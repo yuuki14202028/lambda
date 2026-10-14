@@ -88,7 +88,7 @@ let main(): i32 = {
   printInt(Shape.area(Shape.Rect(2)(5)));
   printInt(Shape.area(Shape.Unit.square));
   printInt(size[i32](numbers));
-  printInt(Stack.sum(map[Stack][i32][i32](λn: i32. n * 10)(numbers)));
+  printInt(Stack.sum(numbers.map[i32](λn: i32. n * 10)));
   printInt(Describe.weight[i32](7));
   printInt(Describe.twice[Counter.T](two));
   printInt(Describe.weight[Shape.Shape](Shape.Circle(9)));

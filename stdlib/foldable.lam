@@ -1,4 +1,8 @@
+// 畳み込める入れ物。受け手が最初の引数なので、xs.foldLeft[b](start)(f) と書ける。
+
 trait Foldable[F: * → *] {
-  def foldRight[a][b](f: a → b → b)(z: b): F[a] → b
-  def foldLeft[a][b](f: b → a → b)(z: b): F[a] → b
+  // 右から畳み込む: f(x1)(f(x2)(…f(xn)(start)…))
+  def foldRight[a][b](xs: F[a])(start: b)(f: a → b → b): b
+  // 左から畳み込む: f(…f(f(start)(x1))(x2)…)(xn)
+  def foldLeft[a][b](xs: F[a])(start: b)(f: b → a → b): b
 }

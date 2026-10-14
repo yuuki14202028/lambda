@@ -2,6 +2,8 @@ import "std/list"
 import "std/functor"
 import "std/foldable"
 import "std/traversable"
+import "std/applicative"
+import "std/monad"
 import "std/semigroup"
 import "std/monoid"
 import "std/operators"
@@ -13,8 +15,20 @@ derive Functor[List]
 derive Foldable[List]
 derive Traversable[List]
 
+impl Applicative[List] {
+  def pure[a](x: a): List[a] = Cons[a](x)(Nil[a])
+
+  // 関数と値のすべての組み合わせ
+  def apply[a][b](fs: List[a → b]): List[a] → List[b] =
+    λxs: List[a]. List.flatten[b](map[List][a → b][List[b]](fs)(λf: a → b. map[List][a][b](xs)(f)))
+}
+
+impl Monad[List] {
+  def flatMap[a][b](xs: List[a])(f: a → List[b]): List[b] = List.flatten[b](map[List][a][List[b]](xs)(f))
+}
+
 impl[t] Semigroup[List[t]] {
-  def append(xs: List[t])(ys: List[t]): List[t] = List.append[t](xs)(ys)
+  def append(xs: List[t])(ys: List[t]): List[t] = List.concat[t](xs)(ys)
 }
 
 impl[t] Monoid[List[t]] {

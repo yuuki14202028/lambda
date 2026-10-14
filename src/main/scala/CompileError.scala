@@ -142,6 +142,7 @@ enum CompileError {
   // x.f: 受け手の型に module がない / module に f がない / f の最初の引数が受け手の型でない / f の残りの型引数の数が合わない
   case SelectWithoutModule(member: String, receiverType: TypeRec[Type])
   case SelectUndefined(member: String, module: String, receiverType: TypeRec[Type])
+  case SelectAmbiguous(member: String, function: Variable, method: Variable, receiverType: TypeRec[Type])
   case SelectNotApplicable(function: Variable, fnType: TypeRec[Type], receiverType: TypeRec[Type])
   case SelectTypeArguments(function: Variable, fnType: TypeRec[Type], expected: Int, actual: Int)
   case ModifierOutsideModule(modifier: Modifier)
@@ -337,6 +338,8 @@ enum CompileError {
     case UndefinedModule(path) => s"Module ${path.mkString(".")} is not defined"
     case SelectWithoutModule(member, receiverType) => s"Cannot use .$member on a value of type ${receiverType.show}: the type has no module"
     case SelectUndefined(member, module, receiverType) => s"Module $module has no member $member (for a value of type ${receiverType.show})"
+    case SelectAmbiguous(member, function, method, receiverType) =>
+      s"Ambiguous .$member on a value of type ${receiverType.show}: both ${function.name} and the trait method ${method.name}"
     case SelectNotApplicable(function, fnType, receiverType) =>
       s"${function.name} cannot be called with dot notation on a value of type ${receiverType.show}: its type is ${fnType.show}"
     case SelectTypeArguments(function, _, expected, actual) => s"${function.name} needs $expected type argument(s) after the name, got $actual"

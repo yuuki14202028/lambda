@@ -2,7 +2,7 @@ import "std/prelude"
 
 let testOption(): bool =
   let x: Option[i32] = Some[i32](42) in
-  let y: Option[i32] = map[Option][i32][i32](λn: i32. add[i32](n)(1))(x) in
+  let y: Option[i32] = x.map[i32](λn: i32. add[i32](n)(1)) in
   match y {
     Some(v) => eq[i32](v)(43)
     None => false
@@ -11,7 +11,7 @@ let testOption(): bool =
 let testEither(): bool =
   let x: Either[foreign.C.String][i32] = Right[foreign.C.String][i32](10) in
   let y: Either[foreign.C.String][i32] =
-    map[Either[foreign.C.String]][i32][i32](λn: i32. add[i32](n)(5))(x) in
+    map[Either[foreign.C.String]][i32][i32](x)(λn: i32. add[i32](n)(5)) in
   match y {
     Right(v) => eq[i32](v)(15)
     Left(_) => false
@@ -19,19 +19,19 @@ let testEither(): bool =
 
 let testList(): bool =
   let nums: List[i32] = Cons[i32](1)(Cons[i32](2)(Cons[i32](3)(Nil[i32]))) in
-  let total: i32 = foldLeft[List][i32][i32](λacc: i32. λx: i32. add[i32](acc)(x))(0)(nums) in
+  let total: i32 = foldLeft[List][i32][i32](nums)(0)(λacc: i32. λx: i32. add[i32](acc)(x)) in
   eq[i32](total)(6)
 
 let testListFunctor(): bool =
   let nums: List[i32] = Cons[i32](1)(Cons[i32](2)(Nil[i32])) in
-  let doubled: List[i32] = map[List][i32][i32](λx: i32. mul[i32](x)(2))(nums) in
-  let total: i32 = foldRight[List][i32][i32](λx: i32. λacc: i32. add[i32](x)(acc))(0)(doubled) in
+  let doubled: List[i32] = nums.map[i32](λx: i32. mul[i32](x)(2)) in
+  let total: i32 = doubled.foldRight[i32](0)(λx: i32. λacc: i32. add[i32](x)(acc)) in
   eq[i32](total)(6)
 
 let testPair(): bool =
   let p: Pair[foreign.C.String][i32] = Pair[foreign.C.String][i32]("k")(1) in
   let q: Pair[foreign.C.String][i32] =
-    map[Pair[foreign.C.String]][i32][i32](λx: i32. add[i32](x)(9))(p) in
+    p.map[i32](λx: i32. add[i32](x)(9)) in
   match q {
     Pair(_)(v) => eq[i32](v)(10)
   }

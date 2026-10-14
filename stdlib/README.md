@@ -6,13 +6,15 @@
 
 ### 基本データ型
 
-- **option.lam** - `Option[a]` 型（`Some(a)` または `None`）と module `Option`（`o.getOrElse(d)` / `o.map[b](f)` / `o.isSome` など）
+- **option.lam** - `Option[a]` 型（`Some(a)` または `None`）と module `Option`（`o.getOrElse(d)` / `o.isSome` など）
 - **either.lam** - `Either[a][b]` 型（`Left(a)` または `Right(b)`）
 - **pair.lam** - `Pair[a][b]` 型（2つの値の組。`p.first` / `p.second` / `p.swap`）
-- **list.lam** - `List[a]` 型（連結リスト）と module `List`（`xs.length` / `xs.map[b](f)` / `xs.filter(p)` / `xs.sorted` / `xs.head` など。どの関数もリストを最初の引数に取る）
+- **list.lam** - `List[a]` 型（連結リスト）と module `List`（`xs.length` / `xs.filter(p)` / `xs.sorted` / `xs.head` / `xs.concat(ys)` など。どの関数もリストを最初の引数に取る）
 - **id.lam** - `Id[a]` 型（恒等ファンクター、`Functor` は derive）
 
 ### 型クラス (Traits)
+
+メソッドはどれも受け手を最初の引数に取るので、ドット記法で呼べる（`xs.map[b](f)`、`xs.foldLeft[b](start)(f)`、`o.flatMap[b](f)`、`xs.traverse[Option][b](f)`、`n.show`）。型の module の関数と同じ名前にはしない（曖昧になる）。
 
 - **functor.lam** - `Functor` trait（`map` 操作）
 - **applicative.lam** - `Applicative` trait（`pure`, `apply` 操作）
@@ -40,7 +42,7 @@
 - **option_instances.lam** - `Option` の `Functor`（derive）, `Foldable`（derive）, `Applicative`, `Monad`, `Semigroup`, `Monoid`
 - **either_instances.lam** - `Either` の `Functor`（derive）, `Applicative`
 - **pair_instances.lam** - `Pair` の `Functor`（derive）, `Foldable`（derive）
-- **list_instances.lam** - `List` の `Functor`（derive）, `Foldable`（derive）, `Semigroup`, `Monoid`
+- **list_instances.lam** - `List` の `Functor`（derive）, `Foldable`（derive）, `Traversable`（derive）, `Applicative`, `Monad`, `Semigroup`, `Monoid`, `Eq`, `Ord`
 - **eq_instances.lam** - 基本型（`i8`, `i16`, ..., `bool`, `unit` など）の `Eq` インスタンス
 - **ord_instances.lam** - 数値型の `Ord` インスタンス
 - **semigroup_instances.lam** - 基本型の `Semigroup` インスタンス

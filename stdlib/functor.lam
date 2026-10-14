@@ -1,4 +1,5 @@
+// 中身を変換できる入れ物。受け手が最初の引数なので、xs.map[b](f) と書ける。
 
 trait Functor[F: * → *] {
-  def map[a][b](f: a → b): F[a] → F[b]
+  def map[a][b](xs: F[a])(f: a → b): F[b]
 }

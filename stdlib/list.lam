@@ -1,4 +1,5 @@
-// リスト。関数は module List にあり、どれもリストを最初の引数に取るので、xs.length や xs.map[b](f) のように書ける。
+// リスト。関数は module List にあり、どれもリストを最初の引数に取るので、xs.length や xs.take(2) のように書ける。
+// map などの trait のメソッドも、trait とインスタンス（std/list_instances）をスコープに入れれば xs.map[b](f) と書ける。
 
 import "std/operators"
 import "std/option"
@@ -9,9 +10,10 @@ import "std/ord"
 rec data List[a] = { Nil, Cons(a)(List[a]) }
 
 module List {
-  rec let append[a](xs: List[a])(ys: List[a]): List[a] = match xs {
+  // 2 つのリストをつなぐ（Semigroup の append と同じ）
+  rec let concat[a](xs: List[a])(ys: List[a]): List[a] = match xs {
     Nil => ys
-    Cons(x)(rest) => Cons[a](x)(append[a](rest)(ys))
+    Cons(x)(rest) => Cons[a](x)(concat[a](rest)(ys))
   }
 
   rec let length[a](xs: List[a]): i32 = match xs {
@@ -30,33 +32,12 @@ module List {
       Cons(x)(rest) => go(Cons[a](x)(acc))(rest)
     } in go(Nil[a])(xs)
 
-  // ---- 要素ごとの変換と畳み込み ----
-
-  rec let map[a][b](xs: List[a])(f: a → b): List[b] = match xs {
-    Nil => Nil[b]
-    Cons(x)(rest) => Cons[b](f(x))(map[a][b](rest)(f))
-  }
-
-  rec let flatMap[a][b](xs: List[a])(f: a → List[b]): List[b] = match xs {
-    Nil => Nil[b]
-    Cons(x)(rest) => append[b](f(x))(flatMap[a][b](rest)(f))
-  }
+  // ---- 絞り込む ----
+  // map / flatMap / foldLeft / foldRight は trait（Functor / Monad / Foldable）のメソッドで、xs.map[b](f) のように呼べる
 
   rec let filter[a](xs: List[a])(test: a → bool): List[a] = match xs {
     Nil => Nil[a]
     Cons(x)(rest) => if test(x) then Cons[a](x)(filter[a](rest)(test)) else filter[a](rest)(test)
-  }
-
-  // 左から畳み込む: f(…f(f(start)(x1))(x2)…)(xn)
-  rec let foldLeft[a][b](xs: List[a])(start: b)(f: b → a → b): b = match xs {
-    Nil => start
-    Cons(x)(rest) => foldLeft[a][b](rest)(f(start)(x))(f)
-  }
-
-  // 右から畳み込む: f(x1)(f(x2)(…f(xn)(start)…))
-  rec let foldRight[a][b](xs: List[a])(start: b)(f: a → b → b): b = match xs {
-    Nil => start
-    Cons(x)(rest) => f(x)(foldRight[a][b](rest)(start)(f))
   }
 
   // ---- 取り出す ----
@@ -130,7 +111,7 @@ module List {
   // リストのリストを 1 つにつなぐ
   rec let flatten[a](xss: List[List[a]]): List[a] = match xss {
     Nil => Nil[a]
-    Cons(xs)(rest) => append[a](xs)(flatten[a](rest))
+    Cons(xs)(rest) => concat[a](xs)(flatten[a](rest))
   }
 
   // ---- 整列 ----
@@ -142,7 +123,10 @@ module List {
   }
 
   // 小さい順に並べる（同じ値の順は保つ）
-  let sorted[a](xs: List[a]): List[a] with Ord[a] = foldRight[a][List[a]](xs)(Nil[a])(λx: a. λacc: List[a]. insert[a](acc)(x))
+  rec let sorted[a](xs: List[a]): List[a] with Ord[a] = match xs {
+    Nil => Nil[a]
+    Cons(x)(rest) => insert[a](sorted[a](rest))(x)
+  }
 
   // ---- 作る ----
 

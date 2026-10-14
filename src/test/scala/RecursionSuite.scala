@@ -322,10 +322,10 @@ class RecursionSuite extends munit.FunSuite {
   test("context ブロックの中でも rec { let } で相互再帰できる") {
     val src =
       """data Maybe[a] = { Nothing, Just(a) }
-        |trait Functor[f: * → *] { def map[a][b](g: a → b)(x: f[a]): f[b] }
+        |trait Functor[f: * → *] { def map[a][b](x: f[a])(g: a → b): f[b] }
         |trait Applicative[f: * → *] with Functor[f] { def pure[a](x: a): f[a] }
         |trait Monad[m: * → *] with Applicative[m] { def flatMap[a][b](x: m[a])(g: a → m[b]): m[b] }
-        |impl Functor[Maybe] { def map = Λa. Λb. λg: a → b. λx: Maybe[a]. match x { Nothing => Nothing[b] Just(v) => Just[b](g(v)) } }
+        |impl Functor[Maybe] { def map = Λa. Λb. λx: Maybe[a]. λg: a → b. match x { Nothing => Nothing[b] Just(v) => Just[b](g(v)) } }
         |impl Applicative[Maybe] { def pure = Λa. λx: a. Just[a](x) }
         |impl Monad[Maybe] { def flatMap = Λa. Λb. λx: Maybe[a]. λg: a → Maybe[b]. match x { Nothing => Nothing[b] Just(v) => g(v) } }
         |let run(m: Maybe[i32]): Maybe[i32] = context[Maybe] {
@@ -344,7 +344,7 @@ class RecursionSuite extends munit.FunSuite {
     )
   }
 
-  private val functor = "trait Functor[f: * → *] { def map[a][b](g: a → b)(x: f[a]): f[b] }\n"
+  private val functor = "trait Functor[f: * → *] { def map[a][b](x: f[a])(g: a → b): f[b] }\n"
 
   test("rec { derive }: 相互再帰のデータ型にまとめて derive できる") {
     val src = functor + forest +
@@ -352,7 +352,7 @@ class RecursionSuite extends munit.FunSuite {
         |  derive Functor[Tree]
         |  derive Functor[Forest]
         |}
-        |let mapped: Tree[bool] = map[Tree][i32][bool](λn: i32. true)(Node[i32](1)(Empty[i32]))
+        |let mapped: Tree[bool] = map[Tree][i32][bool](Node[i32](1)(Empty[i32]))(λn: i32. true)
         |""".stripMargin
     val shown = encode(src + main).fold(fail(_), _.show)
     assert(shown.contains("$inst_Functor_Tree"), clue(shown))
@@ -364,9 +364,9 @@ class RecursionSuite extends munit.FunSuite {
       """rec {
         |  derive Functor[Tree]
         |  impl Functor[Forest] {
-        |    def map = Λa. Λb. λg: a → b. λf: Forest[a]. match f {
+        |    def map = Λa. Λb. λf: Forest[a]. λg: a → b. match f {
         |      Empty => Empty[b]
-        |      Trees(t)(rest) => Trees[b](map[Tree][a][b](g)(t))(map[Forest][a][b](g)(rest))
+        |      Trees(t)(rest) => Trees[b](map[Tree][a][b](t)(g))(map[Forest][a][b](rest)(g))
         |    }
         |  }
         |}
@@ -422,7 +422,7 @@ class RecursionSuite extends munit.FunSuite {
 
   test("rec { derive }: スーパークラスのインスタンスは、組の中で先に宣言する") {
     val traits =
-      """trait Functor[f: * → *] { def map[a][b](g: a → b): f[a] → f[b] }
+      """trait Functor[f: * → *] { def map[a][b](x: f[a])(g: a → b): f[b] }
         |trait Mappable[f: * → *] with Functor[f] { def same[a](x: f[a]): f[a] }
         |""".stripMargin
     val data = forest
@@ -431,13 +431,13 @@ class RecursionSuite extends munit.FunSuite {
       """rec {
         |  derive Functor[Tree]
         |  derive Functor[Forest]
-        |  impl Mappable[Tree] { def same[a](x: Tree[a]): Tree[a] = map[Tree][a][a](λv: a. v)(x) }
+        |  impl Mappable[Tree] { def same[a](x: Tree[a]): Tree[a] = map[Tree][a][a](x)(λv: a. v) }
         |}
         |""".stripMargin
     assertRight(encode(ok + main))
     val bad = traits + data +
       """rec {
-        |  impl Mappable[Tree] { def same[a](x: Tree[a]): Tree[a] = map[Tree][a][a](λv: a. v)(x) }
+        |  impl Mappable[Tree] { def same[a](x: Tree[a]): Tree[a] = map[Tree][a][a](x)(λv: a. v) }
         |  derive Functor[Tree]
         |  derive Functor[Forest]
         |}

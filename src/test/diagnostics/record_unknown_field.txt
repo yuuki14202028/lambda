@@ -4,6 +4,6 @@ error: module `Point` has no member `z`
 3 | let n: i32 = p.z
   |              ^^^ this value has type `Point`
   |
-  = note: `x.z` calls the function `Point.z`, because the type of `x` is `Point`
-  = help: define it in the module of the type: `module Point { let z… }`, or call the function directly
+  = note: `x.z` calls the function `Point.z` (the type of `x` is `Point`) or the trait method `z` in scope, and neither exists
+  = help: define it in the module of the type: `module Point { let z… }`, import the trait that declares it, or call the function directly
   = help: similar names exist: `x`, `y`

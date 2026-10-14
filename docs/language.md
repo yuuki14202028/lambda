@@ -217,7 +217,7 @@ let alice: Student = MkStudent("Alice")(80)(90)
 let total(s: Student): i32 = s.math + s.english
 
 // フィールドの関数は普通の関数なので、そのまま渡せる
-let mathScores(students: List[Student]): List[i32] = map[List][Student][i32](Student.math)(students)
+let mathScores(students: List[Student]): List[i32] = students.map[i32](Student.math)
 
 // 型の module に関数を足すと、同じ書き方で呼べる
 module Student {
@@ -439,7 +439,7 @@ derive Foldable[Rose]
 
 let tree: Rose[i32] = Node[i32](1)(Cons[Rose[i32]](Node[i32](2)(Nil[Rose[i32]]))(Nil[Rose[i32]]))
 
-let total: i32 = foldLeft[Rose][i32][i32](λacc: i32. λx: i32. acc + x)(0)(map[Rose][i32][i32](λx: i32. x * 10)(tree))
+let total: i32 = tree.map[i32](λx: i32. x * 10).foldLeft[i32](0)(λacc: i32. λx: i32. acc + x)
 ```
 
 ### 量化された制約
@@ -562,7 +562,7 @@ module Shapes {
 
 ### ドット記法
 
-`x.f` は、**`x` の型と同じ名前の module にある関数 `f`** に、`x` を最初の引数として渡します。型引数は `x` の型から読みます。
+`x.f` は、**`x` の型と同じ名前の module にある関数 `f`**、または**スコープにある trait のメソッド `f`** に、`x` を最初の引数として渡します。型引数は `x` の型から読みます。
 
 ```lam
 data Stack[a] = { MkStack(List[a]) }
@@ -581,7 +581,7 @@ module Stack {
 
   // 受け手の型から決まらない型引数（b）は、呼ぶときに名前の後に書く
   let convert[a][b](s: Stack[a])(f: a → b): Stack[b] = match s {
-    MkStack(items) => MkStack[b](map[List][a][b](f)(items))
+    MkStack(items) => MkStack[b](items.map[b](f))
   }
 }
 
@@ -599,11 +599,29 @@ let result: bool = numbers
 
 規則は次のとおりです。
 
-- 探すのは、型の名前と同じ名前の module だけです。`List[i32]` なら `List`、module の中の型 `Shape.T` なら `Shape.T`、組み込みの型はその名前（`i32`、`bool`、`char`。文字列は `String`）です。型変数や関数の型には module がないので、ドットでは呼べません。
+- 候補は 2 つです。型の名前と同じ名前の module の関数と、スコープにある trait のメソッドです。両方に同じ名前があれば、曖昧さのエラーになります。
+  - 型の module は、`List[i32]` なら `List`、module の中の型 `Shape.T` なら `Shape.T`、組み込みの型はその名前（`i32`、`bool`、`char`。文字列は `String`）です。型変数や関数の型には module がありません。
+  - trait のメソッドは、受け手の型を問いません。受け手の型が型変数でも呼べます。インスタンスがなければ、ふつうの「インスタンスがない」エラーになります。
 - 関数の型 `∀ā. … → P → …` の最初の引数の型 `P` を `x` の型と見比べて、`P` に現れる型引数を決めます。それらは関数の型引数の先頭に並んでいなければなりません。残りの型引数は `x.f[T]` と名前の後に書きます。制約（`with`）は、その時点で解決されます。
 - `a.b` が module の修飾（`M.x`）として読めるなら、そう読みます。読めなければ、`a` を値として `b` をドット記法で呼びます。
 
 推論はありません。`x` の型は既に決まっていて、そこから読むだけです。
+
+trait のメソッドは、標準ライブラリでは受け手が最初の引数です（`def map[a][b](xs: F[a])(f: a → b): F[b]`）。trait のパラメータ `F` とメソッドの `a` は受け手の型から決まり、残りの `b` を名前の後に書きます。
+
+```lam
+import "std/prelude"
+
+// 受け手の型が型変数でも、スコープ中の制約 Functor[f] で解決する
+let twice[f: * → *](xs: f[i32]): f[i32] with Functor[f] =
+  xs.map[i32](λn: i32. n * 2).map[i32](λn: i32. n * 2)
+
+let shown: String = Cons[i32](1)(Cons[i32](2)(Nil[i32])).map[String](λn: i32. n.show).foldLeft[String]("")(λacc: String. λs: String. acc + s)
+
+// Option[List[i32]]: どれかが None なら None
+let halves: Option[List[i32]] = Cons[i32](2)(Cons[i32](4)(Nil[i32]))
+  .traverse[Option][i32](λn: i32. if n % 2 == 0 then Some[i32](n / 2) else None[i32])
+```
 
 ### 公開する範囲
 
@@ -646,7 +664,7 @@ let printNumber: i32 → i32 = foreign[i32 → i32] print_int
 
 `import "std/prelude"` で全部が入ります。個別に `import "std/list"` のようにも取り込めます。
 
-型ごとの関数は、その型の module にあり、どれも値を最初の引数に取ります。そのためドット記法でつなげて書けます。
+型ごとの関数は、その型の module にあり、どれも値を最初の引数に取ります。trait のメソッド（`map`・`foldLeft`・`flatMap`・`show` など）も受け手が最初の引数です。そのためドット記法でつなげて書けます。
 
 ```lam
 let scores: List[i32] = Cons[i32](70)(Cons[i32](95)(Cons[i32](82)(Nil[i32])))
@@ -665,12 +683,12 @@ let lengths: List[i32] = Cons[String]("ab")(Cons[String]("cde")(Nil[String])).ma
 | ファイル | 内容 |
 | --- | --- |
 | `operators` | 組み込みの型の演算子 |
-| `option` | `Option`（`Some` / `None`）。module `Option`: `isSome`、`isNone`、`getOrElse`、`orElse`、`map`、`flatMap` |
+| `option` | `Option`（`Some` / `None`）。module `Option`: `isSome`、`isNone`、`getOrElse`、`orElse` |
 | `pair` `either` `id` | `Pair`（`p.first` / `p.second`、`swap`）、`Either`（`Left` / `Right`）、`Id` |
-| `list` | `List`（`Nil` / `Cons`）。module `List`: `length`、`isEmpty`、`append`、`reverse`、`map`、`flatMap`、`filter`、`foldLeft`、`foldRight`、`head`、`tail`、`last`、`nth`、`take`、`drop`、`find`、`any`、`all`、`contains`、`zip`、`zipWith`、`flatten`、`sorted`、`range` |
+| `list` | `List`（`Nil` / `Cons`）。module `List`: `length`、`isEmpty`、`concat`、`reverse`、`filter`、`head`、`tail`、`last`、`nth`、`take`、`drop`、`find`、`any`、`all`、`contains`、`zip`、`zipWith`、`flatten`、`sorted`、`range` |
 | `eq` `ord` | `Eq`（`eq` / `neq`）、`Ord`（`lt` / `leq` / `gt` / `geq`）。基本の型と、`Option` / `Either` / `Pair` / `List`（辞書順）のインスタンス |
 | `semigroup` `monoid` | `append`、`empty` |
-| `functor` `foldable` `traversable` `applicative` `monad` | `map`、`foldRight` / `foldLeft`、`traverse`、`pure` / `apply`、`flatMap` |
+| `functor` `foldable` `traversable` `applicative` `monad` | `map`、`foldRight` / `foldLeft`、`traverse`、`pure` / `apply`、`flatMap`。どれも受け手が最初の引数（`xs.map[b](f)`、`xs.foldLeft[b](start)(f)`） |
 | `char` | module `char`: `isDigit`、`isLetter`、`isSpace`、`toUpper`、`code`、`toString` など |
 | `string` | 型 `String` と module `String`: `length`、`charAt`、`slice`、`startsWith`、`toList`、`toInt`、`fromInt` など。文字列の `==`・`<`・`+`。`n.toString`（`i32`） |
 | `show` | `Show`（`show`）と、基本の型・コンテナのインスタンス |

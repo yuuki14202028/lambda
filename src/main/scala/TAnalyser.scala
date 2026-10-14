@@ -233,33 +233,52 @@ object TAnalyser {
     go(pattern, target, Map.empty)
   }
 
+  // スコープにある trait のメソッド（短い名前で書けて、局所的な束縛に隠されていないもの）。
+  // 局所的な束縛は同じ名前の値の型を置き換えるので、名前の型がメソッドの型のままかで確かめる
+  private def traitMethodInScope(env: Env, member: String): Option[Variable] = for {
+    full <- env.resolveValue(Variable(member))
+    current <- env.values.get(full)
+    if env.traits.exists { case (traitName, traitDef) =>
+      traitDef.methods.exists { case (method, sig) => method == full && Equivalence.alpha(current, methodType(traitName, traitDef.param, sig)) }
+    }
+  } yield full
+
+  // x.f の f の候補は、x の型の module の関数と、スコープにある trait のメソッド。両方にあれば曖昧
+  private def selectTarget(receiver: TypeRec[Expr], member: String): Check[Variable] = ask.flatMap { env =>
+    val receiverType = typeOf(receiver)
+    val module = moduleOfType(env, receiverType)
+    val function = module.flatMap(env.moduleMember(_, member))
+    (function, traitMethodInScope(env, member)) match {
+      case (Some(found), Some(method)) => failAt[Variable](receiver, CompileError.SelectAmbiguous(member, found, method, receiverType))
+      case (Some(found), None) => Check.pure(found)
+      case (None, Some(method)) => Check.pure(method)
+      case (None, None) => module match {
+        case Some(name) => lift[Variable](Left(CompileError.SelectUndefined(member, name, receiverType)))
+        case None => failAt[Variable](receiver, CompileError.SelectWithoutModule(member, receiverType))
+      }
+    }
+  }
+
   private def checkSelect(receiver: TypeRec[Expr], member: String, typeArgs: Seq[TypeRec[Type]]): Check[TypeRec[Expr]] = for {
     env <- ask
     receiverType = typeOf(receiver)
-    module <- moduleOfType(env, receiverType) match {
-      case Some(found) => Check.pure(found)
-      case None => failAt[String](receiver, CompileError.SelectWithoutModule(member, receiverType))
-    }
-    function <- lift(env.moduleMember(module, member).toRight(CompileError.SelectUndefined(member, module, receiverType)))
-    fnType = env.values.getOrElse(function, invariant(s"module member ${function.name} has no type"))
-    // f: ∀ā. [制約…] → P → …。P に現れる型引数は受け手の型から読み、残りは名前の後に書く
+    function <- selectTarget(receiver, member)
+    fnType = env.values.getOrElse(function, invariant(s"dot notation target ${function.name} has no type"))
+    // f: ∀ā. [制約…] → P → …（trait のメソッドは ∀p̄. [C[p̄]] → ∀ā. [制約…] → P → … のように量化と制約が交互に並ぶ）。
+    // P に現れる型引数は受け手の型から読み、残りは名前の後に書く
     (params, afterParams) = {
       @annotation.tailrec
       def binders(t: TypeRec[Type], acc: Seq[(TypeVariable, Kind)]): (Seq[(TypeVariable, Kind)], TypeRec[Type]) = destructForAllK(t) match {
         case Some((variable, kind, body)) => binders(body, acc :+ (variable -> kind))
-        case None => (acc, t)
+        case None => destructInstArrow(t) match {
+          case Some((_, to)) => binders(to, acc)
+          case None => (acc, t)
+        }
       }
       binders(fnType, Seq.empty)
     }
     notApplicable = CompileError.SelectNotApplicable(function, fnType, receiverType)
-    firstParam <- {
-      @annotation.tailrec
-      def afterConstraints(t: TypeRec[Type]): TypeRec[Type] = destructInstArrow(t) match {
-        case Some((_, to)) => afterConstraints(to)
-        case None => t
-      }
-      lift(destructArrow(afterConstraints(afterParams)).map(_._1).toRight(notApplicable))
-    }
+    firstParam <- lift(destructArrow(afterParams).map(_._1).toRight(notApplicable))
     matched <- lift(matchType(firstParam, receiverType, params.map(_._1).toSet).toRight(notApplicable))
     fromReceiver = params.takeWhile { case (variable, _) => matched.contains(variable) }
     _ <- guard(fromReceiver.length == matched.size, notApplicable)
@@ -267,11 +286,10 @@ object TAnalyser {
     _ <- guard(explicit.length == typeArgs.length, CompileError.SelectTypeArguments(function, fnType, explicit.length, typeArgs.length))
     written <- typeArgs.traverse(expandWellKinded)
     arguments = fromReceiver.map { case (variable, kind) => (matched(variable), kind) } ++ written
-    applied <- lift(arguments.foldLeft[EitherS[TypeRec[Expr]]](Right(varrType(function, fnType))) { case (acc, (argument, kind)) =>
-      acc.flatMap(ContextDesugar.applyTypeArg(_, argument, kind))
-    })
-    // 制約はここで解決する（x.f(with d) とは書けない）
-    resolved <- discharge(applied).local((e: Env) => e.copy(keepConstraints = false))
+    // 制約はここで解決する（x.f(with d) とは書けない）。量化の間にある制約は、その前の型引数を渡した時点で解決する
+    resolved <- arguments.foldLeft(Check.pure(varrType(function, fnType))) { case (acc, (argument, kind)) =>
+      acc.flatMap(discharge).flatMap(f => lift(ContextDesugar.applyTypeArg(f, argument, kind)))
+    }.flatMap(discharge).local((e: Env) => e.copy(keepConstraints = false))
     (param, resultType) <- lift(destructArrow(typeOf(resolved)).toRight(notApplicable))
     _ <- guard(Equivalence.alpha(param, receiverType), notApplicable)
   } yield selectT(resultType, receiver, member, typeArgs, resolved)

@@ -278,14 +278,19 @@ object Diagnostic {
         notes = Seq("a module can be opened only after it is closed; inside a module, its members are already visible without `open`"))
       case SelectWithoutModule(member, receiverType) => Description(
         s"cannot use ${name("." + member)} on a value of type ${ty(receiverType)}",
-        "this type has no module",
-        notes = Seq("`x.f` calls the function `f` in the module named after the type of `x`; only data types, opaque types and built-in types have such a module"),
+        s"this type has no module, and no trait method ${name(member)} is in scope",
+        notes = Seq("`x.f` calls the function `f` in the module named after the type of `x`, or the trait method `f` in scope; only data types, opaque types and built-in types have a module"),
         helps = Seq(s"call the function directly: `$member(…)`"))
       case SelectUndefined(member, module, receiverType) => Description(
         s"module ${name(module)} has no member ${name(member)}",
         s"this value has type ${ty(receiverType)}",
-        notes = Seq(s"`x.$member` calls the function `$module.$member`, because the type of `x` is ${ty(receiverType)}"),
-        helps = Seq(s"define it in the module of the type: `module $module { let $member… }`, or call the function directly"))
+        notes = Seq(s"`x.$member` calls the function `$module.$member` (the type of `x` is ${ty(receiverType)}) or the trait method `$member` in scope, and neither exists"),
+        helps = Seq(s"define it in the module of the type: `module $module { let $member… }`, import the trait that declares it, or call the function directly"))
+      case SelectAmbiguous(member, function, method, receiverType) => Description(
+        s"${name("." + member)} is ambiguous",
+        s"this value has type ${ty(receiverType)}",
+        notes = Seq(s"both the module function ${name(function.name)} and the trait method ${name(method.name)} are named ${name(member)}"),
+        helps = Seq(s"call one of them directly: `${function.name}(…)` or `${method.name}(…)`"))
       case SelectNotApplicable(function, fnType, receiverType) => Description(
         s"${name(function.name)} cannot be called with dot notation here",
         s"this value has type ${ty(receiverType)}",

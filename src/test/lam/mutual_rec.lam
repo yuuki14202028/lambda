@@ -69,6 +69,6 @@ let main(): i32 = {
   printInt(sumTree(tree));
   printInt(size[Tree[i32]](tree));
   printInt(local(5));
-  printInt(sumTree(map[Tree][i32][i32](λn: i32. n * 10)(tree)));
+  printInt(sumTree(tree.map[i32](λn: i32. n * 10)));
   0
 }

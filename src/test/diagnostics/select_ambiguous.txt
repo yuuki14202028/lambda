@@ -1,0 +1,8 @@
+error: `.map` is ambiguous
+ --> select_ambiguous.lam:7:19
+  |
+7 | let b: Box[i32] = MkBox[i32](1).map[i32](λn: i32. n)
+  |                   ^^^^^^^^^^^^^ this value has type `Box[i32]`
+  |
+  = note: both the module function `Box.map` and the trait method `map` are named `map`
+  = help: call one of them directly: `Box.map(…)` or `map(…)`

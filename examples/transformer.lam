@@ -15,11 +15,11 @@ let runStateT[s][m: * → *][a](c: StateT[s][m][a])(initial: s): m[Pair[a][s]] =
 }
 
 impl[s][m: * → *] Functor[StateT[s][m]] with Functor[m] {
-  def map[a][b](f: a → b): StateT[s][m][a] → StateT[s][m][b] =
-    λc: StateT[s][m][a]. MkStateT[s][m][b](λstate: s.
-      map[m][Pair[a][s]][Pair[b][s]](λp: Pair[a][s]. match p {
+  def map[a][b](c: StateT[s][m][a])(f: a → b): StateT[s][m][b] =
+    MkStateT[s][m][b](λstate: s.
+      runStateT[s][m][a](c)(state).map[Pair[b][s]](λp: Pair[a][s]. match p {
         Pair(x)(next) => Pair[b][s](f(x))(next)
-      })(runStateT[s][m][a](c)(state)))
+      }))
 }
 
 // apply は flatMap で書くので、2 つのインスタンスは互いを必要とする
@@ -27,12 +27,12 @@ rec {
   impl[s][m: * → *] Applicative[StateT[s][m]] with Monad[m] {
     def pure[a](x: a): StateT[s][m][a] = MkStateT[s][m][a](λstate: s. pure[m][Pair[a][s]](Pair[a][s](x)(state)))
     def apply[a][b](cf: StateT[s][m][a → b]): StateT[s][m][a] → StateT[s][m][b] =
-      λc: StateT[s][m][a]. flatMap[StateT[s][m]][a → b][b](cf)(λf: a → b. map[StateT[s][m]][a][b](f)(c))
+      λc: StateT[s][m][a]. cf.flatMap[b](λf: a → b. c.map[b](f))
   }
 
   impl[s][m: * → *] Monad[StateT[s][m]] with Monad[m] {
     def flatMap[a][b](c: StateT[s][m][a])(f: a → StateT[s][m][b]): StateT[s][m][b] = MkStateT[s][m][b](λstate: s.
-      flatMap[m][Pair[a][s]][Pair[b][s]](runStateT[s][m][a](c)(state))(λp: Pair[a][s]. match p {
+      runStateT[s][m][a](c)(state).flatMap[Pair[b][s]](λp: Pair[a][s]. match p {
         Pair(x)(next) => runStateT[s][m][b](f(x))(next)
       }))
   }
@@ -52,7 +52,7 @@ trait MonadTrans[t: (* → *) → * → *] with ∀(m: * → *). Monad[m] ⇒ Mo
 
 impl[s] MonadTrans[StateT[s]] {
   def lift[m: * → *][a](x: m[a]): StateT[s][m][a] with Monad[m] =
-    MkStateT[s][m][a](λstate: s. map[m][a][Pair[a][s]](λv: a. Pair[a][s](v)(state))(x))
+    MkStateT[s][m][a](λstate: s. x.map[Pair[a][s]](λv: a. Pair[a][s](v)(state)))
 }
 
 // どの変換子でも使える: 下のモナドの計算を 2 回走らせて、結果を足す

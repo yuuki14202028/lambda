@@ -14,9 +14,9 @@ let printInt: i32 → i32 = foreign[i32 → i32] print_int
 
 let halve(x: i32): Option[i32] = if x % 2 == 0 then Some[i32](x / 2) else None[i32]
 
-let sum(xs: List[i32]): i32 = foldLeft[List][i32][i32](λacc: i32. λx: i32. acc + x)(0)(xs)
+let sum(xs: List[i32]): i32 = xs.foldLeft[i32](0)(λacc: i32. λx: i32. acc + x)
 
-let score(xs: List[i32]): i32 = match traverse[List][Option][i32][i32](halve)(xs) {
+let score(xs: List[i32]): i32 = match xs.traverse[Option][i32](halve) {
   None => 0 - 1
   Some(ys) => sum(ys)
 }
@@ -32,19 +32,19 @@ let leaf(x: i32): Rose[i32] = Node[i32](x)(Nil[Rose[i32]])
 let rose(a: i32)(b: i32)(c: i32): Rose[i32] =
   Node[i32](a)(Cons[Rose[i32]](leaf(b))(Cons[Rose[i32]](Node[i32](c)(Cons[Rose[i32]](leaf(a))(Nil[Rose[i32]])))(Nil[Rose[i32]])))
 
-let roseScore(t: Rose[i32]): i32 = match traverse[Rose][Option][i32][i32](halve)(t) {
+let roseScore(t: Rose[i32]): i32 = match t.traverse[Option][i32](halve) {
   None => 0 - 1
-  Some(halved) => foldLeft[Rose][i32][i32](λacc: i32. λx: i32. acc + x)(0)(halved)
+  Some(halved) => halved.foldLeft[i32](0)(λacc: i32. λx: i32. acc + x)
 }
 
 let positive(x: i32): Either[i32][i32] = if x > 0 then Right[i32][i32](x * 2) else Left[i32][i32](x)
 
-let firstBad(xs: List[i32]): i32 = match traverse[List][Either[i32]][i32][i32](positive)(xs) {
+let firstBad(xs: List[i32]): i32 = match xs.traverse[Either[i32]][i32](positive) {
   Left(bad) => bad
   Right(ys) => sum(ys)
 }
 
-let optional(o: Option[i32]): i32 = match traverse[Option][Option][i32][i32](halve)(o) {
+let optional(o: Option[i32]): i32 = match o.traverse[Option][i32](halve) {
   Some(Some(n)) => n
   Some(None) => 100
   None => 0 - 1

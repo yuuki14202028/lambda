@@ -2,7 +2,7 @@ error: cannot use `.twice` on a value of type `a`
  --> select_no_module.lam:4:23
   |
 4 | let f[a](x: a): i32 = x.twice
-  |                       ^^^^^^^ this type has no module
+  |                       ^^^^^^^ this type has no module, and no trait method `twice` is in scope
   |
-  = note: `x.f` calls the function `f` in the module named after the type of `x`; only data types, opaque types and built-in types have such a module
+  = note: `x.f` calls the function `f` in the module named after the type of `x`, or the trait method `f` in scope; only data types, opaque types and built-in types have a module
   = help: call the function directly: `twice(…)`

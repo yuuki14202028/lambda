@@ -1,4 +1,4 @@
-trait Functor[f: * → *] { def map[a][b](g: a → b): f[a] → f[b] }
+trait Functor[f: * → *] { def map[a][b](x: f[a])(g: a → b): f[b] }
 rec data List[a] = { Nil, Cons(a)(List[a]) }
 rec data Rose[a] = { Node(a)(List[Rose[a]]) }
 derive Functor[Rose]

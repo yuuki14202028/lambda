@@ -17,7 +17,7 @@ module List {
   }
 
   // 残りの型引数（b）は、名前の後に書く
-  let mapped[a][b](xs: List[a])(f: a → b): List[b] = map[a][b](xs)(f)
+  let mapped[a][b](xs: List[a])(f: a → b): List[b] = map[List][a][b](xs)(f)
 
   rec let total(xs: List[i32]): i32 = match xs {
     Nil => 0

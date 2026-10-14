@@ -236,10 +236,10 @@ class PatternSuite extends munit.FunSuite {
   }
 
   private val optionMonad =
-    """trait Functor[f: * → *] { def map[a][b](g: a → b)(x: f[a]): f[b] }
+    """trait Functor[f: * → *] { def map[a][b](x: f[a])(g: a → b): f[b] }
       |trait Applicative[f: * → *] with Functor[f] { def pure[a](x: a): f[a] }
       |trait Monad[m: * → *] with Applicative[m] { def flatMap[a][b](x: m[a])(g: a → m[b]): m[b] }
-      |impl Functor[Option] { def map = Λa. Λb. λg: a → b. λx: Option[a]. match x { None => None[b]  Some(v) => Some[b](g(v)) } }
+      |impl Functor[Option] { def map = Λa. Λb. λx: Option[a]. λg: a → b. match x { None => None[b]  Some(v) => Some[b](g(v)) } }
       |impl Applicative[Option] { def pure = Λa. λx: a. Some[a](x) }
       |impl Monad[Option] { def flatMap = Λa. Λb. λx: Option[a]. λg: a → Option[b]. match x { None => None[b]  Some(v) => g(v) } }
       |""".stripMargin

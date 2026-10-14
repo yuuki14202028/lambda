@@ -55,19 +55,20 @@ object Deriver {
     def fT(x: TypeVariable) = typeAppT(typeVarT(f), typeVarT(x))
     def poly(body: TypeRec[Type]) = forallTypeT(a, Kind.Star, forallTypeT(b, Kind.Star, body))
     rule match {
+      // 受け手（f[a]）が最初の引数
       case Rule.FunctorRule => Seq(
-        functorMethod -> poly(arrowT(arrowT(aT, bT), arrowT(fT(a), fT(b))))
+        functorMethod -> poly(arrowT(fT(a), arrowT(arrowT(aT, bT), fT(b))))
       )
       case Rule.FoldableRule => Seq(
-        foldRightMethod -> poly(arrowT(arrowT(aT, arrowT(bT, bT)), arrowT(bT, arrowT(fT(a), bT)))),
-        foldLeftMethod -> poly(arrowT(arrowT(bT, arrowT(aT, bT)), arrowT(bT, arrowT(fT(a), bT))))
+        foldRightMethod -> poly(arrowT(fT(a), arrowT(bT, arrowT(arrowT(aT, arrowT(bT, bT)), bT)))),
+        foldLeftMethod -> poly(arrowT(fT(a), arrowT(bT, arrowT(arrowT(bT, arrowT(aT, bT)), bT))))
       )
-      // traverse: ∀(g: * → *). ∀a. ∀b. [Applicative[g]] → (a → g[b]) → f[a] → g[f[b]]
+      // traverse: ∀a. ∀(g: * → *). ∀b. [Applicative[g]] → f[a] → (a → g[b]) → g[f[b]]
       case Rule.TraversableRule =>
         val g = freshTypeVariable(TypeVariable("g"), Set(f, a, b))
         def gOf(t: TypeRec[Type]) = typeAppT(typeVarT(g), t)
-        val body = instArrowT(TypeConstraint(applicativeTrait, Seq(typeVarT(g))), arrowT(arrowT(aT, gOf(bT)), arrowT(fT(a), gOf(fT(b)))))
-        Seq(traverseMethod -> forallTypeT(g, hkKind, poly(body)))
+        val body = instArrowT(TypeConstraint(applicativeTrait, Seq(typeVarT(g))), arrowT(fT(a), arrowT(arrowT(aT, gOf(bT)), gOf(fT(b)))))
+        Seq(traverseMethod -> forallTypeT(a, Kind.Star, forallTypeT(g, hkKind, forallTypeT(b, Kind.Star, body))))
     }
   }
 
@@ -270,7 +271,7 @@ object Deriver {
     Scaffold(p.dataDef.params.init.map(_._1), p.dataDef.params.last._1, alpha, beta)
   }
 
-  /** map = Λα. Λβ. λf. letRec go = λd. match d { Kᵢ(x̄) → Kᵢ[p̄][β](φ(x̄)) } in go */
+  /** map = Λα. Λβ. λv. λf. letRec go = λd. match d { Kᵢ(x̄) → Kᵢ[p̄][β](φ(x̄)) } in go(v) */
   private def mapBody(p: Plan, env: Env): TypeRec[Expr] = {
     val s = scaffold(p)
     import s.{aT, bT}
@@ -301,7 +302,7 @@ object Deriver {
         val y = Variable(s"$$y_$depth")
         val innerF = mkAbs(y, innerA, transform(innerPlan, innerA, varrType(y, innerA), depth + 1))
         val mapRef = mkTyApp(mkTyApp(containerMethod(p, env, functorMethod, container), innerA), innerB)
-        mkApp(mkApp(mapRef, innerF), x)
+        mkApp(mkApp(mapRef, x), innerF)
     }
 
     val cases = p.dataDef.constructors.zip(p.fieldPlans).map { case (ctor, plans) =>
@@ -313,14 +314,15 @@ object Deriver {
       }
       MatchCase[TypeRec](ctor.name, binders, applied)
     }
+    val vVar = Variable("$v")
     val goValue = mkAbs(dVar, dAlpha, matchExprT(dBeta, varrType(dVar, dAlpha), cases))
-    val letR = letRecT(goVar, goType, goType, goValue, goRef)
-    mkTyAbs(s.alpha, Kind.Star, mkTyAbs(s.beta, Kind.Star, mkAbs(fVar, fType, letR)))
+    val letR = letRecT(goVar, goType, dBeta, goValue, mkApp(goRef, varrType(vVar, dAlpha)))
+    mkTyAbs(s.alpha, Kind.Star, mkTyAbs(s.beta, Kind.Star, mkAbs(vVar, dAlpha, mkAbs(fVar, fType, letR))))
   }
 
-  /** traverse = Λγ. Λα. Λβ. λ[Applicative[γ]]. λf. letRec go = λd. match d {
+  /** traverse = Λα. Λγ. Λβ. λ[Applicative[γ]]. λv. λf. letRec go = λd. match d {
    *    Kᵢ(x̄) → pure(λȳ. Kᵢ[p̄][β](ȳ)) <*> τ(x₁) <*> … <*> τ(xₙ)
-   *  } in go
+   *  } in go(v)
    *  τ(x) は x を γ の中へ持ち上げる: パラメータなら f(x)、再帰なら go(x)、それ以外は pure(x) */
   private def traverseBody(p: Plan, env: Env): TypeRec[Expr] = {
     val s = scaffold(p)
@@ -361,8 +363,8 @@ object Deriver {
         val innerA = args.last
         val y = Variable(s"$$y_$depth")
         val innerF = mkAbs(y, innerA, lift(innerPlan, innerA, varrType(y, innerA), depth + 1))
-        val traverseRef = mkTyApp(mkTyApp(mkTyApp(containerMethod(p, env, traverseMethod, container), gT), innerA), toBeta(innerA))
-        mkApp(mkApp(withApplicative(traverseRef), innerF), x)
+        val traverseRef = mkTyApp(mkTyApp(mkTyApp(containerMethod(p, env, traverseMethod, container), innerA), gT), toBeta(innerA))
+        mkApp(mkApp(withApplicative(traverseRef), x), innerF)
       case FieldPlan.Func(_) => invariant("derive Traversable: function fields must be rejected during validation")
     }
 
@@ -383,15 +385,16 @@ object Deriver {
       }
       MatchCase[TypeRec](ctor.name, binders, body)
     }
+    val vVar = Variable("$v")
     val goValue = mkAbs(dVar, dAlpha, matchExprT(gOf(dBeta), varrType(dVar, dAlpha), cases))
-    val letR = letRecT(goVar, goType, goType, goValue, goRef)
-    val withF = mkAbs(fVar, fType, letR)
-    val constrained = instAbsT(instArrowT(applicative, typeOf(withF)), applicative, withF)
-    mkTyAbs(gamma, hkKind, mkTyAbs(s.alpha, Kind.Star, mkTyAbs(s.beta, Kind.Star, constrained)))
+    val letR = letRecT(goVar, goType, gOf(dBeta), goValue, mkApp(goRef, varrType(vVar, dAlpha)))
+    val withArgs = mkAbs(vVar, dAlpha, mkAbs(fVar, fType, letR))
+    val constrained = instAbsT(instArrowT(applicative, typeOf(withArgs)), applicative, withArgs)
+    mkTyAbs(s.alpha, Kind.Star, mkTyAbs(gamma, hkKind, mkTyAbs(s.beta, Kind.Star, constrained)))
   }
 
   /** foldRight / foldLeft =
-   *  Λα. Λβ. λf. λz. letRec go = λd. λacc. match d { Kᵢ(x̄) → ψ(x̄, acc) } in λv. go(v)(z) */
+   *  Λα. Λβ. λv. λz. λf. letRec go = λd. λacc. match d { Kᵢ(x̄) → ψ(x̄, acc) } in go(v)(z) */
   private def foldBody(p: Plan, env: Env, rightward: Boolean): TypeRec[Expr] = {
     val s = scaffold(p)
     import s.{aT, bT}
@@ -426,7 +429,7 @@ object Deriver {
           if (rightward) mkAbs(y, innerA, mkAbs(innerAcc, bT, innerBody))
           else mkAbs(innerAcc, bT, mkAbs(y, innerA, innerBody))
         val foldRef = mkTyApp(mkTyApp(containerMethod(p, env, methodName, container), innerA), bT)
-        mkApp(mkApp(mkApp(foldRef, innerF), acc), x)
+        mkApp(mkApp(mkApp(foldRef, x), acc), innerF)
       case FieldPlan.Func(_) => invariant("derive Foldable: function fields must be rejected during validation")
     }
 
@@ -441,8 +444,7 @@ object Deriver {
       MatchCase[TypeRec](ctor.name, binders, body)
     }
     val goValue = mkAbs(dVar, dAlpha, mkAbs(accVar, bT, matchExprT(bT, varrType(dVar, dAlpha), cases)))
-    val finalLam = mkAbs(vVar, dAlpha, mkApp(mkApp(goRef, varrType(vVar, dAlpha)), varrType(zVar, bT)))
-    val letR = letRecT(goVar, typeOf(finalLam), goType, goValue, finalLam)
-    mkTyAbs(s.alpha, Kind.Star, mkTyAbs(s.beta, Kind.Star, mkAbs(fVar, fType, mkAbs(zVar, bT, letR))))
+    val letR = letRecT(goVar, bT, goType, goValue, mkApp(mkApp(goRef, varrType(vVar, dAlpha)), varrType(zVar, bT)))
+    mkTyAbs(s.alpha, Kind.Star, mkTyAbs(s.beta, Kind.Star, mkAbs(vVar, dAlpha, mkAbs(zVar, bT, mkAbs(fVar, fType, letR)))))
   }
 }

@@ -1,4 +1,5 @@
 // あるかもしれない値。関数は module Option にあり、o.getOrElse(0) のように書ける。
+// map / flatMap は trait（Functor / Monad）のメソッド（インスタンスは std/option_instances）。
 
 data Option[a] = { Some(a), None }
 
@@ -23,15 +24,5 @@ module Option {
   let orElse[a](o: Option[a])(other: Option[a]): Option[a] = match o {
     Some(_) => o
     None => other
-  }
-
-  let map[a][b](o: Option[a])(f: a → b): Option[b] = match o {
-    Some(x) => Some[b](f(x))
-    None => None[b]
-  }
-
-  let flatMap[a][b](o: Option[a])(f: a → Option[b]): Option[b] = match o {
-    Some(x) => f(x)
-    None => None[b]
   }
 }

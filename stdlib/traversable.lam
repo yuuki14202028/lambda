@@ -2,6 +2,7 @@ import "std/functor"
 import "std/foldable"
 import "std/applicative"
 
+// 中身を順に効果のある計算に通し、結果を入れ物ごと取り出す。xs.traverse[Option][b](f) と書ける。
 trait Traversable[t: * → *] with Functor[t], Foldable[t] {
-  def traverse[g: * → *][a][b](f: a → g[b])(xs: t[a]): g[t[b]] with Applicative[g]
+  def traverse[a][g: * → *][b](xs: t[a])(f: a → g[b]): g[t[b]] with Applicative[g]
 }

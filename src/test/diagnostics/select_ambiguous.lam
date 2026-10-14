@@ -1,0 +1,8 @@
+data Box[a] = { MkBox(a) }
+trait Functor[f: * → *] { def map[a][b](x: f[a])(g: a → b): f[b] }
+impl Functor[Box] { def map[a][b](x: Box[a])(g: a → b): Box[b] = match x { MkBox(v) => MkBox[b](g(v)) } }
+module Box {
+  let map[a][b](x: Box[a])(g: a → b): Box[b] = match x { MkBox(v) => MkBox[b](g(v)) }
+}
+let b: Box[i32] = MkBox[i32](1).map[i32](λn: i32. n)
+let main(): i32 = 0

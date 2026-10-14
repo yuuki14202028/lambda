@@ -14,7 +14,7 @@ type String = foreign.C.String
 
 module String {
   let length: String → i32 = foreign[String → i32] string_length
-  let append: String → String → String = foreign[String → String → String] concat
+  let concat: String → String → String = foreign[String → String → String] concat
   let equal: String → String → bool = foreign[String → String → bool] string_equal
   // 辞書順の比較: 負・0・正
   let compare: String → String → i32 = foreign[String → String → i32] string_compare
@@ -39,7 +39,7 @@ module String {
 
   rec let fromList(chars: List[char]): String = match chars {
     Nil => ""
-    Cons(c)(rest) => append(fromChar(c))(fromList(rest))
+    Cons(c)(rest) => concat(fromChar(c))(fromList(rest))
   }
 
   let startsWith(s: String)(prefix: String): bool = equal(slice(s)(0)(length(prefix)))(prefix)
@@ -66,11 +66,11 @@ impl Ord[String] {
 
 // + は連結
 impl Add[String] {
-  def add(x: String)(y: String): String = String.append(x)(y)
+  def add(x: String)(y: String): String = String.concat(x)(y)
 }
 
 impl Semigroup[String] {
-  def append(x: String)(y: String): String = String.append(x)(y)
+  def append(x: String)(y: String): String = String.concat(x)(y)
 }
 
 impl Monoid[String] {

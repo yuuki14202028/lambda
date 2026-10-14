@@ -34,14 +34,14 @@ class DeriveSuite extends munit.FunSuite {
 
   private val functorTrait =
     """trait Functor[f: * → *] {
-      |  def map[a][b](g: a → b): f[a] → f[b]
+      |  def map[a][b](x: f[a])(g: a → b): f[b]
       |}
       |""".stripMargin
 
   private val foldableTrait =
     """trait Foldable[f: * → *] {
-      |  def foldRight[a][b](g: a → b → b)(z: b): f[a] → b
-      |  def foldLeft[a][b](g: b → a → b)(z: b): f[a] → b
+      |  def foldRight[a][b](x: f[a])(z: b)(g: a → b → b): b
+      |  def foldLeft[a][b](x: f[a])(z: b)(g: b → a → b): b
       |}
       |""".stripMargin
 
@@ -104,7 +104,7 @@ class DeriveSuite extends munit.FunSuite {
 
   test("導出インスタンスの利用: 呼び出し側で辞書が解決される") {
     val src = functorTrait + optionData + "derive Functor[Option]\n" +
-      "let inc(x: Option[i32]): Option[i32] = map[Option][i32][i32](λn: i32. n)(x)\n" + mainDecl
+      "let inc(x: Option[i32]): Option[i32] = map[Option][i32][i32](x)(λn: i32. n)\n" + mainDecl
     assertRight(church(src))
     val shown = shownOrFail(desugar(src))
     assert(shown.contains("$inst_Functor_Option"), clue(shown))
@@ -177,7 +177,7 @@ class DeriveSuite extends munit.FunSuite {
   test("エラー: 手書き impl と重複する derive は Overlapping instance") {
     val src = functorTrait + optionData +
       """impl Functor[Option] {
-        |  def map[a][b](g: a → b): Option[a] → Option[b] = λo: Option[a]. match o {
+        |  def map[a][b](o: Option[a])(g: a → b): Option[b] = match o {
         |    None => None[b]
         |    Some(x) => Some[b](g(x))
         |  }
@@ -208,13 +208,13 @@ class DeriveSuite extends munit.FunSuite {
   // ---- Traversable ----
 
   private val traversablePrelude =
-    """trait Functor[f: * → *] { def map[a][b](g: a → b): f[a] → f[b] }
+    """trait Functor[f: * → *] { def map[a][b](x: f[a])(g: a → b): f[b] }
       |trait Applicative[f: * → *] with Functor[f] {
       |  def pure[a](x: a): f[a]
       |  def apply[a][b](g: f[a → b]): f[a] → f[b]
       |}
       |trait Traversable[t: * → *] {
-      |  def traverse[g: * → *][a][b](f: a → g[b])(xs: t[a]): g[t[b]] with Applicative[g]
+      |  def traverse[a][g: * → *][b](xs: t[a])(f: a → g[b]): g[t[b]] with Applicative[g]
       |}
       |""".stripMargin
 
@@ -248,7 +248,7 @@ class DeriveSuite extends munit.FunSuite {
 
   test("derive Traversable: traverse のシグネチャが正準形と違えばエラー") {
     val src =
-      """trait Functor[f: * → *] { def map[a][b](g: a → b): f[a] → f[b] }
+      """trait Functor[f: * → *] { def map[a][b](x: f[a])(g: a → b): f[b] }
         |trait Applicative[f: * → *] with Functor[f] {
         |  def pure[a](x: a): f[a]
         |  def apply[a][b](g: f[a → b]): f[a] → f[b]
