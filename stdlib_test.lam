@@ -29,11 +29,11 @@ let testListFunctor(): bool =
   eq[i32](total)(6)
 
 let testPair(): bool =
-  let p: Pair[foreign.C.String][i32] = Pair[foreign.C.String][i32]("k")(1) in
-  let q: Pair[foreign.C.String][i32] =
+  let p: (foreign.C.String, i32) = ("k", 1) in
+  let q: (foreign.C.String, i32) =
     p.map[i32](λx: i32. add[i32](x)(9)) in
   match q {
-    Pair(_)(v) => eq[i32](v)(10)
+    (_, v) => eq[i32](v)(10)
   }
 
 let testCompose(): bool =
@@ -121,7 +121,7 @@ let testShow(): bool =
     show[unit](()) == "()" && show[i64](7i64) == "7" && show[f64](1.5) == "1.5" &&
     show[Option[i32]](Some[i32](1)) == "Some(1)" && show[Option[bool]](None[bool]) == "None" &&
     show[Either[String][i32]](Left[String][i32]("e")) == "Left(e)" &&
-    show[Pair[i32][bool]](Pair[i32][bool](1)(false)) == "(1, false)" &&
+    show[(i32, bool)]((1, false)) == "(1, false)" &&
     show[List[i32]](Nil[i32]) == "[]" &&
     show[List[i32]]([1, 2, 3]) == "[1, 2, 3]" &&
     show[List[Option[i32]]]([Some[i32](1), None[i32]]) == "[Some(1), None]" &&
@@ -135,8 +135,8 @@ let testContainerOrder(): bool =
     lt[Option[i32]](None[i32])(Some[i32](0)) && lt[Option[i32]](Some[i32](1))(Some[i32](2)) && !lt[Option[i32]](Some[i32](1))(None[i32]) &&
     eq[Either[String][i32]](Left[String][i32]("a"))(Left[String][i32]("a")) && neq[Either[String][i32]](Left[String][i32]("a"))(Right[String][i32](1)) &&
     lt[Either[String][i32]](Left[String][i32]("z"))(Right[String][i32](0)) && gt[Either[String][i32]](Right[String][i32](2))(Right[String][i32](1)) &&
-    eq[Pair[i32][String]](Pair[i32][String](1)("a"))(Pair[i32][String](1)("a")) &&
-    lt[Pair[i32][String]](Pair[i32][String](1)("b"))(Pair[i32][String](2)("a")) && lt[Pair[i32][String]](Pair[i32][String](1)("a"))(Pair[i32][String](1)("b")) &&
+    eq[(i32, String)]((1, "a"))((1, "a")) &&
+    lt[(i32, String)]((1, "b"))((2, "a")) && lt[(i32, String)]((1, "a"))((1, "b")) &&
     eq[List[i32]](oneTwo)(oneTwo) && neq[List[i32]](one)(oneTwo) && eq[List[i32]](Nil[i32])(Nil[i32]) &&
     lt[List[i32]](one)(oneTwo) && lt[List[i32]](oneTwo)(two) && geq[List[i32]](two)(one) && !lt[List[i32]](one)(one) &&
     eq[List[Option[i32]]]([None[i32]])([None[i32]])
@@ -154,7 +154,7 @@ let testListFunctions(): bool =
     xs.any(λx: i32. x == 5) && !xs.any(λx: i32. x == 6) &&
     xs.all(λx: i32. x > 0) && !xs.all(λx: i32. x > 1) &&
     xs.contains(3) && !xs.contains(7) &&
-    show[List[Pair[i32][bool]]](xs.zip[bool]([true, false])) == "[(1, true), (2, false)]" &&
+    show[List[(i32, bool)]](xs.zip[bool]([true, false])) == "[(1, true), (2, false)]" &&
     show[List[i32]](xs.zipWith[i32][i32](xs)(λa: i32. λb: i32. a * b)) == "[1, 4, 9, 16, 25]" &&
     show[List[i32]]([List.range(1)(3), Nil[i32], List.range(7)(9)].flatten) == "[1, 2, 7, 8]" &&
     show[List[i32]](xs.map[i32](λx: i32. x * 2).filter(λx: i32. x > 4).reverse) == "[10, 8, 6]" &&
@@ -162,7 +162,7 @@ let testListFunctions(): bool =
     show[List[i32]](xs.flatMap[i32](λx: i32. [x, x]).take(4)) == "[1, 1, 2, 2]" &&
     show[List[i32]]([3, 1, 2].sorted) == "[1, 2, 3]" &&
     show[List[String]](["b", "a"].sorted.append(Nil[String])) == "[a, b]" &&
-    Pair[i32][bool](1)(true).first == 1 && Pair[i32][bool](1)(true).swap.first &&
+    (1, true).first == 1 && (1, true).swap.first &&
     Some[i32](1).isSome && None[i32].isNone && Some[i32](2).map[i32](λx: i32. x + 1).getOrElse(0) == 3 &&
     42.toString == "42" && 'x'.toString == "x"
 

@@ -103,13 +103,13 @@ module List {
   // ---- 組み合わせる ----
 
   // 2 つのリストの要素を順に組にする。長さは短いほうに合わせる
-  rec let zipWith[a][b][c](xs: List[a])(ys: List[b])(f: a → b → c): List[c] = match Pair[List[a]][List[b]](xs)(ys) {
-    Pair(Cons(x)(xt))(Cons(y)(yt)) => Cons[c](f(x)(y))(zipWith[a][b][c](xt)(yt)(f))
+  rec let zipWith[a][b][c](xs: List[a])(ys: List[b])(f: a → b → c): List[c] = match (xs, ys) {
+    (Cons(x)(xt), Cons(y)(yt)) => Cons[c](f(x)(y))(zipWith[a][b][c](xt)(yt)(f))
     _ => Nil[c]
   }
 
-  let zip[a][b](xs: List[a])(ys: List[b]): List[Pair[a][b]] =
-    zipWith[a][b][Pair[a][b]](xs)(ys)(λx: a. λy: b. Pair[a][b](x)(y))
+  let zip[a][b](xs: List[a])(ys: List[b]): List[(a, b)] =
+    zipWith[a][b][(a, b)](xs)(ys)(λx: a. λy: b. (x, y))
 
   // リストのリストを 1 つにつなぐ
   rec let flatten[a](xss: List[List[a]]): List[a] = match xss {
@@ -168,10 +168,10 @@ module List {
   // ---- 分ける・並べ直す ----
 
   // 条件を満たす要素と、満たさない要素（どちらも元の順）
-  rec let partition[a](xs: List[a])(test: a → bool): Pair[List[a]][List[a]] = match xs {
-    Nil => Pair[List[a]][List[a]](Nil[a])(Nil[a])
+  rec let partition[a](xs: List[a])(test: a → bool): (List[a], List[a]) = match xs {
+    Nil => (Nil[a], Nil[a])
     Cons(x)(rest) => match partition[a](rest)(test) {
-      Pair(yes)(no) => if test(x) then Pair[List[a]][List[a]](Cons[a](x)(yes))(no) else Pair[List[a]][List[a]](yes)(Cons[a](x)(no))
+      (yes, no) => if test(x) then (Cons[a](x)(yes), no) else (yes, Cons[a](x)(no))
     }
   }
 

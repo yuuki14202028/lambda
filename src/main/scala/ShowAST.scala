@@ -57,6 +57,8 @@ private def showPattern(p: Pattern[ShowResult]): String = p match {
   case Pattern.Literal(value, _) => value.shown
   case Pattern.Or(alternatives) => alternatives.map(showPattern).mkString(" | ")
   case Pattern.Located(_, inner) => showPattern(inner)
+  case Pattern.Syntax(SyntaxHook.Tuple(_), elements) => elements.map(showPattern).mkString("(", ", ", ")")
+  case Pattern.Syntax(_, elements) => elements.map(showPattern).mkString("[", ", ", "]")
 }
 
 val showAlg: Algebra[AST, ShowResult] = [x] => node => node match {
@@ -127,7 +129,9 @@ val showAlg: Algebra[AST, ShowResult] = [x] => node => node match {
     s"fold $scrutinee as $resultType with $caseText"
   case AST.App(func, arg)          => s"$func($arg)"
   case AST.TyApp(func, arg)        => s"$func[$arg]"
-  case AST.Path(name, typeArgs, dictionaries) => s"${name.name}${typeArgs.map(t => s"[$t]").mkString}${dictionaries.map(d => s"(with $d)").mkString}"
+  case AST.Path(name, typeArgs, dictionaries, Some(elements), _) if typeArgs.isEmpty => s"${name.name}${elements.mkString("[", ", ", "]")}${dictionaries.map(d => s"(with $d)").mkString}"
+  case AST.Path(name, typeArgs, dictionaries, _, _) => s"${name.name}${typeArgs.map(t => s"[$t]").mkString}${dictionaries.map(d => s"(with $d)").mkString}"
+  case AST.TupleLit(elements, _) => elements.mkString("(", ", ", ")")
   case AST.Select(receiver, name, typeArgs, dictionaries, _) => s"$receiver.$name${typeArgs.map(t => s"[$t]").mkString}${dictionaries.map(d => s"(with $d)").mkString}"
   case AST.NamedApp(constructor, arguments, _) => s"$constructor(${arguments.map(a => s"${a.name} = ${a.value}").mkString(", ")})"
   case AST.InstApp(func, evidence) => s"$func⟨${showEvidence(evidence)}⟩"
@@ -180,6 +184,7 @@ val showAlg: Algebra[AST, ShowResult] = [x] => node => node match {
   case AST.ForAll(v, Kind.Star, body) => s"∀${v.name}. $body"
   case AST.ForAll(v, k, body)         => s"∀(${v.name}: ${k.show}). $body"
   case AST.TypeApp(func, arg)         => s"$func[$arg]"
+  case AST.TupleType(elements)        => elements.mkString("(", ", ", ")")
   case AST.TypeAbs(v, Kind.Star, body) => s"λ${v.name}. $body"
   case AST.TypeAbs(v, k, body)         => s"λ(${v.name}: ${k.show}). $body"
 }

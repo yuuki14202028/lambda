@@ -85,16 +85,52 @@ let message(n: i32): String = `n = {n}, doubled = {n + n}`
 
 文字列埋め込みも、演算子と同じく宣言された関数の呼び出しです。`std/show` が `interpolate = show` と宣言しているので、`{x}` は `show[T](x)`（`T` は `x` の型）になります。文字列を埋め込むときも同じで、`Show[String]` は文字列をそのまま返します。`interpolate` に宣言できるのは `∀a. … → a → String` の形の関数で、宣言はスコープに従います（module の中の宣言は `open` で見えます）。
 
-リストリテラル `[x, y, z]` も宣言された関数の呼び出しです。`std/list` が `literal [] = Nil, Cons` と宣言しているので、`[1, 2]` は `Cons[i32](1)(Cons[i32](2)(Nil[i32]))` になります。要素の型は**最初の要素の型**で、残りの要素はその型でなければなりません（演算子が左の値の型を読むのと同じです）。読む要素のない空の `[]` は書けないので、`Nil[i32]` と書きます。
+### リテラルと組
+
+リストリテラル `[x, y, z]`、名前付きのリテラル `setOf[x, y]`、組 `(x, y)` も、宣言された関数の呼び出しです。
+
+| 書き方 | 宣言 | 意味 |
+| --- | --- | --- |
+| `[x, y]` | `literal [] = Nil, Cons`（`std/list`） | `Cons(x)(Cons(y)(Nil))` |
+| `setOf[x, y]` | `literal setOf = Set.empty, Set.cons`（`std/set`） | `Set.cons(x)(Set.cons(y)(Set.empty))` |
+| `(x, y)` / `(x, y, z)` | `literal (,) = Pair` / `literal (,,) = Triple`（`std/pair`） | `Pair(x)(y)` / `Triple(x)(y)(z)` |
+
+型引数は値の型から読みます。リテラルは `cons` の最初の引数の型を**最初の要素の型**と、組は関数の引数の型を各要素の型と見比べて決めます（ドット記法と同じ照合です）。残りの要素は、決まった型でなければなりません。読む要素のない空の `[]` は書けないので、`Nil[i32]` や `Set.empty[i32]` と書きます。
 
 ```lam
 let scores: List[i32] = [70, 95, 82]
-let names: List[String] = ["alice", "bob"]
 let nested: List[List[i32]] = [[1], [2, 3]]
 let empty: List[i32] = Nil[i32]
+
+let primes: Set[i32] = setOf[7, 2, 5, 2]
+let ages: Map[String][i32] = mapOf[("alice", 30), ("bob", 25)]
+
+// 組の型も (A, B) と書ける（宣言した関数の結果の型 Pair[A][B]）
+let point: (i32, i32) = (3, 4)
+let entry: (String, (i32, bool)) = ("a", (1, true))
 ```
 
-`literal []` には、`nil: ∀a. … → R` と `cons: ∀a. … → a → R → R`（`R` は両方で同じ）の組を宣言できます。構成子でなくてもかまいません。
+宣言できる関数の形は次のとおりです。どの型パラメータも、値を受け取る引数の型に現れなければなりません（そこから読むため）。構成子でなくてもかまいません。
+
+- `literal []` / `literal 名前`: `nil: ∀ā. … → R` と `cons: ∀ā. … → E → R → R`（`ā` と `R` は両方で同じ）。右から組み立てる
+- `literal (,)`（要素の数はカンマの数 + 1）: `∀ā. … → A₁ → … → Aₙ → R`
+
+名前付きのリテラルは値と同じ名前の空間にあり、宣言はスコープに従います（module の中の宣言は `M.setOf[…]` か `open` で使え、同じ名前の束縛に隠されます）。`name[…]` は、`name` が名前付きのリテラルなら要素、そうでなければ型引数です。
+
+宣言した関数が構成子なら、パターンにも書けます。`[]`・`[x]`・`[x, y]` は `Nil` と `Cons` の、`(x, y)` は `Pair` のパターンです。
+
+```lam
+let describe(xs: List[i32]): String = match xs {
+  [] => "empty"
+  [x] => `one: {x}`
+  [x, y] => `two: {x + y}`
+  _ => "many"
+}
+
+let swap(p: (i32, bool)): (bool, i32) = match p {
+  (n, flag) => (flag, n)
+}
+```
 
 演算子（`+ - * / %`、`== != < <= > >=`、`!`、ビット演算 `& | ^`）は関数の呼び出しです。どの関数を呼ぶかは演算子の宣言（`infixl 6 + = add`）で決まり、`a + b` は「`+` に宣言された関数に、`a` の型を型引数として渡したもの」を `a` と `b` に適用します。`std/operators` は演算子ごとに trait（`Add` / `Sub` / `Mul` / `Div` / `Mod` / `Neg` / `Not` / `BitAnd` / `BitOr` / `BitXor`、比較は `Eq` / `Ord`）を用意し、そのメソッドを演算子に宣言しています。自分の型で演算子を使うには、その trait を実装します。
 
@@ -198,7 +234,7 @@ let rename: Transform[Name] = λn: Name. n
 let failed: Failing[i32] = Left[String][i32]("no value")
 
 // 型レベルの関数をその場で書く: 「a と a の組」という型構成子
-let diagonal: (λa. Pair[a][a])[i32] = Pair[i32][i32](1)(1)
+let diagonal: (λa. (a, a))[i32] = (1, 1)
 ```
 
 ## 4. データ型とパターン
@@ -287,8 +323,8 @@ let describe(xs: List[Option[i32]]): String = match xs {
 `let` でも値を分解できます。分岐が 1 つの `match` と同じで、すべての値に当たるパターンに限ります（引数のある構成子か `_`）。注釈は、分解する値全体の型です。
 
 ```lam
-let swap(p: Pair[i32][bool]): Pair[bool][i32] =
-  let Pair(n)(flag): Pair[i32][bool] = p in Pair[bool][i32](flag)(n)
+let swap(p: (i32, bool)): (bool, i32) =
+  let (n, flag): (i32, bool) = p in (flag, n)
 ```
 
 ## 5. 再帰
@@ -560,8 +596,8 @@ let compute(a: i32)(b: i32)(c: i32): Option[i32] = context[Option] {
 途中に `let`（モナドでない普通の束縛）と `rec let` も書けます。束縛にはパターンも書けます。
 
 ```lam
-let both(p: Option[Pair[i32][i32]]): Option[i32] = context[Option] {
-  Pair(x)(y): Pair[i32][i32] = p;
+let both(p: Option[(i32, i32)]): Option[i32] = context[Option] {
+  (x, y): (i32, i32) = p;
   x + y
 }
 ```
@@ -730,7 +766,7 @@ let lengths: List[i32] = ["ab", "cde"].map[i32](String.length)
 let words: List[String] = "b a c a".split(" ")
 let counts: Map[String][i32] = words.foldLeft[Map[String][i32]](Map.empty[String][i32])(λm: Map[String][i32]. λw: String.
   if m.contains(w) then m.update(w)(λn: i32. n + 1) else m.insert(w)(1))
-let report: String = counts.toList.map[String](λp: Pair[String][i32]. `{p.first}={p.second}`).join(", ")   // a=2, b=1, c=1
+let report: String = counts.toList.map[String](λp: (String, i32). `{p.first}={p.second}`).join(", ")   // a=2, b=1, c=1
 let distinct: Set[String] = Set.fromList[String](words)
 ```
 

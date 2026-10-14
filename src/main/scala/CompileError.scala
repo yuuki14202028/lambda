@@ -265,6 +265,9 @@ enum CompileError {
   // ---- 構文に宣言された関数（文字列埋め込み・リストリテラル） ----
   case SyntaxNotDeclared(hook: SyntaxHook)
   case EmptyListLiteral
+  case NotALiteral(name: Variable)
+  case TupleTypeMismatch(function: Variable, fnType: TypeRec[Type], elements: Seq[TypeRec[Type]])
+  case SyntaxPatternNotConstructor(hook: SyntaxHook, functions: Seq[Variable])
   case SyntaxTargetInvalid(hook: SyntaxHook, functions: Seq[Variable], types: Seq[TypeRec[Type]])
 
   // ---- エントリポイント ----
@@ -491,6 +494,9 @@ enum CompileError {
 
     case SyntaxNotDeclared(hook) => s"${hook.keyword} is not declared"
     case EmptyListLiteral => "An empty list literal [] cannot be written: the element type is read from the first element"
+    case NotALiteral(name) => s"${name.name} is not a literal: ${name.name}[…] needs types, or a declaration literal ${name.name} = nil, cons"
+    case TupleTypeMismatch(function, fnType, elements) => s"The tuple type (${elements.map(_.show).mkString(", ")}) does not fit ${function.name}: ${fnType.show}"
+    case SyntaxPatternNotConstructor(hook, functions) => s"${hook.keyword} cannot be used in a pattern: ${functions.map(_.name).mkString(", ")} must be constructors"
     case SyntaxTargetInvalid(hook, functions, types) =>
       s"${functions.map(_.name).mkString(", ")} cannot be declared for ${hook.keyword}: ${types.map(_.show).mkString(", ")}"
 

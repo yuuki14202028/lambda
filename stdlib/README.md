@@ -8,7 +8,7 @@
 
 - **option.lam** - `Option[a]` 型（`Some(a)` または `None`）と module `Option`（`o.getOrElse(d)` / `o.isSome` など）
 - **either.lam** - `Either[a][b]` 型（`Left(a)` または `Right(b)`）
-- **pair.lam** - `Pair[a][b]` 型（2つの値の組。`p.first` / `p.second` / `p.swap`）
+- **pair.lam** - `(a, b)` 型（2つの値の組。`p.first` / `p.second` / `p.swap`）
 - **list.lam** - `List[a]` 型（連結リスト）と module `List`（`xs.length` / `xs.filter(p)` / `xs.sorted` / `xs.head` / `xs.concat(ys)` など。どの関数もリストを最初の引数に取る）
 - **id.lam** - `Id[a]` 型（恒等ファンクター、`Functor` は derive）
 - **result.lam** - `Result[e][a]` 型（`Ok(a)` または `Err(e)`）と module `Result`（`r.getOrElse(d)` / `r.mapErr[f](g)` / `r.toOption` など）
@@ -35,8 +35,8 @@
   - `const[a][b](_x: a)(y: b): b` - 常に2番目の引数を返す
   - `compose[a][b][c](f: b → c)(g: a → b): a → c` - 関数合成
   - `flip[a][b][c](f: a → b → c): b → a → c` - 引数の順序を入れ替える
-  - `curry[a][b][c](f: Pair[a][b] → c): a → b → c` - カリー化
-  - `uncurry[a][b][c](f: a → b → c): Pair[a][b] → c` - アンカリー化
+  - `curry[a][b][c](f: (a, b) → c): a → b → c` - カリー化
+  - `uncurry[a][b][c](f: a → b → c): (a, b) → c` - アンカリー化
 
 ### インスタンス定義
 

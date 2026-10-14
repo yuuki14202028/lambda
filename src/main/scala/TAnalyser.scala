@@ -200,24 +200,103 @@ object TAnalyser {
   private def syntaxFunctions(hook: SyntaxHook): Check[Seq[Variable]] =
     ask.flatMap(env => lift(env.scope.syntax.get(hook).toRight(CompileError.SyntaxNotDeclared(hook))))
 
-  // ---- リストリテラル: [x, y] は、literal [] に宣言された nil / cons を最初の要素の型で具体化したもので組み立てる ----
+  // 関数の型 ∀ā. [制約…] → … の型パラメータ（量化と制約が交互に並んでもよい）と、その後の型
+  private def quantifiers(t: TypeRec[Type]): (Seq[(TypeVariable, Kind)], TypeRec[Type]) = {
+    @annotation.tailrec
+    def go(t: TypeRec[Type], acc: Seq[(TypeVariable, Kind)]): (Seq[(TypeVariable, Kind)], TypeRec[Type]) = destructForAllK(t) match {
+      case Some((variable, kind, body)) => go(body, acc :+ (variable -> kind))
+      case None => destructInstArrow(t) match {
+        case Some((_, to)) => go(to, acc)
+        case None => (acc, t)
+      }
+    }
+    go(t, Seq.empty)
+  }
 
-  private def checkListLiteral(elements: Seq[TypeRec[Expr]]): Check[TypeRec[Expr]] = elements match {
+  // 関数の型の引数の型を、前から count 個
+  private def parameterTypes(t: TypeRec[Type], count: Int): Seq[TypeRec[Type]] =
+    (1 to count).foldLeft((Seq.empty[TypeRec[Type]], t)) { case ((acc, rest), _) =>
+      destructArrow(rest).fold(invariant(s"${t.show} takes fewer than $count arguments")) { case (from, to) => (acc :+ from, to) }
+    }._1
+
+  /** 構文に宣言された関数 f: ∀ā. [制約…] → A₁ → … を、値の型から型引数を読んで具体化する。
+   *  Aᵢ を値 vᵢ の型と見比べて ā を決め（ドット記法と同じ照合）、順に渡しながら制約を解決する。決めた型引数も返す */
+  private def instantiateFromValues(function: Variable, values: Seq[TypeRec[Expr]]): Check[(TypeRec[Expr], Seq[(TypeRec[Type], Kind)])] = for {
+    env <- ask
+    fnType = env.values.getOrElse(function, invariant(s"syntax is declared for an undefined function ${function.name}"))
+    (params, body) = quantifiers(fnType)
+    variables = params.map(_._1).toSet
+    matched <- parameterTypes(body, values.length).zip(values).foldLeft(Check.pure(Map.empty[TypeVariable, TypeRec[Type]])) {
+      case (acc, (param, value)) => acc.flatMap { found =>
+        matchType(param, typeOf(value), variables, found) match {
+          case Some(more) => Check.pure(more)
+          case None => failAt[Map[TypeVariable, TypeRec[Type]]](value, CompileError.TypeMismatch(param, typeOf(value)))
+        }
+      }
+    }
+    // 宣言のときに、どの型パラメータも引数の型に現れることを確かめている
+    arguments = params.map { case (variable, kind) => (matched.getOrElse(variable, invariant(s"${function.name}: ${variable.name} is not determined")), kind) }
+    resolved <- instantiateWith(function, arguments)
+  } yield (resolved, arguments)
+
+  // 宣言された関数に型引数を順に渡し、間の制約を解決する
+  private def instantiateWith(function: Variable, arguments: Seq[(TypeRec[Type], Kind)]): Check[TypeRec[Expr]] = ask.flatMap { env =>
+    val fnType = env.values.getOrElse(function, invariant(s"syntax is declared for an undefined function ${function.name}"))
+    arguments.foldLeft(Check.pure(varrType(function, fnType))) { case (acc, (argument, kind)) =>
+      acc.flatMap(satisfyConstraints(_, Nil)).flatMap { case (f, _) => lift(ContextDesugar.applyTypeArg(f, argument, kind)) }
+    }.flatMap(satisfyConstraints(_, Nil)).map(_._1).local((e: Env) => e.copy(keepConstraints = false))
+  }
+
+  // ---- リストリテラル: [x, y]（literal []）と setOf[x, y]（literal setOf）は、宣言された nil / cons で右から組み立てる ----
+  // 型引数は、cons の最初の引数の型を最初の要素の型と見比べて読む
+
+  private def checkListLiteral(functions: Seq[Variable], elements: Seq[TypeRec[Expr]]): Check[TypeRec[Expr]] = elements match {
     case Seq() => fail(CompileError.EmptyListLiteral)
     case first +: _ => for {
-      functions <- syntaxFunctions(SyntaxHook.ListLiteral)
       (nilFunction, consFunction) = functions match {
         case Seq(n, c) => (n, c)
-        case _ => invariant("literal [] must declare two functions")
+        case _ => invariant("a list literal must declare two functions")
       }
-      elementType = typeOf(first)
-      nil <- instantiateDeclared(nilFunction, elementType)
-      cons <- instantiateDeclared(consFunction, elementType)
-      // 宣言のときに形（cons: T → R → R）を確かめている
-      (param, _) = destructArrow(typeOf(cons)).getOrElse(invariant(s"literal []: ${typeOf(cons).show} is not a function"))
-      _ <- elements.drop(1).traverse_(element => expectAt(param, element, first -> Related.FirstElement(elementType)))
+      instantiated <- instantiateFromValues(consFunction, Seq(first))
+      (cons, arguments) = instantiated
+      nil <- instantiateWith(nilFunction, arguments)
+      // 宣言のときに形（cons: E → R → R、nil: R）を確かめている
+      param = parameterTypes(typeOf(cons), 1).head
+      _ <- elements.drop(1).traverse_(element => expectAt(param, element, first -> Related.FirstElement(typeOf(first))))
     } yield listLitT(typeOf(nil), elements, nil, cons)
   }
+
+  // 名前付きのリテラルに宣言された関数（修飾された名前なら、その module の宣言）
+  private def namedLiteral(env: Env, name: Variable): Option[Seq[Variable]] = {
+    val segments = name.name.split('.').toSeq
+    if (segments.length == 1) env.scope.syntax.get(SyntaxHook.NamedLiteral(name.name))
+    else env.resolveModule(segments.init).flatMap(_.syntax.get(SyntaxHook.NamedLiteral(segments.last)))
+  }
+
+  // ---- 組: (x, y) は、literal (,) に宣言された関数を要素の型で具体化して要素に適用したもの ----
+
+  private def checkTuple(elements: Seq[TypeRec[Expr]]): Check[TypeRec[Expr]] = for {
+    functions <- syntaxFunctions(SyntaxHook.Tuple(elements.length))
+    instantiated <- instantiateFromValues(functions.head, elements)
+    (resolved, _) = instantiated
+    params = parameterTypes(typeOf(resolved), elements.length)
+    _ <- params.zip(elements).traverse_ { case (param, element) => expectAt(param, element) }
+    resultType = elements.foldLeft(typeOf(resolved))((t, _) => destructArrow(t).fold(t)(_._2))
+  } yield tupleLitT(resultType, elements, resolved)
+
+  // 組の型 (A, B) は、literal (,) に宣言された関数の結果の型（引数の型を A, B と見比べて型引数を読む）
+  private def tupleType(elements: Seq[TypeRec[Type]]): Check[TypeRec[Type]] = for {
+    env <- ask
+    functions <- syntaxFunctions(SyntaxHook.Tuple(elements.length))
+    function = functions.head
+    fnType = env.values.getOrElse(function, invariant(s"syntax is declared for an undefined function ${function.name}"))
+    (params, body) = quantifiers(fnType)
+    normalized = elements.map(Equivalence.normalize)
+    matched <- lift(parameterTypes(body, elements.length).zip(normalized).foldLeft(Option(Map.empty[TypeVariable, TypeRec[Type]])) {
+      case (acc, (param, element)) => acc.flatMap(found => matchType(param, element, params.map(_._1).toSet, found))
+    }.toRight(CompileError.TupleTypeMismatch(function, fnType, normalized)))
+    result = elements.foldLeft(body)((t, _) => destructArrow(t).fold(t)(_._2))
+  } yield Equivalence.normalize(substMany(params.map(_._1), params.map { case (v, _) => matched.getOrElse(v, typeVarT(v)) }, result))
 
   // ---- 文字列埋め込み: `{x}` は、interpolate に宣言された関数 f を x の型で具体化して x に適用したもの ----
 
@@ -225,11 +304,10 @@ object TAnalyser {
     parts.traverse {
       case InterpPart.Text(value) => Check.pure(InterpPart.Text[TypeRec](value))
       case InterpPart.Embed(value, _) => for {
-        functions <- syntaxFunctions(SyntaxHook.Interpolate).flatMap(fs => if (fs.isEmpty) invariant("interpolate has no function") else Check.pure(fs))
-        resolved <- instantiateDeclared(functions.head, typeOf(value))
-        // 宣言のときに形（∀a. … → a → String）を確かめている
-        (param, _) = destructArrow(typeOf(resolved)).getOrElse(invariant(s"interpolate: ${typeOf(resolved).show} is not a function"))
-        _ <- expectAt(param, value)
+        functions <- syntaxFunctions(SyntaxHook.Interpolate)
+        instantiated <- instantiateFromValues(functions.head, Seq(value))
+        (resolved, _) = instantiated
+        _ <- expectAt(parameterTypes(typeOf(resolved), 1).head, value)
       } yield InterpPart.Embed[TypeRec](value, Some(resolved))
     }.map(strInterpT(stringTypeT, _))
 
@@ -261,7 +339,12 @@ object TAnalyser {
   }
 
   // pattern の中の型変数 variables を、target と一致するように決める（型の形を上から順に見比べるだけで、推論はしない）
-  private def matchType(pattern: TypeRec[Type], target: TypeRec[Type], variables: Set[TypeVariable]): Option[Map[TypeVariable, TypeRec[Type]]] = {
+  private def matchType(
+      pattern: TypeRec[Type],
+      target: TypeRec[Type],
+      variables: Set[TypeVariable],
+      initial: Map[TypeVariable, TypeRec[Type]] = Map.empty
+  ): Option[Map[TypeVariable, TypeRec[Type]]] = {
     def go(p: TypeRec[Type], t: TypeRec[Type], found: Map[TypeVariable, TypeRec[Type]]): Option[Map[TypeVariable, TypeRec[Type]]] =
       (p.project, t.project) match {
         case (AST.TypeVar(v), _) if variables(v) => found.get(v) match {
@@ -272,7 +355,7 @@ object TAnalyser {
         case (AST.Arrow(pf, pt), AST.Arrow(tf, tt)) => go(pf, tf, found).flatMap(go(pt, tt, _))
         case _ => Option.when(Equivalence.alpha(p, t))(found)
       }
-    go(pattern, target, Map.empty)
+    go(pattern, target, initial)
   }
 
   // スコープにある trait のメソッド（短い名前で書けて、局所的な束縛に隠されていないもの）。
@@ -408,7 +491,12 @@ object TAnalyser {
 
   // . を含む名前 a.b.c: 値を指すいちばん長い前半（a.b.c か a.b か a）を値として読み、残りをドット記法として読む。
   // 全体が修飾された名前（M.x）として読めるなら、それが優先される。前半のどれも値でなければ、全体を修飾された名前として報告する
-  private def checkPath(name: Variable, typeArgs: Seq[TypeRec[Type]], dictionaries: Seq[TypeRec[Expr]]): Check[TypeRec[Expr]] = ask.flatMap { env =>
+  private def checkPath(name: Variable, typeArgs: Seq[TypeRec[Type]], dictionaries: Seq[TypeRec[Expr]], nameSpan: Option[Span] = None): Check[TypeRec[Expr]] = ask.flatMap { env =>
+    // 名前の部分と、型引数を 1 つずつ渡した途中の式の位置を記録する（エラーが型引数を受け取った値を指せるように）
+    def located(node: TypeRec[Expr], end: Option[TypeRec[Type]]): TypeRec[Expr] = {
+      nameSpan.foreach(start => env.spans.record(node, end.flatMap(env.spans.get).fold(start)(start.to)))
+      node
+    }
     val segments = name.name.split('.').toSeq
     val prefix = (segments.length to 1 by -1).find(n => env.lookupValue(Variable(segments.take(n).mkString("."))).nonEmpty)
     def variable(written: Variable): Check[TypeRec[Expr]] = for {
@@ -428,10 +516,10 @@ object TAnalyser {
         val keep = (e: Env) => if (dictionaries.nonEmpty) e.copy(keepConstraints = true) else e
         for {
           applied <- (for {
-            base <- if (typeArgs.isEmpty) variable(name) else variable(name).local((e: Env) => e.copy(keepConstraints = false))
+            base <- (if (typeArgs.isEmpty) variable(name) else variable(name).local((e: Env) => e.copy(keepConstraints = false))).map(located(_, None))
             applied <- typeArgs.zipWithIndex.foldLeft(Check.pure(base)) { case (function, (argument, index)) =>
               val last = index == typeArgs.length - 1
-              function.flatMap(f => if (last) checkTyApp(f, argument) else checkTyApp(f, argument).local((e: Env) => e.copy(keepConstraints = false)))
+              function.flatMap(f => if (last) checkTyApp(f, argument) else checkTyApp(f, argument).local((e: Env) => e.copy(keepConstraints = false)).map(located(_, Some(argument))))
             }
           } yield applied).local(keep)
           satisfied <- if (dictionaries.isEmpty) Check.pure((applied, Nil))
@@ -928,6 +1016,21 @@ object TAnalyser {
     case Pattern.Wildcard() => Check.pure((Pattern.Wildcard[TypeRec](), Seq.empty))
     case Pattern.Bind(name) => Check.pure((Pattern.Bind[TypeRec](name), Seq(name -> expected)))
 
+    // [p, q] / (p, q): 宣言された関数が構成子なら、その構成子のパターンとして読む（[p, q] は cons(p)(cons(q)(nil))）
+    case Pattern.Syntax(hook, elements) => for {
+      env <- ask
+      functions <- syntaxFunctions(hook)
+      fields = (name: Variable) => env.constructors.get(name).map(_.fields.length)
+      rewritten <- (hook, functions) match {
+        case (SyntaxHook.Tuple(arity), Seq(f)) if fields(f).contains(arity) =>
+          Check.pure(Pattern.Constructor[TC](f, elements, Nil))
+        case (SyntaxHook.ListLiteral, Seq(nil, cons)) if fields(nil).contains(0) && fields(cons).contains(2) =>
+          Check.pure(elements.foldRight(Pattern.Constructor[TC](nil, Nil, Nil))((element, rest) => Pattern.Constructor[TC](cons, Seq(element, rest), Nil)))
+        case _ => fail[Pattern[TC]](CompileError.SyntaxPatternNotConstructor(hook, functions))
+      }
+      checked <- checkPattern(rewritten, expected)
+    } yield checked
+
     // p | q: どの選択肢も、同じ変数を同じ型で束縛する
     case Pattern.Or(alternatives) => for {
       checked <- alternatives.traverse(checkPattern(_, expected))
@@ -1026,7 +1129,6 @@ object TAnalyser {
     case AST.TopDerive(_, _) => declarationNode("TopDerive")
     case AST.TopModule(_, _) => declarationNode("TopModule")
     case AST.TopOperator(_, _, _) => declarationNode("TopOperator")
-    case AST.TopSyntax(_, _) => declarationNode("TopSyntax")
     case AST.TopSyntax(_, _) => declarationNode("TopSyntax")
     case AST.TopOpen(_) => declarationNode("TopOpen")
     case AST.TopModified(_, _) => declarationNode("TopModified")
@@ -1225,11 +1327,21 @@ object TAnalyser {
       resolved <- checkTyApp(typedFunction, typedArgument)
     } yield resolved
 
-    case AST.Path(name, typeArgs, dictionaries) => for {
-      typedArgs <- typeArgs.traverse(identity)
-      typedDictionaries <- dictionaries.traverse(identity)
-      checked <- checkPath(name, typedArgs, typedDictionaries)
-    } yield checked
+    // name[ … ] は、name が名前付きのリテラルなら要素、そうでなければ型引数
+    case AST.Path(name, typeArgs, dictionaries, literal, nameSpan) => ask.flatMap { env =>
+      (namedLiteral(env, name), literal) match {
+        case (Some(functions), Some(elements)) if dictionaries.isEmpty =>
+          elements.traverse(identity).flatMap(checkListLiteral(functions, _))
+        case (None, Some(_)) if typeArgs.isEmpty => fail(CompileError.NotALiteral(name))
+        case _ => for {
+          typedArgs <- typeArgs.traverse(identity)
+          typedDictionaries <- dictionaries.traverse(identity)
+          checked <- checkPath(name, typedArgs, typedDictionaries, nameSpan)
+        } yield checked
+      }
+    }
+
+    case AST.TupleLit(elements, _) => elements.traverse(identity).flatMap(checkTuple)
 
     case AST.Select(receiver, member, typeArgs, dictionaries, _) => for {
       typedReceiver <- receiver
@@ -1262,7 +1374,11 @@ object TAnalyser {
       else fail(CompileError.NumericLiteralUnknown(typeName))
     case AST.Char(value) => okT(charT(value, charTypeT))
     case AST.StringLit(value) => okT(stringLitT(value, stringTypeT))
-    case AST.ListLit(elements, _, _) => elements.traverse(identity).flatMap(checkListLiteral)
+    case AST.ListLit(elements, _, _) => for {
+      functions <- syntaxFunctions(SyntaxHook.ListLiteral)
+      typedElements <- elements.traverse(identity)
+      checked <- checkListLiteral(functions, typedElements)
+    } yield checked
 
     case AST.StrInterp(parts) => for {
       typedParts <- parts.traverse {
@@ -1375,6 +1491,8 @@ object TAnalyser {
     case AST.ForAll(variable, kind, body) => underTypeVar(variable, kind)(body).map(forallTypeT(variable, kind, _))
     case AST.TypeAbs(variable, kind, body) => underTypeVar(variable, kind)(body).map(typeAbsT(variable, kind, _))
     case AST.TypeApp(function, argument) => (function, argument).mapN(typeAppT)
+    // 組の型は、ここで literal (,) に宣言された関数の結果の型に読み替える（要素の型は別名を展開してから見比べる）
+    case AST.TupleType(elements) => elements.traverse(identity).flatMap(_.traverse(expandType)).flatMap(tupleType)
   }
 
   // 子の式では、型に残った制約を解決する。残すのは f(with d) の f の位置だけ
@@ -1514,30 +1632,31 @@ object TAnalyser {
     } yield (topSyntaxT(hook, functions), env.copy(scope = env.scope.withSyntax(hook, functions), members = env.members.withSyntax(hook, functions)))
   }
 
-  /** 構文に宣言できる関数の型。どれも最初の型パラメータ（カインド *）に、値（埋め込む値・最初の要素）の型を受け取る。
-   *  interpolate: ∀a. [制約…] → a → String
-   *  literal []:  nil は ∀a. [制約…] → R、cons は ∀a. [制約…] → a → R → R（R は両方で同じ） */
+  /** 構文に宣言できる関数の型。型パラメータ ā はどれも、値（埋め込む値・要素）を受け取る引数の型に現れなければならない（そこから読む）。
+   *  interpolate: ∀ā. [制約…] → A → String
+   *  literal [] / literal 名前: nil は ∀ā. [制約…] → R、cons は ∀ā. [制約…] → E → R → R（ā と R は両方で同じ）
+   *  literal (,…): ∀ā. [制約…] → A₁ → … → Aₙ → R */
   private def syntaxShape(hook: SyntaxHook, types: Seq[TypeRec[Type]]): Boolean = {
-    @annotation.tailrec
-    def afterConstraints(t: TypeRec[Type]): TypeRec[Type] = destructInstArrow(t) match {
-      case Some((_, to)) => afterConstraints(to)
-      case None => t
-    }
-    // ∀a. [制約…] → body の a と body（a は共通の名前に揃える）
-    val common = TypeVariable("$element")
-    def body(t: TypeRec[Type]): Option[TypeRec[Type]] = destructForAllK(t).collect {
-      case (variable, Kind.Star, inner) => Equivalence.normalize(substType(variable, typeVarT(common), afterConstraints(inner)))
-    }
-    val element = typeVarT(common)
-    (hook, types.map(body)) match {
-      case (SyntaxHook.Interpolate, Seq(Some(f))) =>
-        destructArrow(f).exists { case (from, to) => Equivalence.alpha(from, element) && Equivalence.alpha(to, stringTypeT) }
-      case (SyntaxHook.ListLiteral, Seq(Some(nil), Some(cons))) =>
-        destructArrow(cons).exists { case (head, rest) =>
-          Equivalence.alpha(head, element) && destructArrow(rest).exists { case (tail, result) =>
-            Equivalence.alpha(tail, nil) && Equivalence.alpha(result, nil)
+    def arguments(t: TypeRec[Type], count: Int): Option[(Seq[TypeRec[Type]], TypeRec[Type])] =
+      (1 to count).foldLeft(Option((Seq.empty[TypeRec[Type]], t))) { case (acc, _) =>
+        acc.flatMap { case (done, rest) => destructArrow(rest).map { case (from, to) => (done :+ from, to) } }
+      }
+    def readable(params: Seq[(TypeVariable, Kind)], from: Seq[TypeRec[Type]]): Boolean =
+      params.forall { case (variable, _) => from.exists(t => freeTypeVars(t).contains(variable)) }
+    (hook, types.map(quantifiers)) match {
+      case (SyntaxHook.Interpolate, Seq((params, body))) =>
+        arguments(body, 1).exists { case (from, to) => readable(params, from) && Equivalence.alpha(to, stringTypeT) }
+      case (SyntaxHook.ListLiteral | SyntaxHook.NamedLiteral(_), Seq((nilParams, nil), (consParams, cons))) =>
+        nilParams.map(_._2) == consParams.map(_._2) && {
+          // cons の型パラメータを nil のものに揃える
+          val renamed = Equivalence.normalize(substMany(consParams.map(_._1), nilParams.map { case (v, _) => typeVarT(v) }, cons))
+          arguments(renamed, 2).exists {
+            case (Seq(element, tail), result) => readable(nilParams, Seq(element)) && Equivalence.alpha(tail, nil) && Equivalence.alpha(result, nil)
+            case _ => false
           }
         }
+      case (SyntaxHook.Tuple(arity), Seq((params, body))) =>
+        arguments(body, arity).exists { case (from, _) => readable(params, from) }
       case _ => false
     }
   }

@@ -46,7 +46,11 @@ enum AST[R[_], I] {
   case TyApp(function: R[Expr], argument: R[Type]) extends AST[R, Expr]
   // パーサが読んだ . を含む名前 a.b.c[T]。module の修飾か、値へのドット記法かは、型検査がスコープで決める（型検査後には残らない）
   // dictionaries は直後に書かれた (with d)（module の修飾なら f(with d) と同じ、ドット記法なら x.f(with d)）
-  case Path(name: Variable, typeArgs: Seq[R[Type]], dictionaries: Seq[R[Expr]]) extends AST[R, Expr]
+  // literal は、名前の直後の [ … ] を式の並びとして読んだもの（name が名前付きリテラルなら、型引数ではなく要素。型検査がスコープで決める）
+  // nameSpan は名前の部分の位置（エラー表示で、型引数を受け取った値として名前だけを指す）
+  case Path(name: Variable, typeArgs: Seq[R[Type]], dictionaries: Seq[R[Expr]], literal: Option[Seq[R[Expr]]] = None, nameSpan: Option[Span] = None) extends AST[R, Expr]
+  // (x, y): 組。resolved は、型検査が決めた「literal (,) に宣言された関数を要素の型で具体化したもの」
+  case TupleLit(elements: Seq[R[Expr]], resolved: Option[R[Expr]]) extends AST[R, Expr]
   // x.f[T]: x の型の module にある関数 f の呼び出し。resolved は、型検査が決めた関数（型引数と制約を適用済み）
   // dictionaries は x.f(with d) の d（関数の制約を先頭から満たす。残りの制約は解決する）
   case Select(receiver: R[Expr], name: String, typeArgs: Seq[R[Type]], dictionaries: Seq[R[Expr]], resolved: Option[R[Expr]]) extends AST[R, Expr]
@@ -88,6 +92,8 @@ enum AST[R[_], I] {
   case InstArrow(constraint: Constraint[R], to: R[Type]) extends AST[R, Type]
   case TypeApp(function: R[Type], argument: R[Type]) extends AST[R, Type]
   case TypeAbs(variable: TypeVariable, kind: Kind, body: R[Type]) extends AST[R, Type]
+  // (A, B): 組の型。型検査が literal (,) に宣言された関数の結果の型に読み替える（型検査後には残らない）
+  case TupleType(elements: Seq[R[Type]]) extends AST[R, Type]
 }
 
 /** module の中の宣言に付ける修飾子。
@@ -122,6 +128,7 @@ enum Pattern[R[_]] {
   case Literal(value: LiteralValue, equals: Option[R[Expr]])                                 // 1 / 'a' / true / "s"。equals は型検査が解決した ==
   case Or(alternatives: Seq[Pattern[R]])                                                     // p | q。どの選択肢も同じ変数を同じ型で束縛する
   case Located(span: Span, pattern: Pattern[R])                                              // ソース上の位置（エラー表示用。型検査が外す）
+  case Syntax(hook: SyntaxHook, elements: Seq[Pattern[R]])                                   // [p, q] / (p, q)。型検査が宣言された構成子のパターンに読み替える
 }
 
 // スクルーティニーのデータ型の構成子と、型引数を適用したフィールドの型（脱糖が Env なしで分岐を組み立てるため）
@@ -149,6 +156,7 @@ def patternVariables[R[_]](pattern: Pattern[R]): Seq[Variable] = pattern match {
   case Pattern.Constructor(_, args, _) => args.flatMap(patternVariables)
   case Pattern.Or(alternatives) => alternatives.headOption.toSeq.flatMap(patternVariables)
   case Pattern.Located(_, inner) => patternVariables(inner)
+  case Pattern.Syntax(_, elements) => elements.flatMap(patternVariables)
   case Pattern.Wildcard() | Pattern.Literal(_, _) => Seq.empty
 }
 // rec data / rec { data …  data … } のデータ型。フィールドからは組の全員が見える
@@ -239,13 +247,18 @@ enum InterpPart[R[_]] {
 }
 
 // 構文が呼ぶ関数の宣言の種類
+// 型引数は、値（埋め込む値・要素）の型を関数の引数の型と見比べて読む（ドット記法と同じ照合）
 enum SyntaxHook {
-  case Interpolate // interpolate = f: `{x}` は f[T](x)（T は x の型）
-  case ListLiteral // literal [] = nil, cons: [x, y] は cons[T](x)(cons[T](y)(nil[T]))（T は最初の要素の型）
+  case Interpolate                // interpolate = f: `{x}` は f[T](x)（T は x の型）
+  case ListLiteral                // literal [] = nil, cons: [x, y] は cons(x)(cons(y)(nil))
+  case NamedLiteral(name: String) // literal setOf = nil, cons: setOf[x, y] は cons(x)(cons(y)(nil))
+  case Tuple(arity: Int)          // literal (,) = f: (x, y) は f(x)(y)
 
   def keyword: String = this match {
     case Interpolate => "interpolate"
     case ListLiteral => "literal []"
+    case NamedLiteral(name) => s"literal $name"
+    case Tuple(arity) => s"literal (${"," * (arity - 1)})"
   }
 }
 
@@ -385,6 +398,8 @@ def char(value: scala.Char): Rec[Expr] = HFix(AST.Char(value))
 def stringLit(value: String): Rec[Expr] = HFix(AST.StringLit(value))
 def strInterp(parts: Seq[InterpPart[Rec]]): Rec[Expr] = HFix(AST.StrInterp(parts))
 def strInterpT(t: TypeRec[Type], parts: Seq[InterpPart[TypeRec]]): TypeRec[Expr] = HCofree(ExprAnn(t), AST.StrInterp(parts))
+def tupleLitT(t: TypeRec[Type], elements: Seq[TypeRec[Expr]], resolved: TypeRec[Expr]): TypeRec[Expr] =
+  HCofree(ExprAnn(t), AST.TupleLit(elements, Some(resolved)))
 def listLitT(t: TypeRec[Type], elements: Seq[TypeRec[Expr]], nil: TypeRec[Expr], cons: TypeRec[Expr]): TypeRec[Expr] =
   HCofree(ExprAnn(t), AST.ListLit(elements, Some(nil), Some(cons)))
 def bool(value: Boolean): Rec[Expr] = HFix(AST.Bool(value))
@@ -610,6 +625,7 @@ def freeVars(expr: Rec[Expr]): Set[Variable] = {
         case Pattern.Literal(_, equals) => equals.getOrElse(Set.empty)
         case Pattern.Or(alternatives) => alternatives.flatMap(inPattern).toSet
         case Pattern.Located(_, inner) => inPattern(inner)
+        case Pattern.Syntax(_, elements) => elements.flatMap(inPattern).toSet
         case Pattern.Wildcard() | Pattern.Bind(_) => Set.empty
       }
       scrutinee ++ cases.foldLeft(Set.empty[Variable]) { (acc, c) =>
@@ -625,7 +641,8 @@ def freeVars(expr: Rec[Expr]): Set[Variable] = {
       }
     case AST.App(function, argument) => function ++ argument
     case AST.TyApp(function, _) => function
-    case AST.Path(name, _, dictionaries) => dictionaries.foldLeft(Set(name))(_ ++ _)
+    case AST.Path(name, _, dictionaries, literal, _) => (dictionaries ++ literal.getOrElse(Seq.empty)).foldLeft(Set(name))(_ ++ _)
+    case AST.TupleLit(elements, resolved) => elements.foldLeft(resolved.getOrElse(Set.empty[Variable]))(_ ++ _)
     case AST.Select(receiver, _, _, dictionaries, resolved) => dictionaries.foldLeft(receiver ++ resolved.getOrElse(Set.empty))(_ ++ _)
     case AST.NamedApp(constructor, arguments, _) => arguments.foldLeft(constructor)(_ ++ _.value)
     case AST.Foreign(_, _) => Set.empty

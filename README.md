@@ -13,6 +13,8 @@ Scala 3 で実装した、小さな型付きラムダ計算系言語（System F�
 - **trait**: 型クラス。スーパークラス、デフォルトメソッド、高階カインド、量化された制約、`derive`
 - **インスタンスを明示的に扱える**: `summon`、式としての `impl`、`(with d)`、`using`
 - **context 記法**: モナドの計算を順に並べる書き方
+- **構文はライブラリが宣言する**: 演算子（`infixl 6 + = add`）、文字列埋め込み（`interpolate = show`）、リテラル（`[1, 2]`、`setOf[1, 2]`）、組（`(a, b)`、型 `(A, B)`）
+- **ドット記法**: `xs.map[b](f).sorted`。型の module の関数と trait のメソッドを呼ぶ
 - **module**: 名前空間、`private`、`opaque type` / `opaque data`
 - **エラー表示**: 原因の部分に下線を引き、関係する位置と直し方を添えます
 - **C FFI**: `foreign[T → U] name` で C の関数を参照します

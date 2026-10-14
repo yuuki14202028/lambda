@@ -91,9 +91,18 @@ PatternDesugar は行列から決定木を作り、構成子 1 段の `Match`（
 記号は記号文字の並びの最長一致で、決まった集合はない（`ParserAST.operatorSymbol`。`=` `=>` `->` `:` は予約）。優先順位（0〜9）と結合性も宣言の一部でスコープに従うので、パーサは式を並びのまま `OpSeq(first, rest: Seq[OpStep])` として読み、型検査がスコープ中の宣言で `BinOp` の木に組む（`groupOperators`。同じ優先順位は両方 infixl か両方 infixr のときだけ並べられる）。前置は二項より強い（`UnaryOp`）。型検査は `BinOp` / `UnaryOp` ノードを残して解決済みの関数を `resolved` に記録し、OperatorDesugar が適用に展開する。型検査後の AST に `OpSeq` は残らない。
 宣言は他の宣言と同じスコープに従う（`Names.operators: Map[String, OperatorDef]`。キーは二項なら記号、前置なら `Operators.prefixKey`。宣言より後で見え、module のメンバーになり、`open` / `private` に従い、後の宣言が前を隠す）。`&&` と `||` だけは bool 専用の組み込みで（`Operators.builtin`。優先順位 3 と 2、宣言不可）、`if` に脱糖する（`resolved = None`）。`std/operators` は演算子ごとに 1 つの trait（`Add` / `Sub` / … / `Eq` / `Ord`）を置き、組み込みの型のインスタンスを `intrinsic` で定義する。Generator は演算子ノードを受け取らない。
 
-### 構文に宣言された関数（interpolate / literal []）
+### 構文に宣言された関数（interpolate / literal）
 
-演算子と同じく、文字列埋め込みとリストリテラルも、ライブラリが宣言した関数を呼ぶ（`TopSyntax(hook, functions)`、`SyntaxHook`。スコープは `Names.syntax` で演算子と同じ規則）。`interpolate = show` の下で `` `a{x}` `` の `{x}` は `show[T](x)`（T は x の型。String も例外なく通す）。型検査は `StrInterp(parts: Seq[InterpPart])` を保ち、埋め込みごとに具体化した関数を `InterpPart.Embed.resolved` に記録し、OperatorDesugar が組み込みの concat でつなぐ。`literal [] = Nil, Cons` の下で `[x, y]` は `Cons[T](x)(Cons[T](y)(Nil[T]))`（T は最初の要素の型。空の `[]` はエラー `EmptyListLiteral`）。型検査は `ListLit(elements, nil, cons)` に具体化した 2 つの関数を記録し、OperatorDesugar が組み立てる。宣言できる関数の形は `syntaxShape` が確かめる（`∀a. … → a → String`、`nil: ∀a. … → R` と `cons: ∀a. … → a → R → R`）。`interpolate` と `literal` は式のキーワード（宣言の前の行の式の続きと読まないため）。
+演算子と同じく、文字列埋め込み・リテラル・組も、ライブラリが宣言した関数を呼ぶ（`TopSyntax(hook, functions)`、`SyntaxHook`。スコープは `Names.syntax` で演算子と同じ規則）:
+
+- `interpolate = show`: `` `a{x}` `` の `{x}` は `show[T](x)`（String も例外なく通す）。`StrInterp(parts: Seq[InterpPart])`
+- `literal [] = Nil, Cons`: `[x, y]` は `Cons(x)(Cons(y)(Nil))`（右から組み立てる。空の `[]` はエラー `EmptyListLiteral`）。`ListLit(elements, nil, cons)`
+- `literal setOf = Set.empty, Set.cons`: 名前付きのリテラル `setOf[x, y]`。名前は値と同じ名前の空間にあり（`Env.withValue` / `exportValue` が同名のリテラルを隠す）、module のメンバーになる（`namedLiteral`）
+- `literal (,) = Pair` / `literal (,,) = Triple`: 組 `(x, y)` は `Pair(x)(y)`。`TupleLit(elements, resolved)`。組の型 `(A, B)` は、型検査（tcAlg の `TupleType`）が宣言した関数の結果の型に読み替える（`tupleType`）
+
+型引数は値の型から読む（`instantiateFromValues`。関数の引数の型を値の型と `matchType` で見比べる。ドット記法と同じ照合）。宣言できる関数の形は `syntaxShape` が確かめる（どの型パラメータも、値を受け取る引数の型に現れる。リテラルは `nil: ∀ā. … → R` と `cons: ∀ā. … → E → R → R`）。型検査は具体化した関数をノードに記録し、OperatorDesugar が適用に展開する。
+`name[…]` は型引数とも要素とも読めるので、パーサは名前の直後の `[ … ]` を `Path` に読み、型として読めるものは式としての読み（`Path.literal`。`typeAsExpr`）も持つ。型検査は `name` が名前付きのリテラルなら要素、そうでなければ型引数として検査する（使わない方の子は検査しない）。`Path.nameSpan` は名前の部分の位置（エラーが型引数を受け取った値を指せるように）。
+パターンの `[p, q]` / `(p, q)`（`Pattern.Syntax`）は、宣言した関数が構成子なら、型検査がその構成子のパターンに読み替える（`[p, q]` は `Cons(p)(Cons(q)(Nil))`。構成子でなければ `SyntaxPatternNotConstructor`）。`interpolate` と `literal` は式のキーワード（宣言の前の行の式の続きと読まないため）。
 
 ### エラー表示（Diagnostic.scala）
 

@@ -13,7 +13,7 @@ object SelectDesugar {
   private val desugarAlg: Algebra[TypedAST, TypeRec] = [x] => he => (he.ann, he.ast) match {
     case (ExprAnn(_), AST.Select(receiver, name, _, _, resolved)) =>
       mkApp(resolved.getOrElse(invariant(s".$name reached SelectDesugar without a resolved function")), receiver)
-    case (ExprAnn(_), AST.Path(name, _, _)) => invariant(s"the path ${name.name} must be resolved by the type checker")
+    case (ExprAnn(_), AST.Path(name, _, _, _, _)) => invariant(s"the path ${name.name} must be resolved by the type checker")
     case (ann, node) => HCofree(ann, node)
   }
 }

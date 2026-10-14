@@ -158,7 +158,7 @@ class StringInterpSuite extends munit.FunSuite {
 
   test("宣言: interpolate には ∀a. … → a → String の関数だけを宣言できる") {
     val src =
-      """let render(x: i32): foreign.C.String = "n"
+      """let render[a](x: a): i32 = 0
         |interpolate = render
         |let main(): i32 = 0
         |""".stripMargin

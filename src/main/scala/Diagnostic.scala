@@ -638,6 +638,22 @@ object Diagnostic {
         "string interpolation is not declared", "this string",
         notes = Seq("`{x}` calls the function declared with `interpolate = f`, with the type of `x`: `f[T](x)`"),
         helps = Seq("the standard library declares `interpolate = show`: add `import \"std/show\"`"))
+      case SyntaxNotDeclared(SyntaxHook.NamedLiteral(literal)) => Description(
+        s"the literal ${name(literal)} is not declared", "used here", helps = Seq(s"declare it: `literal $literal = nil, cons`"))
+      case SyntaxNotDeclared(hook @ SyntaxHook.Tuple(arity)) => Description(
+        s"tuples of $arity elements are not declared", "this tuple",
+        notes = Seq(s"`(x, y, …)` calls the function declared with `${hook.keyword} = f`, with the types of the elements"),
+        helps = Seq(if (arity <= 3) "the standard library declares `literal (,) = Pair` and `literal (,,) = Triple`: add `import \"std/pair\"`" else s"declare one: `${hook.keyword} = f`"))
+      case NotALiteral(n) => Description(
+        s"${name(n.name)} is not a literal", "these are not types",
+        notes = Seq(s"`${n.name}[…]` is a type application, or the elements of a literal declared with `literal ${n.name} = nil, cons`"),
+        helps = Seq("write type arguments in the brackets, or declare the literal"))
+      case TupleTypeMismatch(function, fnType, elements) => Description(
+        s"no tuple type for (${elements.map(_.show).mkString(", ")})", "this tuple type",
+        notes = Seq(s"a tuple type is the result type of the function declared for tuples, ${name(function.name)}: ${ty(fnType)}, at the element types"))
+      case SyntaxPatternNotConstructor(hook, functions) => Description(
+        s"`${hook.keyword}` cannot be used in a pattern", "this pattern",
+        notes = Seq(s"a pattern needs constructors, and ${functions.map(f => name(f.name)).mkString(" and ")} are not (or do not have the right number of fields)"))
       case SyntaxNotDeclared(SyntaxHook.ListLiteral) => Description(
         "list literals are not declared", "this list",
         notes = Seq("`[x, y]` calls the functions declared with `literal [] = nil, cons`, with the type of the first element: `cons[T](x)(cons[T](y)(nil[T]))`"),
@@ -648,8 +664,9 @@ object Diagnostic {
         helps = Seq("write the empty value with its type argument, for example `Nil[i32]`"))
       case SyntaxTargetInvalid(hook, functions, types) =>
         val shape = hook match {
-          case SyntaxHook.Interpolate => "`interpolate` needs a function of type `∀a. … → a → String`: its type parameter receives the type of the embedded value"
-          case SyntaxHook.ListLiteral => "`literal []` needs `nil: ∀a. … → R` and `cons: ∀a. … → a → R → R` with the same `R`: their type parameter receives the type of the first element"
+          case SyntaxHook.Interpolate => "`interpolate` needs a function of type `∀ā. … → A → String`; the type parameters are read from the type of the embedded value, so all of them must appear in `A`"
+          case SyntaxHook.ListLiteral | SyntaxHook.NamedLiteral(_) => s"`${hook.keyword}` needs `nil: ∀ā. … → R` and `cons: ∀ā. … → E → R → R` with the same `ā` and `R`; the type parameters are read from the type of the first element, so all of them must appear in `E`"
+          case SyntaxHook.Tuple(arity) => s"`${hook.keyword}` needs a function of $arity arguments `∀ā. … → A₁ → … → R`; the type parameters are read from the types of the elements, so all of them must appear in the arguments"
         }
         Description(
           s"${functions.map(f => name(f.name)).mkString(" and ")} cannot be declared for `${hook.keyword}`",

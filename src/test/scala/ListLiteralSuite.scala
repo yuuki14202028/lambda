@@ -56,4 +56,55 @@ class ListLiteralSuite extends FunSuite {
   test("リストリテラルは式の中のどこにでも書け、型引数の後置とぶつからない") {
     assertRight(encode(list + "let f(xs: List[i32]): List[i32] = xs\nlet ys: List[i32] = f([1, 2])\nlet n: List[i32] = Cons[i32](0)([1])\n" + main))
   }
+
+  // ---- 名前付きのリテラル ----
+
+  private val bag =
+    """rec data Bag[a] = { Empty, Put(a)(Bag[a]) }
+      |let none[a]: Bag[a] = Empty[a]
+      |let put[a](x: a)(b: Bag[a]): Bag[a] = Put[a](x)(b)
+      |literal bagOf = none, put
+      |""".stripMargin
+
+  test("名前付きのリテラル name[x, y] は、literal name に宣言した関数で組み立てる") {
+    assertRight(encode(list + bag + "let b: Bag[i32] = bagOf[1, 2]\nlet one(x: i32): Bag[i32] = bagOf[x]\nlet xs: List[i32] = [1]\n" + main))
+    assertLeftContains(validate(list + bag + "let b: Bag[bool] = bagOf[1, 2]\n" + main), "Type mismatch")
+    assertLeftContains(validate(list + bag + "let b: Bag[i32] = bagOf[]\n" + main), "An empty list literal")
+  }
+
+  test("名前付きのリテラルでない名前の [ … ] は型引数（中身が型でなければエラー）") {
+    assertRight(encode(list + "let xs: List[i32] = Cons[i32](1)(Nil[i32])\n" + main))
+    assertLeftContains(validate(list + "let f[a](x: a): a = x\nlet n: i32 = f[1, 2](3)\n" + main), "is not a literal")
+  }
+
+  test("名前付きのリテラルは値と同じ名前の空間にあり、同じ名前の束縛に隠される") {
+    assertLeftContains(validate(list + bag + "let f(bagOf: i32): Bag[i32] = bagOf[1, 2]\n" + main), "is not a literal")
+  }
+
+  test("型引数がいくつあっても、cons の最初の引数の型から読む") {
+    val src = list +
+      """data Pair[a][b] = { Pair(a)(b) }
+        |literal (,) = Pair
+        |rec data Table[k][v] = { Done, Row(k)(v)(Table[k][v]) }
+        |let done[k][v]: Table[k][v] = Done[k][v]
+        |let row[k][v](p: Pair[k][v])(t: Table[k][v]): Table[k][v] = match p { Pair(k1)(v1) => Row[k][v](k1)(v1)(t) }
+        |literal tableOf = done, row
+        |let t: Table[i32][bool] = tableOf[(1, true), (2, false)]
+        |""".stripMargin
+    assertRight(encode(src + main))
+  }
+
+  test("module の中で宣言した名前付きのリテラルは、修飾するか open して使う") {
+    val src = list +
+      """module Bags {
+        |  rec data Bag[a] = { Empty, Put(a)(Bag[a]) }
+        |  let none[a]: Bag[a] = Empty[a]
+        |  let put[a](x: a)(b: Bag[a]): Bag[a] = Put[a](x)(b)
+        |  literal bagOf = none, put
+        |}
+        |""".stripMargin
+    assertRight(encode(src + "let b: Bags.Bag[i32] = Bags.bagOf[1, 2]\n" + main))
+    assertRight(encode(src + "open Bags\nlet b: Bag[i32] = bagOf[1, 2]\n" + main))
+    assertLeftContains(validate(src + "let b: Bags.Bag[i32] = bagOf[1, 2]\n" + main), "is not a literal")
+  }
 }

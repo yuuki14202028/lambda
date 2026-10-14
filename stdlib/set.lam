@@ -1,5 +1,5 @@
 // 値の集まり（重複なし）。値の順（Ord）で並べた Map で表す。
-// 関数は module Set にあり、s.insert(x)、s.contains(x) のように書ける。
+// 関数は module Set にあり、s.insert(x)、s.contains(x) のように書ける。setOf[1, 2, 3] とも書ける。
 
 import "std/operators"
 import "std/option"
@@ -34,6 +34,9 @@ module Set {
 
   let fromList[a](xs: List[a]): Set[a] with Ord[a] = xs.foldLeft[Set[a]](empty[a])(λs: Set[a]. λx: a. insert[a](s)(x))
 
+  // 要素を足す（リテラル setOf[…] の組み立てに使う）
+  let cons[a](x: a)(s: Set[a]): Set[a] with Ord[a] = insert[a](s)(x)
+
   let union[a](s: Set[a])(other: Set[a]): Set[a] with Ord[a] = MkSet[a](s.entries.union(other.entries))
 
   let intersect[a](s: Set[a])(other: Set[a]): Set[a] with Ord[a] =
@@ -42,6 +45,9 @@ module Set {
   let difference[a](s: Set[a])(other: Set[a]): Set[a] with Ord[a] =
     fromList[a](toList[a](s).filter(λx: a. !other.contains(x)))
 }
+
+// setOf[3, 1, 2] は {1, 2, 3}
+literal setOf = Set.empty, Set.cons
 
 impl[a] Eq[Set[a]] with Eq[a] {
   def eq(x: Set[a])(y: Set[a]): bool = Set.toList[a](x) == Set.toList[a](y)

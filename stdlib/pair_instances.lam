@@ -13,3 +13,6 @@ derive Traversable[Pair]
 // 1 つ目を先に比べ、等しければ 2 つ目を比べる
 derive Eq[Pair]
 derive Ord[Pair]
+
+derive Eq[Triple]
+derive Ord[Triple]

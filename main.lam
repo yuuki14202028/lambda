@@ -47,9 +47,9 @@ let classify(n: i32): String = match n {
   _ => "large"
 }
 
-rec let sumPairs(xs: List[Pair[i32][i32]]): i32 = match xs {
+rec let sumPairs(xs: List[(i32, i32)]): i32 = match xs {
   Nil => 0
-  Cons(Pair(a)(b))(rest) => a * b + sumPairs(rest)
+  Cons((a, b))(rest) => a * b + sumPairs(rest)
 }
 
 let main(): i32 = {

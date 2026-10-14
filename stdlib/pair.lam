@@ -1,6 +1,11 @@
-// 2 つの値の組。p.first / p.second で読める。
+// 2 つ・3 つの値の組。p.first / p.second で読める。(a, b) / (a, b, c) と書け、型も (A, B) と書ける。
 
 data Pair[a][b] = { Pair(first: a)(second: b) }
+data Triple[a][b][c] = { Triple(first: a)(second: b)(third: c) }
+
+// (x, y) は Pair[A][B](x)(y)、(x, y, z) は Triple[A][B][C](x)(y)(z)（型引数は要素の型）
+literal (,) = Pair
+literal (,,) = Triple
 
 module Pair {
   let swap[a][b](p: Pair[a][b]): Pair[b][a] = Pair[b][a](p.second)(p.first)

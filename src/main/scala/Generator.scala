@@ -572,7 +572,7 @@ object Generator {
     case AST.InstAbs(_, _) => pure(sys.error("InstAbs must be desugared by TraitEncoder before code generation"))
     case AST.InstApp(_, _) => pure(sys.error("InstApp must be desugared by TraitEncoder before code generation"))
     case AST.Summon(_, _) => pure(sys.error("Summon must be desugared by TraitEncoder before code generation"))
-    case AST.Path(_, _, _) | AST.Select(_, _, _, _, _) => pure(sys.error("dot notation must be desugared by SelectDesugar before code generation"))
+    case AST.Path(_, _, _, _, _) | AST.Select(_, _, _, _, _) | AST.TupleLit(_, _) => pure(sys.error("dot notation must be desugared by SelectDesugar before code generation"))
     case AST.ListLit(_, _, _) => pure(sys.error("list literals must be desugared by OperatorDesugar before code generation"))
     case AST.NamedApp(_, _, _) => pure(sys.error("named construction must be desugared by RecordDesugar before code generation"))
     case AST.Using(_, _) => pure(sys.error("Using must be desugared by TraitEncoder before code generation"))
@@ -658,6 +658,7 @@ object Generator {
     case AST.ForAll(_, _, _) => pure(Code.empty)
     case AST.TypeApp(_, _) => pure(Code.empty)
     case AST.TypeAbs(_, _, _) => pure(Code.empty)
+    case AST.TupleType(_) => pure(sys.error("tuple types must be resolved by the type checker before code generation"))
   }
 
   private val bindValueToHeap: Code = code(

@@ -11,16 +11,16 @@ rec data Json = {
   JNumber(i32),
   JString(String),
   JArray(List[Json]),
-  JObject(List[Pair[String][Json]])
+  JObject(List[(String, Json)])
 }
 
 // ---- 読む ----
 
 module Reading {
   // 読んだ値と、次に読む位置
-  type Step[a] = Option[Pair[a][i32]]
+  type Step[a] = Option[(a, i32)]
 
-  private let done[a](value: a)(next: i32): Step[a] = Some[Pair[a][i32]](Pair[a][i32](value)(next))
+  private let done[a](value: a)(next: i32): Step[a] = Some[(a, i32)]((value, next))
 
   // 空白を読み飛ばした位置
   private rec let skip(text: String)(at: i32): i32 = match text.charAt(at) {
@@ -31,32 +31,32 @@ module Reading {
   // 決まった 1 文字（前の空白は読み飛ばす）
   private let expect(c: char)(text: String)(at: i32): Step[unit] = match text.charAt(skip(text)(at)) {
     Some(found) if found == c => done[unit](())(skip(text)(at) + 1)
-    _ => None[Pair[unit][i32]]
+    _ => None[(unit, i32)]
   }
 
   // 条件を満たす文字が続くかぎり読む
-  private let span(test: char → bool)(text: String)(start: i32): Pair[String][i32] =
+  private let span(test: char → bool)(text: String)(start: i32): (String, i32) =
     rec let stop(at: i32): i32 = match text.charAt(at) {
       Some(c) if test(c) => stop(at + 1)
       _ => at
-    } in Pair[String][i32](text.slice(start)(stop(start) - start))(stop(start))
+    } in (text.slice(start)(stop(start) - start), stop(start))
 
   private let word(text: String)(at: i32): Step[String] = match span(char.isLetter)(text)(skip(text)(at)) {
-    Pair("")(_) => None[Pair[String][i32]]
-    Pair(found)(next) => done[String](found)(next)
+    ("", _) => None[(String, i32)]
+    (found, next) => done[String](found)(next)
   }
 
   private let number(text: String)(at: i32): Step[i32] = match span(char.isDigit)(text)(skip(text)(at)) {
-    Pair("")(_) => None[Pair[i32][i32]]
-    Pair(digits)(next) => done[i32](digits.toInt)(next)
+    ("", _) => None[(i32, i32)]
+    (digits, next) => done[i32](digits.toInt)(next)
   }
 
   // "…"（エスケープは扱わない）
   private let quoted(text: String)(at: i32): Step[String] = context[Option] {
-    Pair(_)(start): Pair[unit][i32] = expect('"')(text)(at);
-    let Pair(content)(end): Pair[String][i32] = span(λc: char. c != '"')(text)(start);
-    Pair(_)(next): Pair[unit][i32] = expect('"')(text)(end);
-    Pair[String][i32](content)(next)
+    (_, start): (unit, i32) = expect('"')(text)(at);
+    let (content, end): (String, i32) = span(λc: char. c != '"')(text)(start);
+    (_, next): (unit, i32) = expect('"')(text)(end);
+    (content, next)
   }
 
   rec {
@@ -64,68 +64,68 @@ module Reading {
       Some('[') => items(text)(skip(text)(at) + 1)
       Some('{') => members(text)(skip(text)(at) + 1)
       Some('"') => context[Option] {
-        Pair(s)(next): Pair[String][i32] = quoted(text)(at);
-        Pair[Json][i32](JString(s))(next)
+        (s, next): (String, i32) = quoted(text)(at);
+        (JString(s), next)
       }
       Some(c) if c.isDigit => context[Option] {
-        Pair(n)(next): Pair[i32][i32] = number(text)(at);
-        Pair[Json][i32](JNumber(n))(next)
+        (n, next): (i32, i32) = number(text)(at);
+        (JNumber(n), next)
       }
       _ => match word(text)(at) {
-        Some(Pair("null")(next)) => done[Json](JNull)(next)
-        Some(Pair("true")(next)) => done[Json](JBool(true))(next)
-        Some(Pair("false")(next)) => done[Json](JBool(false))(next)
-        _ => None[Pair[Json][i32]]
+        Some(("null", next)) => done[Json](JNull)(next)
+        Some(("true", next)) => done[Json](JBool(true))(next)
+        Some(("false", next)) => done[Json](JBool(false))(next)
+        _ => None[(Json, i32)]
       }
     }
 
     // 配列の中身: `[` の後から `]` まで
     let items(text: String)(at: i32): Step[Json] = match expect(']')(text)(at) {
-      Some(Pair(_)(next)) => done[Json](JArray(Nil[Json]))(next)
+      Some((_, next)) => done[Json](JArray(Nil[Json]))(next)
       None => context[Option] {
-        Pair(x)(afterFirst): Pair[Json][i32] = value(text)(at);
-        Pair(xs)(next): Pair[List[Json]][i32] = moreItems(text)(afterFirst);
-        Pair[Json][i32](JArray(Cons[Json](x)(xs)))(next)
+        (x, afterFirst): (Json, i32) = value(text)(at);
+        (xs, next): (List[Json], i32) = moreItems(text)(afterFirst);
+        (JArray(Cons[Json](x)(xs)), next)
       }
     }
 
     // `, 値` のくり返しと、閉じる `]`
     let moreItems(text: String)(at: i32): Step[List[Json]] = match expect(',')(text)(at) {
       None => context[Option] {
-        Pair(_)(next): Pair[unit][i32] = expect(']')(text)(at);
-        Pair[List[Json]][i32](Nil[Json])(next)
+        (_, next): (unit, i32) = expect(']')(text)(at);
+        (Nil[Json], next)
       }
-      Some(Pair(_)(afterComma)) => context[Option] {
-        Pair(item)(afterItem): Pair[Json][i32] = value(text)(afterComma);
-        Pair(others)(next): Pair[List[Json]][i32] = moreItems(text)(afterItem);
-        Pair[List[Json]][i32](Cons[Json](item)(others))(next)
+      Some((_, afterComma)) => context[Option] {
+        (item, afterItem): (Json, i32) = value(text)(afterComma);
+        (others, next): (List[Json], i32) = moreItems(text)(afterItem);
+        (Cons[Json](item)(others), next)
       }
     }
 
     // オブジェクトの中身: `{` の後から `}` まで（空でないものだけを扱う）
     let members(text: String)(at: i32): Step[Json] = context[Option] {
-      Pair(key)(afterKey): Pair[String][i32] = quoted(text)(at);
-      Pair(_)(afterColon): Pair[unit][i32] = expect(':')(text)(afterKey);
-      Pair(item)(afterItem): Pair[Json][i32] = value(text)(afterColon);
+      (key, afterKey): (String, i32) = quoted(text)(at);
+      (_, afterColon): (unit, i32) = expect(':')(text)(afterKey);
+      (item, afterItem): (Json, i32) = value(text)(afterColon);
       // 残りのメンバー（なければ、閉じる `}`）
-      Pair(rest)(next): Pair[Json][i32] = match expect(',')(text)(afterItem) {
-        Some(Pair(_)(afterComma)) => members(text)(afterComma)
+      (rest, next): (Json, i32) = match expect(',')(text)(afterItem) {
+        Some((_, afterComma)) => members(text)(afterComma)
         None => context[Option] {
-          Pair(_)(end): Pair[unit][i32] = expect('}')(text)(afterItem);
-          Pair[Json][i32](JObject(Nil[Pair[String][Json]]))(end)
+          (_, end): (unit, i32) = expect('}')(text)(afterItem);
+          (JObject(Nil[(String, Json)]), end)
         }
       };
-      let others: List[Pair[String][Json]] = match rest {
+      let others: List[(String, Json)] = match rest {
         JObject(fields) => fields
-        _ => Nil[Pair[String][Json]]
+        _ => Nil[(String, Json)]
       };
-      Pair[Json][i32](JObject(Cons[Pair[String][Json]](Pair[String][Json](key)(item))(others)))(next)
+      (JObject(Cons[(String, Json)]((key, item))(others)), next)
     }
   }
 
   // 文字列全体が 1 つの値であること
   let read(text: String): Option[Json] = match value(text)(0) {
-    Some(Pair(json)(next)) if skip(text)(next) == text.length => Some[Json](json)
+    Some((json, next)) if skip(text)(next) == text.length => Some[Json](json)
     _ => None[Json]
   }
 }
@@ -140,24 +140,24 @@ rec impl Show[Json] {
     JNumber(n) => show[i32](n)
     JString(s) => `"{s}"`
     JArray(items) => show[List[Json]](items)
-    JObject(fields) => `\{{fields.foldLeft[String]("")(λacc: String. λfield: Pair[String][Json]. match field {
-      Pair(key)(value) => if acc == "" then `"{key}": {value}` else `{acc}, "{key}": {value}`
+    JObject(fields) => `\{{fields.foldLeft[String]("")(λacc: String. λfield: (String, Json). match field {
+      (key, value) => if acc == "" then `"{key}": {value}` else `{acc}, "{key}": {value}`
     })}\}`
   }
 }
 
 // ---- たどる ----
 
-rec let field(key: String)(fields: List[Pair[String][Json]]): Option[Json] = match fields {
+rec let field(key: String)(fields: List[(String, Json)]): Option[Json] = match fields {
   Nil => None[Json]
-  Cons(Pair(found)(value))(_) if found == key => Some[Json](value)
+  Cons((found, value))(_) if found == key => Some[Json](value)
   Cons(_)(rest) => field(key)(rest)
 }
 
 // キーの列をたどる
-rec let at(path: List[String])(j: Json): Option[Json] = match Pair[List[String]][Json](path)(j) {
-  Pair(Nil)(_) => Some[Json](j)
-  Pair(Cons(key)(rest))(JObject(fields)) => field(key)(fields).flatMap[Json](at(rest))
+rec let at(path: List[String])(j: Json): Option[Json] = match (path, j) {
+  (Nil, _) => Some[Json](j)
+  (Cons(key)(rest), JObject(fields)) => field(key)(fields).flatMap[Json](at(rest))
   _ => None[Json]
 }
 
@@ -165,8 +165,8 @@ rec let at(path: List[String])(j: Json): Option[Json] = match Pair[List[String]]
 rec let total(j: Json): i32 = match j {
   JNumber(n) => n
   JArray(items) => items.foldLeft[i32](0)(λacc: i32. λitem: Json. acc + total(item))
-  JObject(fields) => fields.foldLeft[i32](0)(λacc: i32. λf: Pair[String][Json]. match f {
-    Pair(_)(value) => acc + total(value)
+  JObject(fields) => fields.foldLeft[i32](0)(λacc: i32. λf: (String, Json). match f {
+    (_, value) => acc + total(value)
   })
   JNull | JBool(_) | JString(_) => 0
 }

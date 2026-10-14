@@ -18,8 +18,8 @@ impl Applicative[Option] {
   def pure[a](x: a): Option[a] = Some[a](x)
 
   def apply[a][b](f: Option[a → b]): Option[a] → Option[b] =
-    λopt: Option[a]. match Pair[Option[a → b]][Option[a]](f)(opt) {
-      Pair(Some(g))(Some(x)) => Some[b](g(x))
+    λopt: Option[a]. match (f, opt) {
+      (Some(g), Some(x)) => Some[b](g(x))
       _ => None[b]
     }
 }
@@ -47,9 +47,9 @@ derive Eq[Option]
 
 // None は Some より前（構成子の宣言順と逆なので、導出せずに書く）
 impl[a] Ord[Option[a]] with Ord[a] {
-  def lt(x: Option[a])(y: Option[a]): bool = match Pair[Option[a]][Option[a]](x)(y) {
-    Pair(Some(l))(Some(r)) => lt[a](l)(r)
-    Pair(None)(Some(_)) => true
+  def lt(x: Option[a])(y: Option[a]): bool = match (x, y) {
+    (Some(l), Some(r)) => lt[a](l)(r)
+    (None, Some(_)) => true
     _ => false
   }
 }

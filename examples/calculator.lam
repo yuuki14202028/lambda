@@ -261,11 +261,11 @@ data Failure = { DivisionByZero, Unbound(Name) }
 // 評価の結果は std/result の Result[Failure][i32]。context[Result[Failure]] は最初の失敗で止まる
 type Evaluated = Result[Failure]
 
-type Bindings = List[Pair[Name][i32]]
+type Bindings = List[(Name, i32)]
 
 rec let lookup(name: Name)(bindings: Bindings): Evaluated[i32] = match bindings {
   Nil => Err[Failure][i32](Unbound(name))
-  Cons(Pair(bound)(value))(_) if bound == name => Ok[Failure][i32](value)
+  Cons((bound, value))(_) if bound == name => Ok[Failure][i32](value)
   Cons(_)(rest) => lookup(name)(rest)
 }
 
@@ -286,7 +286,7 @@ rec let evaluate(bindings: Bindings)(e: Expr): Evaluated[i32] = match e {
   }
   LetIn(name)(bound)(body) => context[Evaluated] {
     value: i32 = evaluate(bindings)(bound);
-    result: i32 = evaluate(Cons[Pair[Name][i32]](Pair[Name][i32](name)(value))(bindings))(body);
+    result: i32 = evaluate(Cons[(Name, i32)]((name, value))(bindings))(body);
     result
   }
 }
@@ -304,7 +304,7 @@ let calculate(text: String): unit = match parse[Expr](program)(text) {
   Failed(at)(expected) => print(`{text}\n  syntax error at {at}: expected {expected}\n`)
   Parsed(e)(_) => {
     print(`{text}\n  parsed:     {e}\n  simplified: {simplify(e)}\n`);
-    match evaluate(Nil[Pair[Name][i32]])(e) {
+    match evaluate(Nil[(Name, i32)])(e) {
       Ok(value) => print(`  value:      {value}\n`)
       Err(failure) => print(`  error:      {failure}\n`)
     }

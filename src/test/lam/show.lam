@@ -20,7 +20,7 @@ let main(): i32 = {
   display[char]('x');
   display[String]("text");
   display[List[i32]](numbers);
-  display[Option[Pair[i32][Color]]](Some[Pair[i32][Color]](Pair[i32][Color](1)(Green)));
+  display[Option[(i32, Color)]](Some[(i32, Color)]((1, Green)));
   display[Either[String][List[Color]]](Right[String][List[Color]]([Red]));
   println(`sum of {numbers} is {numbers.foldLeft[i32](0)(λacc: i32. λx: i32. acc + x)}`);
   print("no newline");

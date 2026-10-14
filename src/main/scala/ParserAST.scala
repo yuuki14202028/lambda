@@ -137,6 +137,7 @@ object ParserAST {
   private def destructuring(pattern: Pattern[IndexedRec]): Boolean = pattern match {
     case Pattern.Located(_, inner) => destructuring(inner)
     case Pattern.Constructor(_, args, _) => args.nonEmpty
+    case Pattern.Syntax(_, _) => true
     case Pattern.Wildcard() => true
     case _ => false
   }
@@ -340,11 +341,18 @@ object ParserAST {
   // interpolate = show / literal [] = Nil, Cons
   private lazy val syntaxP: Parser[IndexedRec[Decl]] = {
     val interpolate = (keyword("interpolate") *> spaced('=') *> qualifiedIdentifier).map(f => AST.TopSyntax[IndexedRec, Decl](SyntaxHook.Interpolate, Seq(Variable(f))))
-    val literal = ((keyword("literal") *> Parser.char('[') *> sp *> Parser.char(']')).backtrack *> spaced('=') *>
-      ((qualifiedIdentifier <* spaced(',')) ~ qualifiedIdentifier)).map { case (nil, cons) =>
-        AST.TopSyntax[IndexedRec, Decl](SyntaxHook.ListLiteral, Seq(Variable(nil), Variable(cons)))
-      }
-    (interpolate.backtrack | literal).indexed
+    val pair = (qualifiedIdentifier <* spaced(',')) ~ qualifiedIdentifier
+    val brackets = (Parser.char('[') *> sp *> Parser.char(']')).as(SyntaxHook.ListLiteral)
+    val named = identifier.filter(n => !exprKeywords(n)).map(SyntaxHook.NamedLiteral(_))
+    val list = ((keyword("literal") *> (brackets | named)).backtrack ~ (spaced('=') *> pair)).map { case (hook, (nil, cons)) =>
+      AST.TopSyntax[IndexedRec, Decl](hook, Seq(Variable(nil), Variable(cons)))
+    }
+    // literal (,) = Pair / literal (,,) = Triple: 要素の数はカンマの数 + 1
+    val tupleHook = (Parser.char('(') *> (sp.with1 *> Parser.char(',')).rep <* sp <* Parser.char(')')).map(commas => SyntaxHook.Tuple(commas.length + 1))
+    val tuple = ((keyword("literal") *> tupleHook).backtrack ~ (spaced('=') *> qualifiedIdentifier)).map { case (hook, f) =>
+      AST.TopSyntax[IndexedRec, Decl](hook, Seq(Variable(f)))
+    }
+    (interpolate.backtrack | tuple.backtrack | list).indexed
   }
 
   private lazy val openP: Parser[IndexedRec[Decl]] =
@@ -387,7 +395,12 @@ object ParserAST {
 
   private lazy val typeAtomP: Parser[IndexedRec[Type]] = {
     val unit = unitParens.as(AST.Primitive[IndexedRec, Type]("unit")).indexed.backtrack
-    unit | namedTypeP | Parser.defer(typeP).parens
+    // (A) は括弧、(A, B) は組の型
+    val parens = ('(' -*> Parser.defer(typeP).repSep(spaced(',').backtrack) <*- ')').spanned.map {
+      case (_, elements) if elements.tail.isEmpty => elements.head
+      case (span, elements) => at(span, AST.TupleType(elements.toList))
+    }
+    unit | namedTypeP | parens
   }
 
   private lazy val namedTypeP: Parser[IndexedRec[Type]] =
@@ -437,8 +450,15 @@ object ParserAST {
       case ("_", Nil) => Pattern.Wildcard[IndexedRec]()
       case (name, args) => Pattern.Constructor[IndexedRec](Variable(name), args, Nil)
     }
+    val list: Parser[Pattern[IndexedRec]] =
+      ('[' -*> Parser.defer(patternP).repSep0(spaced(',').backtrack) <*- ']').map(elements => Pattern.Syntax[IndexedRec](SyntaxHook.ListLiteral, elements))
+    // (p) は括弧、(p, q) は組
+    val tuple: Parser[Pattern[IndexedRec]] =
+      ('(' -*> Parser.defer(patternP).repSep(spaced(',').backtrack) <*- ')').map { elements =>
+        if (elements.tail.isEmpty) elements.head else Pattern.Syntax[IndexedRec](SyntaxHook.Tuple(elements.length), elements.toList)
+      }
     // 部分パターンごとに位置を記録する
-    (number | string | char | bool | named).spanned.map { case (span, pattern) => Pattern.Located[IndexedRec](span, pattern) }
+    (number | string | char | bool | list | tuple | named).spanned.map { case (span, pattern) => Pattern.Located[IndexedRec](span, pattern) }
   }
 
   // `if 条件`: 分岐の条件
@@ -556,7 +576,7 @@ object ParserAST {
         // .f[T] や a.b[T] の直後の (with d) は、その関数の制約を満たす辞書（x.f(with d)）
         case (acc, (span, Postfix.Dictionary(d))) => acc.project match {
           case AST.Select(receiver, name, typeArgs, dictionaries, None) => at(acc.extract.to(span), AST.Select(receiver, name, typeArgs, dictionaries :+ d, None))
-          case AST.Path(name, typeArgs, dictionaries) => at(acc.extract.to(span), AST.Path(name, typeArgs, dictionaries :+ d))
+          case AST.Path(name, typeArgs, dictionaries, literal, nameSpan) => at(acc.extract.to(span), AST.Path(name, typeArgs, dictionaries :+ d, literal, nameSpan))
           case _ => at(acc.extract.to(span), AST.InstApp(acc, Evidence.Explicit(d)))
         }
         case (acc, (span, Postfix.Member(name, typeArgs))) => at(acc.extract.to(span), AST.Select(acc, name, typeArgs, Seq.empty, None))
@@ -566,7 +586,14 @@ object ParserAST {
   }
 
   lazy val atom: Parser[IndexedRec[Expr]] =
-    Parser.defer(blockP | listP | unitP.backtrack | numP | charP | stringP | interpStringP | boolP | foreignP | intrinsicP | summonP | pathP | varP | Parser.defer(expr).parens)
+    Parser.defer(blockP | listP | unitP.backtrack | numP | charP | stringP | interpStringP | boolP | foreignP | intrinsicP | summonP | pathP | varP | tupleP)
+
+  // (x) は括弧、(x, y) は組
+  lazy val tupleP: Parser[IndexedRec[Expr]] =
+    ('(' -*> Parser.defer(expr).repSep(spaced(',').backtrack) <*- ')').spanned.map {
+      case (_, elements) if elements.tail.isEmpty => elements.head
+      case (span, elements) => at(span, AST.TupleLit(elements.toList, None))
+    }
 
   // [x, y, z]（空の [] も読み、型検査がエラーにする）
   lazy val listP: Parser[IndexedRec[Expr]] =
@@ -606,9 +633,36 @@ object ParserAST {
     identifier.filter(n => !exprKeywords(n)).backtrack.map(n => AST.Var[IndexedRec, Expr](Variable(n))).indexed
 
   // . を含む名前 a.b.c と、その直後の型引数。module の修飾か値へのドット記法かは、型検査が決める
+  // 名前の直後の [ … ] は、型引数（f[T]）か名前付きのリテラルの要素（setOf[1, 2]）。どちらかは型検査がスコープで決めるので、
+  // 型としても式としても読めるもの（setOf[x]）は両方の読みを持つ
   lazy val pathP: Parser[IndexedRec[Expr]] = {
-    val dotted = (identifier.filter(n => !exprKeywords(n)) ~ ('.' *> identifier).backtrack.rep).backtrack.map { case (head, rest) => (head :: rest.toList).mkString(".") }
-    (dotted ~ Parser.defer(typeP).brackets.rep0).map { case (name, typeArgs) => AST.Path[IndexedRec, Expr](Variable(name), typeArgs, Seq.empty) }.indexed
+    val name = Parser.defer(identifier.filter(n => !exprKeywords(n)))
+    val dotted = (name ~ ('.' *> identifier).backtrack.rep).backtrack.map { case (head, rest) => (head :: rest.toList).mkString(".") }
+    val typeGroup = ('[' -*> Parser.defer(typeP) <*- ']').backtrack
+    val elementGroup = '[' -*> Parser.defer(expr).repSep0(spaced(',').backtrack) <*- ']'
+    val groups: Parser[Either[Seq[IndexedRec[Type]], Seq[IndexedRec[Expr]]]] =
+      typeGroup.rep.map(ts => Left(ts.toList)) | elementGroup.map(es => Right(es))
+    def path(span: Span, written: String, found: Option[Either[Seq[IndexedRec[Type]], Seq[IndexedRec[Expr]]]]): AST[IndexedRec, Expr] = found match {
+      case None => AST.Path(Variable(written), Seq.empty, Seq.empty, None, Some(span))
+      case Some(Left(types)) => AST.Path(Variable(written), types, Seq.empty, if (types.length == 1) typeAsExpr(types.head).map(Seq(_)) else None, Some(span))
+      case Some(Right(elements)) => AST.Path(Variable(written), Seq.empty, Seq.empty, Some(elements), Some(span))
+    }
+    val qualified = (dotted.spanned ~ groups.?).map { case ((span, written), found) => path(span, written, found) }
+    val bracketed = (name.spanned.backtrack.soft ~ groups).backtrack.map { case ((span, written), found) => path(span, written, Some(found)) }
+    (qualified | bracketed).indexed
+  }
+
+  // 型として読んだものを、式として読み直す（名前と型引数の適用、組だけ）
+  private def typeAsExpr(t: IndexedRec[Type]): Option[IndexedRec[Expr]] = t.project match {
+    case AST.TypeVar(v) if v.name.contains('.') => Some(at(t.extract, AST.Path(Variable(v.name), Seq.empty, Seq.empty)))
+    case AST.TypeVar(v) => Some(at(t.extract, AST.Var(Variable(v.name))))
+    case AST.Primitive("unit") => Some(at(t.extract, AST.UnitLit()))
+    case AST.Primitive(name) => Some(at(t.extract, AST.Var(Variable(name))))
+    case AST.TypeApp(function, argument) => typeAsExpr(function).map(f => at(t.extract, AST.TyApp(f, argument)))
+    case AST.TupleType(elements) =>
+      val converted = elements.map(typeAsExpr)
+      Option.when(converted.forall(_.nonEmpty))(at(t.extract, AST.TupleLit(converted.flatten, None)))
+    case _ => None
   }
 
   private val intSuffixP: Parser[String] =

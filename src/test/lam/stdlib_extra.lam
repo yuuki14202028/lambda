@@ -16,7 +16,7 @@ let main(): i32 = {
   println(`{["ccc", "a", "bb"].sortBy[i32](String.length)} {[1, 2, 3].indexOf(3)} {[1, 2, 1, 3, 2].unique} {[1, 2, 3].intersperse(0)}`);
   println(`[{"a,b,,c".split(",").join("|")}] [{"  hi  ".trim}] {"hello".contains("ll")} {"hello".indexOf("lo")} {"a-b-c".replace("-")("+")}`);
   println(`{"ab".repeat(3)} {"Hello".toUpper} {"Hello".toLower} {"abc".reverse} {"file.lam".endsWith(".lam")}`);
-  let m: Map[String][i32] = Map.fromList[String][i32]([Pair[String][i32]("b")(2), Pair[String][i32]("a")(1), Pair[String][i32]("c")(3)]) in {
+  let m: Map[String][i32] = Map.fromList[String][i32]([("b", 2), ("a", 1), ("c", 3)]) in {
     println(`{m} {m.size} {m.lookup("b")} {m.lookup("z")} {m.contains("c")}`);
     println(`{m.insert("d")(4).remove("a")} {m.map[i32](λn: i32. n * 10)} {m.keys} {m.values} {m.update("a")(λn: i32. n + 100)}`)
   };
@@ -29,5 +29,15 @@ let main(): i32 = {
     println(`{ok} {bad} {ok.map[i32](λn: i32. n * 3)} {bad.getOrElse(0)} {ok.isOk} {bad.toOption} {bad.mapErr[i32](String.length)}`);
     println(`{ok.flatMap[i32](λn: i32. if n > 1 then Ok[String][i32](n) else Err[String][i32]("small"))} {None[i32].okOr[String]("none")}`)
   };
+  // リテラルと組
+  let describe: List[i32] → String = λxs: List[i32]. match xs {
+    [] => "empty"
+    [x] => `one {x}`
+    [x, y] => `two {x + y}`
+    _ => "many"
+  } in
+    println(`{setOf[3, 1, 2, 3]} {mapOf[("a", 1), ("b", 2), ("a", 3)]} {describe(Nil[i32])} {describe([5])} {describe([1, 2])} {describe([1, 2, 3])}`);
+  let p: (i32, (bool, String)) = (1, (true, "x")) in
+    println(`{p} {match p { (n, (flag, s)) => `{s}{n}{flag}` }} {(1, 'c', 2.5)}`);
   0
 }

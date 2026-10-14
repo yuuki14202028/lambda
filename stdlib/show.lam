@@ -47,9 +47,16 @@ impl Show[unit] {
 derive Show[Option]
 derive Show[Either]
 
-impl[a][b] Show[Pair[a][b]] with Show[a], Show[b] {
-  def show = λp: Pair[a][b]. match p {
-    Pair(x)(y) => `({show[a](x)}, {show[b](y)})`
+impl[a][b] Show[(a, b)] with Show[a], Show[b] {
+  def show = λp: (a, b). match p {
+    (x, y) => `({show[a](x)}, {show[b](y)})`
+  }
+}
+
+// (1, true, x)
+impl[a][b][c] Show[(a, b, c)] with Show[a], Show[b], Show[c] {
+  def show(t: (a, b, c)): String = match t {
+    (x, y, z) => `({x}, {y}, {z})`
   }
 }
 

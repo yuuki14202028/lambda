@@ -108,7 +108,7 @@ case class Names(
     types: Map[String, TypeVariable],
     modules: Map[String, String],
     operators: Map[String, OperatorDef] = Map.empty, // 演算子（前置は Operators.prefixKey）に宣言された関数と優先順位
-    syntax: Map[SyntaxHook, Seq[Variable]] = Map.empty // 構文（文字列埋め込み・リストリテラル）に宣言された関数
+    syntax: Map[SyntaxHook, Seq[Variable]] = Map.empty // 構文（文字列埋め込み・リテラル・組）に宣言された関数。名前付きのリテラルは値と同じ名前の空間
 ) {
   def withOperator(key: String, definition: OperatorDef): Names = copy(operators = operators + (key -> definition))
   def withSyntax(hook: SyntaxHook, functions: Seq[Variable]): Names = copy(syntax = syntax + (hook -> functions))
@@ -156,10 +156,14 @@ case class Env(
     failedTraits: Set[String] = Set.empty                    // 検査に失敗した impl / derive の trait（そのインスタンスがないというエラーは報告しない）
 ) {
   // 局所的な束縛は、同名の module メンバーを隠す
+  // 名前付きのリテラルも値と同じ名前の空間にあるので、同名の束縛に隠される
   def withValue(variable: Variable, t: TypeRec[Type]): Env =
-    copy(values = values + (variable -> t), scope = scope.copy(values = scope.values - variable.name))
+    copy(values = values + (variable -> t), scope = scope.copy(values = scope.values - variable.name, syntax = scope.syntax - SyntaxHook.NamedLiteral(variable.name)))
   def withValues(bindings: Iterable[(Variable, TypeRec[Type])]): Env =
-    copy(values = values ++ bindings, scope = scope.copy(values = scope.values -- bindings.map(_._1.name)))
+    copy(values = values ++ bindings, scope = scope.copy(
+      values = scope.values -- bindings.map(_._1.name),
+      syntax = scope.syntax -- bindings.map(b => SyntaxHook.NamedLiteral(b._1.name))
+    ))
   def withTypeVar(variable: TypeVariable, kind: Kind): Env = withTypeVars(Seq(variable -> kind))
   def withTypeVars(params: Iterable[(TypeVariable, Kind)]): Env =
     copy(typeVars = typeVars ++ params, scope = scope.copy(types = scope.types -- params.map(_._1.name)))
@@ -180,7 +184,10 @@ case class Env(
   // 検査中の module のメンバーとして宣言する名前。以降は短い名前で書け、module の外へ公開される
   def exportValue(short: Variable): Env = {
     val full = Variable(qualify(short.name))
-    copy(scope = scope.withValue(short.name, full), members = members.withValue(short.name, full))
+    copy(
+      scope = scope.withValue(short.name, full).copy(syntax = scope.syntax - SyntaxHook.NamedLiteral(short.name)),
+      members = members.withValue(short.name, full).copy(syntax = members.syntax - SyntaxHook.NamedLiteral(short.name))
+    )
   }
   def exportType(short: TypeVariable): Env = {
     val full = TypeVariable(qualify(short.name))

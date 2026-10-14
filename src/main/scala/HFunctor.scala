@@ -55,6 +55,7 @@ private def traversePattern[G[_]: Applicative, R[_], S[_]](p: Pattern[R])(f: [x]
   case Pattern.Literal(value, equals) => equals.traverse(e => f(e)).map(Pattern.Literal[S](value, _))
   case Pattern.Or(alternatives) => alternatives.traverse(traversePattern(_)(f)).map(Pattern.Or[S](_))
   case Pattern.Located(span, inner) => traversePattern(inner)(f).map(Pattern.Located[S](span, _))
+  case Pattern.Syntax(hook, elements) => elements.traverse(traversePattern(_)(f)).map(Pattern.Syntax[S](hook, _))
 }
 
 extension [R[_]](self: Evidence[R]) {
@@ -145,8 +146,12 @@ given HTraverse[AST] with {
       (f(func), f(arg)).mapN(AST.App(_, _))
     case AST.TyApp(func, arg) =>
       (f(func), f(arg)).mapN(AST.TyApp(_, _))
-    case AST.Path(name, typeArgs, dictionaries) =>
-      (typeArgs.traverse(t => f(t)), dictionaries.traverse(d => f(d))).mapN(AST.Path(name, _, _))
+    case AST.Path(name, typeArgs, dictionaries, literal, nameSpan) =>
+      (typeArgs.traverse(t => f(t)), dictionaries.traverse(d => f(d)), literal.traverse(_.traverse(e => f(e)))).mapN(AST.Path(name, _, _, _, nameSpan))
+    case AST.TupleLit(elements, resolved) =>
+      (elements.traverse(e => f(e)), resolved.traverse(e => f(e))).mapN(AST.TupleLit(_, _))
+    case AST.TupleType(elements) =>
+      elements.traverse(t => f(t)).map(AST.TupleType(_))
     case AST.Select(receiver, name, typeArgs, dictionaries, resolved) =>
       (f(receiver), typeArgs.traverse(t => f(t)), dictionaries.traverse(d => f(d)), resolved.traverse(e => f(e))).mapN(AST.Select(_, name, _, _, _))
     case AST.NamedApp(constructor, arguments, positions) =>
