@@ -83,6 +83,8 @@ let noisy(): i32 = {
 let message(n: i32): String = `n = {n}, doubled = {n + n}`
 ```
 
+文字列埋め込みも、演算子と同じく宣言された関数の呼び出しです。`std/show` が `interpolate = show` と宣言しているので、`{x}` は `show[T](x)`（`T` は `x` の型）になります。文字列を埋め込むときも同じで、`Show[String]` は文字列をそのまま返します。`interpolate` に宣言できるのは `∀a. … → a → String` の形の関数で、宣言はスコープに従います（module の中の宣言は `open` で見えます）。
+
 演算子（`+ - * / %`、`== != < <= > >=`、`!`、ビット演算 `& | ^`）は関数の呼び出しです。どの関数を呼ぶかは演算子の宣言（`infixl 6 + = add`）で決まり、`a + b` は「`+` に宣言された関数に、`a` の型を型引数として渡したもの」を `a` と `b` に適用します。`std/operators` は演算子ごとに trait（`Add` / `Sub` / `Mul` / `Div` / `Mod` / `Neg` / `Not` / `BitAnd` / `BitOr` / `BitXor`、比較は `Eq` / `Ord`）を用意し、そのメソッドを演算子に宣言しています。自分の型で演算子を使うには、その trait を実装します。
 
 ```lam

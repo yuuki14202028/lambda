@@ -632,18 +632,24 @@ object Diagnostic {
         val d = describe(inner)
         d.copy(notes = d.notes :+ "this arose while rewriting a `context` block to `pure` / `flatMap`")
 
-      // ---- 文字列埋め込み ----
-      case StrInterpShowMissing(partType) => Description(
-        s"cannot embed a value of type ${ty(partType)} in a string", "this string",
-        notes = Seq("values other than strings are converted with the method `show`, which is not defined here"),
-        helps = Seq("declare `trait Show[a] { def show(x: a): foreign.C.String }` and an instance for the type"))
-      case StrInterpShowNotPolymorphic(actual) => Description("`show` cannot be used for string interpolation", s"`show` has type ${ty(actual)}, expected `∀a. …`")
-      case StrInterpShowKindInvalid(k) => Description("`show` cannot be used for string interpolation", s"its type parameter has kind ${kind(k)}, expected `*`")
-      case StrInterpShowNotFunction(actual) => Description("`show` cannot be used for string interpolation", s"`show` has type ${ty(actual)}, which is not a function")
-      case StrInterpShowParamMismatch(expected, partType) => Description(
-        s"cannot embed a value of type ${ty(partType)} in a string", s"`show` takes ${ty(expected)}")
-      case StrInterpShowResultMismatch(expected, actual) => Description(
-        "`show` cannot be used for string interpolation", s"`show` returns ${ty(actual)}, expected ${ty(expected)}")
+      // ---- 構文に宣言された関数 ----
+      case SyntaxNotDeclared(SyntaxHook.Interpolate) => Description(
+        "string interpolation is not declared", "this string",
+        notes = Seq("`{x}` calls the function declared with `interpolate = f`, with the type of `x`: `f[T](x)`"),
+        helps = Seq("the standard library declares `interpolate = show`: add `import \"std/show\"`"))
+      case SyntaxNotDeclared(SyntaxHook.ListLiteral) => Description(
+        "list literals are not declared", "this list",
+        notes = Seq("`[x, y]` calls the functions declared with `literal [] = nil, cons`, with the type of the first element: `cons[T](x)(cons[T](y)(nil[T]))`"),
+        helps = Seq("the standard library declares `literal [] = Nil, Cons`: add `import \"std/list\"`"))
+      case SyntaxTargetInvalid(hook, functions, types) =>
+        val shape = hook match {
+          case SyntaxHook.Interpolate => "`interpolate` needs a function of type `∀a. … → a → String`: its type parameter receives the type of the embedded value"
+          case SyntaxHook.ListLiteral => "`literal []` needs `nil: ∀a. … → R` and `cons: ∀a. … → a → R → R` with the same `R`: their type parameter receives the type of the first element"
+        }
+        Description(
+          s"${functions.map(f => name(f.name)).mkString(" and ")} cannot be declared for `${hook.keyword}`",
+          s"has type ${types.map(ty).mkString(" and ")}",
+          notes = Seq(shape))
 
       // ---- エントリポイント ----
       case MainMissing => Description(

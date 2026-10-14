@@ -261,13 +261,9 @@ enum CompileError {
   case ContextMethodMissing(name: Variable)
   case InContext(error: CompileError)
 
-  // ---- 文字列埋め込み ----
-  case StrInterpShowMissing(partType: TypeRec[Type])
-  case StrInterpShowNotPolymorphic(actual: TypeRec[Type])
-  case StrInterpShowKindInvalid(kind: Kind)
-  case StrInterpShowNotFunction(actual: TypeRec[Type])
-  case StrInterpShowParamMismatch(expected: TypeRec[Type], partType: TypeRec[Type])
-  case StrInterpShowResultMismatch(expected: TypeRec[Type], actual: TypeRec[Type])
+  // ---- 構文に宣言された関数（文字列埋め込み・リストリテラル） ----
+  case SyntaxNotDeclared(hook: SyntaxHook)
+  case SyntaxTargetInvalid(hook: SyntaxHook, functions: Seq[Variable], types: Seq[TypeRec[Type]])
 
   // ---- エントリポイント ----
   case MainMissing
@@ -491,15 +487,9 @@ enum CompileError {
     case ContextMethodMissing(name) => s"context: method `${name.name}` is not defined"
     case InContext(error) => s"context: ${error.render}"
 
-    case StrInterpShowMissing(partType) =>
-      s"String interpolation: cannot embed ${partType.show}; method `show` is not defined"
-    case StrInterpShowNotPolymorphic(actual) => s"String interpolation: `show` must be polymorphic, actual ${actual.show}"
-    case StrInterpShowKindInvalid(kind) => s"String interpolation: `show` type parameter must have kind *, actual ${kind.show}"
-    case StrInterpShowNotFunction(actual) => s"String interpolation: `show` must be a function, actual ${actual.show}"
-    case StrInterpShowParamMismatch(expected, partType) =>
-      s"String interpolation: `show` cannot accept ${partType.show}, expected ${expected.show}"
-    case StrInterpShowResultMismatch(expected, actual) =>
-      s"String interpolation: `show` must return ${expected.show}, actual ${actual.show}"
+    case SyntaxNotDeclared(hook) => s"${hook.keyword} is not declared"
+    case SyntaxTargetInvalid(hook, functions, types) =>
+      s"${functions.map(_.name).mkString(", ")} cannot be declared for ${hook.keyword}: ${types.map(_.show).mkString(", ")}"
 
     case MainMissing => "Top-level main is not defined"
     case MainTypeInvalid(actual) => s"Top-level main must have type unit → i32, actual ${actual.show}"

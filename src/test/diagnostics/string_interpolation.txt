@@ -1,8 +1,8 @@
-error: cannot embed a value of type `i32` in a string
+error: string interpolation is not declared
  --> string_interpolation.lam:1:21
   |
 1 | let main(): i32 = { `value = {1}`; 0 }
   |                     ^^^^^^^^^^^^^ this string
   |
-  = note: values other than strings are converted with the method `show`, which is not defined here
-  = help: declare `trait Show[a] { def show(x: a): foreign.C.String }` and an instance for the type
+  = note: `{x}` calls the function declared with `interpolate = f`, with the type of `x`: `f[T](x)`
+  = help: the standard library declares `interpolate = show`: add `import "std/show"`

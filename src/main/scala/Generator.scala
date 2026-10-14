@@ -510,7 +510,7 @@ object Generator {
       ins("adrp", r(x0), Page(lbl)),
       ins("add", r(x0), r(x0), PageOff(lbl))
     )
-    case AST.StrInterp(_) => sys.error("StrInterp must be desugared by the type checker before code generation")
+    case AST.StrInterp(_) => sys.error("string interpolation must be desugared by OperatorDesugar before code generation")
     case AST.Context(_, _, _, _) => sys.error("Context must be desugared by ContextDesugar before code generation")
     case AST.Bool(v) => pure(loadImm32(if (v) 1 else 0))
     case AST.UnitLit() => pure(loadImm32(0))
@@ -648,7 +648,7 @@ object Generator {
     case AST.TopTrait(_, _, _, _) => pure(sys.error("TopTrait must be desugared before code generation"))
     case AST.TopImpl(_, _, _, _, _, _) => pure(sys.error("TopImpl must be desugared before code generation"))
     case AST.TopDerive(_, _) => pure(sys.error("TopDerive must be desugared before code generation"))
-    case AST.TopModule(_, _) | AST.TopOpen(_) | AST.TopOperator(_, _, _) | AST.TopModified(_, _) => pure(sys.error("modules must be desugared before code generation"))
+    case AST.TopModule(_, _) | AST.TopOpen(_) | AST.TopOperator(_, _, _) | AST.TopSyntax(_, _) | AST.TopModified(_, _) => pure(sys.error("modules must be desugared before code generation"))
 
     case AST.Primitive(_) => pure(Code.empty)
     case AST.TypeVar(_) => pure(Code.empty)
@@ -741,7 +741,7 @@ object Generator {
     case AST.TopTrait(_, _, _, _) => sys.error("TopTrait must be desugared before code generation")
     case AST.TopImpl(_, _, _, _, _, _) => sys.error("TopImpl must be desugared before code generation")
     case AST.TopDerive(_, _) => sys.error("TopDerive must be desugared before code generation")
-    case AST.TopModule(_, _) | AST.TopOpen(_) | AST.TopOperator(_, _, _) | AST.TopModified(_, _) => sys.error("modules must be desugared before code generation")
+    case AST.TopModule(_, _) | AST.TopOpen(_) | AST.TopOperator(_, _, _) | AST.TopSyntax(_, _) | AST.TopModified(_, _) => sys.error("modules must be desugared before code generation")
   }
 
   // top-level の rec の組: 全員のセルを先に確保してから、順に値を入れる

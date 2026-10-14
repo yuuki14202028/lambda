@@ -107,18 +107,20 @@ case class Names(
     values: Map[String, Variable],
     types: Map[String, TypeVariable],
     modules: Map[String, String],
-    operators: Map[String, OperatorDef] = Map.empty // 演算子（前置は Operators.prefixKey）に宣言された関数と優先順位
+    operators: Map[String, OperatorDef] = Map.empty, // 演算子（前置は Operators.prefixKey）に宣言された関数と優先順位
+    syntax: Map[SyntaxHook, Seq[Variable]] = Map.empty // 構文（文字列埋め込み・リストリテラル）に宣言された関数
 ) {
   def withOperator(key: String, definition: OperatorDef): Names = copy(operators = operators + (key -> definition))
+  def withSyntax(hook: SyntaxHook, functions: Seq[Variable]): Names = copy(syntax = syntax + (hook -> functions))
   def withValue(short: String, full: Variable): Names = copy(values = values + (short -> full))
   def withType(short: String, full: TypeVariable): Names = copy(types = types + (short -> full))
   def withModule(short: String, full: String): Names = copy(modules = modules + (short -> full))
   def ++(other: Names): Names =
-    Names(values ++ other.values, types ++ other.types, modules ++ other.modules, operators ++ other.operators)
+    Names(values ++ other.values, types ++ other.types, modules ++ other.modules, operators ++ other.operators, syntax ++ other.syntax)
   // この表にあって before にない（または指す先が違う）名前
   def since(before: Names): Names = {
     def added[K, V](now: Map[K, V], old: Map[K, V]): Map[K, V] = now.filter { case (key, value) => !old.get(key).contains(value) }
-    Names(added(values, before.values), added(types, before.types), added(modules, before.modules), added(operators, before.operators))
+    Names(added(values, before.values), added(types, before.types), added(modules, before.modules), added(operators, before.operators), added(syntax, before.syntax))
   }
 }
 

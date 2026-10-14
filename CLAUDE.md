@@ -91,6 +91,10 @@ PatternDesugar は行列から決定木を作り、構成子 1 段の `Match`（
 記号は記号文字の並びの最長一致で、決まった集合はない（`ParserAST.operatorSymbol`。`=` `=>` `->` `:` は予約）。優先順位（0〜9）と結合性も宣言の一部でスコープに従うので、パーサは式を並びのまま `OpSeq(first, rest: Seq[OpStep])` として読み、型検査がスコープ中の宣言で `BinOp` の木に組む（`groupOperators`。同じ優先順位は両方 infixl か両方 infixr のときだけ並べられる）。前置は二項より強い（`UnaryOp`）。型検査は `BinOp` / `UnaryOp` ノードを残して解決済みの関数を `resolved` に記録し、OperatorDesugar が適用に展開する。型検査後の AST に `OpSeq` は残らない。
 宣言は他の宣言と同じスコープに従う（`Names.operators: Map[String, OperatorDef]`。キーは二項なら記号、前置なら `Operators.prefixKey`。宣言より後で見え、module のメンバーになり、`open` / `private` に従い、後の宣言が前を隠す）。`&&` と `||` だけは bool 専用の組み込みで（`Operators.builtin`。優先順位 3 と 2、宣言不可）、`if` に脱糖する（`resolved = None`）。`std/operators` は演算子ごとに 1 つの trait（`Add` / `Sub` / … / `Eq` / `Ord`）を置き、組み込みの型のインスタンスを `intrinsic` で定義する。Generator は演算子ノードを受け取らない。
 
+### 構文に宣言された関数（interpolate / literal []）
+
+演算子と同じく、文字列埋め込みとリストリテラルも、ライブラリが宣言した関数を呼ぶ（`TopSyntax(hook, functions)`、`SyntaxHook`。スコープは `Names.syntax` で演算子と同じ規則）。`interpolate = show` の下で `` `a{x}` `` の `{x}` は `show[T](x)`（T は x の型。String も例外なく通す）。型検査は `StrInterp(parts: Seq[InterpPart])` を保ち、埋め込みごとに具体化した関数を `InterpPart.Embed.resolved` に記録し、OperatorDesugar が組み込みの concat でつなぐ。宣言できる関数の形は `syntaxShape` が確かめる（`∀a. … → a → String`）。
+
 ### エラー表示（Diagnostic.scala）
 
 エラーの中身（`CompileError` の各 case）と表示は分かれている。`CompileError.render` は 1 行の要約（テストが文字列で確かめる）で、利用者に見せる表示は `Diagnostic.render` が作る: 見出し・主な位置の下線と説明・関係する位置・note・help。文言は `Diagnostic.describe`（case ごと）と `syntaxError`（構文エラー）にある。

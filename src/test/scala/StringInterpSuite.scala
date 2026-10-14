@@ -12,7 +12,7 @@ class StringInterpSuite extends munit.FunSuite {
     ParserAST.programParser.parseAll(src).left.map(e => s"Parse error: $e").flatMap(p => TAnalyser.validate(p).left.map(_.render))
 
   private def desugar(src: String): Either[String, TypeRec[AST.Program.type]] =
-    validate(src).map(PatternDesugar.desugar).map(TraitEncoder.encode)
+    validate(src).map(ModuleDesugar.desugar).map(PatternDesugar.desugar).map(OperatorDesugar.desugar).map(TraitEncoder.encode)
 
   private def church(src: String): Either[String, TypeRec[AST.Program.type]] =
     desugar(src).map(ChurchEncoder.encode)
@@ -27,9 +27,20 @@ class StringInterpSuite extends munit.FunSuite {
     case Right(_)  => fail(s"expected error containing '$expected', but succeeded")
   }
 
-  private def parts(src: String): Seq[Rec[Expr]] =
+  // 最初の埋め込みの式
+  private def embedded(src: String): Rec[Expr] =
     parseExpr(src).unfix match {
-      case AST.StrInterp(ps) => ps
+      case AST.StrInterp(ps) => ps.collectFirst { case InterpPart.Embed(value, _) => value }.getOrElse(fail("no embedded expression"))
+      case other => fail(s"not StrInterp: $other")
+    }
+
+  // 文字列の部分は "…"、埋め込みは式として表示する
+  private def parts(src: String): Seq[String] =
+    parseExpr(src).unfix match {
+      case AST.StrInterp(ps) => ps.map {
+        case InterpPart.Text(value) => "\"" + value.replace("\n", "\\n") + "\""
+        case InterpPart.Embed(value, _) => value.show
+      }
       case other => fail(s"not StrInterp: $other")
     }
 
@@ -46,22 +57,22 @@ class StringInterpSuite extends munit.FunSuite {
   test("埋め込み式を含むとリテラルと式のパーツ列になる") {
     val ps = parts("`a = {x}\\n`")
     assertEquals(ps.length, 3)
-    assertEquals(ps(0).show, "\"a = \"")
-    assertEquals(ps(1).show, "x")
-    assertEquals(ps(2).show, "\"\\n\"")
+    assertEquals(ps(0), "\"a = \"")
+    assertEquals(ps(1), "x")
+    assertEquals(ps(2), "\"\\n\"")
   }
 
   test("先頭・末尾が埋め込み式でもパースできる") {
-    assertEquals(parts("`{x} end`").map(_.show), Seq("x", "\" end\""))
-    assertEquals(parts("`start {x}`").map(_.show), Seq("\"start \"", "x"))
+    assertEquals(parts("`{x} end`"), Seq("x", "\" end\""))
+    assertEquals(parts("`start {x}`"), Seq("\"start \"", "x"))
   }
 
   test("連続した埋め込みの間に空リテラルは入らない") {
-    assertEquals(parts("`{a}{b}`").map(_.show), Seq("a", "b"))
+    assertEquals(parts("`{a}{b}`"), Seq("a", "b"))
   }
 
   test("式のみのバッククォート文字列") {
-    assertEquals(parts("`{x}`").map(_.show), Seq("x"))
+    assertEquals(parts("`{x}`"), Seq("x"))
   }
 
   test("エスケープ: バッククォート・波括弧・標準エスケープ") {
@@ -76,12 +87,12 @@ class StringInterpSuite extends munit.FunSuite {
   }
 
   test("埋め込み式の中にネストした構文を書ける") {
-    assertEquals(parts("`{f(x)(y)}`").map(_.show), Seq("f(x)(y)"))
-    parts("`{if c then a else b}`").head.unfix match {
+    assertEquals(parts("`{f(x)(y)}`"), Seq("f(x)(y)"))
+    embedded("`{if c then a else b}`").unfix match {
       case AST.If(_, _, _) => ()
       case other => fail(s"not If: $other")
     }
-    parts("`{{ x }}`").head.unfix match {
+    embedded("`{{ x }}`").unfix match {
       case AST.Block(_, _) => ()
       case other => fail(s"not Block: $other")
     }
@@ -100,17 +111,19 @@ class StringInterpSuite extends munit.FunSuite {
       |  def show(x: a): foreign.C.String
       |}
       |
+      |interpolate = show
+      |
       |impl Show[i32] {
       |  def show = λx: i32. "num"
       |}
       |""".stripMargin
 
-  test("型検査: String 型の埋め込みは Show 不要で通る") {
-    val src =
+  test("型検査: String 型の埋め込みも、宣言された関数を通す") {
+    val src = showI32 +
       """let s(): foreign.C.String = `v = {"a"}!`
         |let main(): i32 = 0
         |""".stripMargin
-    assertRight(desugar(src))
+    assertLeftContains(validate(src), "No instance for Show[foreign.C.String]")
   }
 
   test("型検査: i32 埋め込みは show が自動挿入され、辞書解決まで通る") {
@@ -135,12 +148,41 @@ class StringInterpSuite extends munit.FunSuite {
     assertRight(church(src))
   }
 
-  test("型エラー: show が未定義のまま非 String を埋め込む") {
+  test("型エラー: interpolate が宣言されていなければ埋め込めない") {
     val src =
       """let s(): foreign.C.String = `v = {42}`
         |let main(): i32 = 0
         |""".stripMargin
-    assertLeftContains(validate(src), "show")
+    assertLeftContains(validate(src), "interpolate is not declared")
+  }
+
+  test("宣言: interpolate には ∀a. … → a → String の関数だけを宣言できる") {
+    val src =
+      """let render(x: i32): foreign.C.String = "n"
+        |interpolate = render
+        |let main(): i32 = 0
+        |""".stripMargin
+    assertLeftContains(validate(src), "cannot be declared for interpolate")
+    val shown =
+      """let render[a](x: a): foreign.C.String = "n"
+        |interpolate = render
+        |let s: foreign.C.String = `{1}{true}`
+        |let main(): i32 = 0
+        |""".stripMargin
+    assertRight(desugar(shown))
+  }
+
+  test("宣言: interpolate はスコープに従う（module の中の宣言は open で見える）") {
+    val src =
+      """module Text {
+        |  let render[a](x: a): foreign.C.String = "n"
+        |  interpolate = render
+        |}
+        |let a: foreign.C.String = `{1}`
+        |let main(): i32 = 0
+        |""".stripMargin
+    assertLeftContains(validate(src), "interpolate is not declared")
+    assertRight(desugar(src.replace("let a:", "open Text\nlet a:")))
   }
 
   test("型エラー: Show trait はあるがインスタンスがない") {
@@ -148,6 +190,7 @@ class StringInterpSuite extends munit.FunSuite {
       """trait Show[a] {
         |  def show(x: a): foreign.C.String
         |}
+        |interpolate = show
         |let s(): foreign.C.String = `v = {42}`
         |let main(): i32 = 0
         |""".stripMargin
@@ -159,6 +202,7 @@ class StringInterpSuite extends munit.FunSuite {
       """trait Show[a] {
         |  def show(x: a): foreign.C.String
         |}
+        |interpolate = show
         |let render[a](x: a): foreign.C.String with Show[a] = `v = {x}`
         |let main(): i32 = 0
         |""".stripMargin

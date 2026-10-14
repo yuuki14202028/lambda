@@ -185,11 +185,34 @@ object TAnalyser {
   private def operatorFunction(key: String, operandType: TypeRec[Type]): Check[TypeRec[Expr]] = for {
     env <- ask
     definition <- lift(env.scope.operators.get(key).toRight(CompileError.OperatorNotDeclared(key)))
-    function = definition.function
-    fnType = env.values.getOrElse(function, invariant(s"operator $key is declared for an undefined function ${function.name}"))
-    applied <- lift(ContextDesugar.applyTypeArg(varrType(function, fnType), operandType, Kind.Star))
+    resolved <- instantiateDeclared(definition.function, operandType)
+  } yield resolved
+
+  // 構文（演算子・埋め込み・リテラル）に宣言された多相関数 ∀a. … を、型 t で具体化して制約を解決する
+  private def instantiateDeclared(function: Variable, t: TypeRec[Type]): Check[TypeRec[Expr]] = for {
+    env <- ask
+    fnType = env.values.getOrElse(function, invariant(s"syntax is declared for an undefined function ${function.name}"))
+    applied <- lift(ContextDesugar.applyTypeArg(varrType(function, fnType), t, Kind.Star))
     resolved <- discharge(applied)
   } yield resolved
+
+  // 構文 hook に宣言された関数（スコープに従う）
+  private def syntaxFunctions(hook: SyntaxHook): Check[Seq[Variable]] =
+    ask.flatMap(env => lift(env.scope.syntax.get(hook).toRight(CompileError.SyntaxNotDeclared(hook))))
+
+  // ---- 文字列埋め込み: `{x}` は、interpolate に宣言された関数 f を x の型で具体化して x に適用したもの ----
+
+  private def checkInterpolation(parts: Seq[InterpPart[TypeRec]]): Check[TypeRec[Expr]] =
+    parts.traverse {
+      case InterpPart.Text(value) => Check.pure(InterpPart.Text[TypeRec](value))
+      case InterpPart.Embed(value, _) => for {
+        functions <- syntaxFunctions(SyntaxHook.Interpolate).flatMap(fs => if (fs.isEmpty) invariant("interpolate has no function") else Check.pure(fs))
+        resolved <- instantiateDeclared(functions.head, typeOf(value))
+        // 宣言のときに形（∀a. … → a → String）を確かめている
+        (param, _) = destructArrow(typeOf(resolved)).getOrElse(invariant(s"interpolate: ${typeOf(resolved).show} is not a function"))
+        _ <- expectAt(param, value)
+      } yield InterpPart.Embed[TypeRec](value, Some(resolved))
+    }.map(strInterpT(stringTypeT, _))
 
   private def checkBinaryOperator(op: String, left: TypeRec[Expr], right: TypeRec[Expr]): Check[TypeRec[Expr]] =
     // && と || は bool 専用の組み込み（右を評価しないことがあるので、関数ではない）
@@ -581,32 +604,6 @@ object TAnalyser {
   // ---- 文字列埋め込みの脱糖 ----
   // `a = {e}` は型検査時に concat("a = ")(show[τ](e)) へ展開する。
   // concat はスコープ中の変数ではなくランタイムの C 関数 concat を Foreign として直接参照する。
-  private val showMethod = Variable("show")
-
-  private def interpConcatType: TypeRec[Type] = arrowT(stringTypeT, arrowT(stringTypeT, stringTypeT))
-
-  // String 型でない埋め込み式 e: τ を show[τ](e) に包む
-  private def stringifyPart(part: TypeRec[Expr]): Check[TypeRec[Expr]] = {
-    val partType = typeOf(part)
-    if (Equivalence.alpha(stringTypeT, partType)) okT(part)
-    else for {
-      env <- ask
-      found <- lift(env.lookupValue(showMethod).toRight(
-        CompileError.StrInterpShowMissing(partType)))
-      (show, surface) = found
-      destructed <- lift(destructForAllK(surface).toRight(
-        CompileError.StrInterpShowNotPolymorphic(surface)))
-      (variable, kind, body) = destructed
-      _ <- guard(kind == Kind.Star, CompileError.StrInterpShowKindInvalid(kind))
-      applied <- discharge(tyAppT(Equivalence.normalize(substType(variable, partType, body)), varrType(show, surface), partType))
-      arrowParts <- lift(destructArrow(typeOf(applied)).toRight(
-        CompileError.StrInterpShowNotFunction(typeOf(applied))))
-      (from, to) = arrowParts
-      _ <- guard(Equivalence.alpha(from, partType), CompileError.StrInterpShowParamMismatch(from, partType))
-      _ <- guard(Equivalence.alpha(stringTypeT, to), CompileError.StrInterpShowResultMismatch(stringTypeT, to))
-    } yield appT(to, applied, part)
-  }
-
   // ---- 型の展開 ----
 
   private def underTypeVar[A](variable: TypeVariable, kind: Kind)(body: Check[A]): Check[A] = for {
@@ -979,6 +976,8 @@ object TAnalyser {
     case AST.TopDerive(_, _) => declarationNode("TopDerive")
     case AST.TopModule(_, _) => declarationNode("TopModule")
     case AST.TopOperator(_, _, _) => declarationNode("TopOperator")
+    case AST.TopSyntax(_, _) => declarationNode("TopSyntax")
+    case AST.TopSyntax(_, _) => declarationNode("TopSyntax")
     case AST.TopOpen(_) => declarationNode("TopOpen")
     case AST.TopModified(_, _) => declarationNode("TopModified")
 
@@ -1209,16 +1208,12 @@ object TAnalyser {
     case AST.Char(value) => okT(charT(value, charTypeT))
     case AST.StringLit(value) => okT(stringLitT(value, stringTypeT))
     case AST.StrInterp(parts) => for {
-      typedParts <- parts.toList.traverse(identity)
-      stringified <- typedParts.traverse(stringifyPart)
-    } yield stringified match {
-      case Nil => stringLitT("", stringTypeT)
-      case head :: tail =>
-        tail.foldLeft(head) { (acc, part) =>
-          val concatRef = foreignT(Variable("concat"), interpConcatType, interpConcatType)
-          appT(stringTypeT, appT(arrowT(stringTypeT, stringTypeT), concatRef, acc), part)
-        }
-    }
+      typedParts <- parts.traverse {
+        case InterpPart.Text(value) => Check.pure(InterpPart.Text[TypeRec](value))
+        case InterpPart.Embed(value, _) => value.map(InterpPart.Embed[TypeRec](_, None))
+      }
+      checked <- checkInterpolation(typedParts)
+    } yield checked
     case AST.Bool(value) => okT(boolT(value, boolTypeT))
     case AST.UnitLit() => okT(unitLitT(unitTypeT))
 
@@ -1452,6 +1447,42 @@ object TAnalyser {
       _ <- guard(operatorShape(fixity.nonEmpty, fnType), CompileError.OperatorTargetInvalid(key, function, fnType))
       definition = OperatorDef(function, fixity)
     } yield (topOperatorT(op, fixity, function), env.copy(scope = env.scope.withOperator(key, definition), members = env.members.withOperator(key, definition)))
+
+    // interpolate = f / literal [] = nil, cons: 構文が呼ぶ関数。演算子の宣言と同じく、宣言の後で見え、module のメンバーになる
+    case AST.TopSyntax(hook, written) => for {
+      env <- ask
+      found <- written.traverse(name => lift(env.lookupValue(name).toRight(CompileError.UndefinedVariable(name))))
+      _ <- guard(syntaxShape(hook, found.map(_._2)), CompileError.SyntaxTargetInvalid(hook, found.map(_._1), found.map(_._2)))
+      functions = found.map(_._1)
+    } yield (topSyntaxT(hook, functions), env.copy(scope = env.scope.withSyntax(hook, functions), members = env.members.withSyntax(hook, functions)))
+  }
+
+  /** 構文に宣言できる関数の型。どれも最初の型パラメータ（カインド *）に、値（埋め込む値・最初の要素）の型を受け取る。
+   *  interpolate: ∀a. [制約…] → a → String
+   *  literal []:  nil は ∀a. [制約…] → R、cons は ∀a. [制約…] → a → R → R（R は両方で同じ） */
+  private def syntaxShape(hook: SyntaxHook, types: Seq[TypeRec[Type]]): Boolean = {
+    @annotation.tailrec
+    def afterConstraints(t: TypeRec[Type]): TypeRec[Type] = destructInstArrow(t) match {
+      case Some((_, to)) => afterConstraints(to)
+      case None => t
+    }
+    // ∀a. [制約…] → body の a と body（a は共通の名前に揃える）
+    val common = TypeVariable("$element")
+    def body(t: TypeRec[Type]): Option[TypeRec[Type]] = destructForAllK(t).collect {
+      case (variable, Kind.Star, inner) => Equivalence.normalize(substType(variable, typeVarT(common), afterConstraints(inner)))
+    }
+    val element = typeVarT(common)
+    (hook, types.map(body)) match {
+      case (SyntaxHook.Interpolate, Seq(Some(f))) =>
+        destructArrow(f).exists { case (from, to) => Equivalence.alpha(from, element) && Equivalence.alpha(to, stringTypeT) }
+      case (SyntaxHook.ListLiteral, Seq(Some(nil), Some(cons))) =>
+        destructArrow(cons).exists { case (head, rest) =>
+          Equivalence.alpha(head, element) && destructArrow(rest).exists { case (tail, result) =>
+            Equivalence.alpha(tail, nil) && Equivalence.alpha(result, nil)
+          }
+        }
+      case _ => false
+    }
   }
 
   // top-level の data。フィールドからは visible（自身、rec なら組の全員）を短い名前で参照できる
@@ -1754,7 +1785,7 @@ object TAnalyser {
       case _ => sealDecl(inner)
     }
     case AST.TopModified(Modifier.Private, inner) => sealDecl(inner)
-    case AST.TopImpl(_, _, _, _, _, _) | AST.TopDerive(_, _) | AST.TopOpen(_) | AST.TopOperator(_, _, _) | AST.TopImport(_) => ask
+    case AST.TopImpl(_, _, _, _, _, _) | AST.TopDerive(_, _) | AST.TopOpen(_) | AST.TopOperator(_, _, _) | AST.TopSyntax(_, _) | AST.TopImport(_) => ask
   }
 
   private def checkModule(name: String, decls: Seq[IndexedRec[Decl]]): StateT[EitherS, Env, TypeRec[Decl]] = StateT { outer =>
@@ -1855,7 +1886,6 @@ object TAnalyser {
       case CompileError.NotAConstructor(name) => failed(name.name)
       case CompileError.NoInstance(name, _) => env.failedTraits(name.name) || env.failedTraits(shortName(name.name))
       case CompileError.ContextMethodMissing(name) => failed(name.name)
-      case CompileError.StrInterpShowMissing(_) => failed("show")
       case CompileError.InContext(inner) => causedByFailure(env, inner)
       case CompileError.Multiple(errors) => errors.forall(causedByFailure(env, _))
       case _ => false

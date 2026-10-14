@@ -94,6 +94,7 @@ val showAlg: Algebra[AST, ShowResult] = [x] => node => node match {
   case AST.TopOpen(path)           => s"open ${path.mkString(".")}"
   case AST.TopOperator(op, Some(fixity), function) => s"${fixity.assoc.keyword} ${fixity.level} $op = ${function.name}"
   case AST.TopOperator(op, None, function) => s"prefix $op = ${function.name}"
+  case AST.TopSyntax(hook, functions) => s"${hook.keyword} = ${functions.map(_.name).mkString(", ")}"
   case AST.TopModified(modifier, decl) => s"${modifier.keyword} $decl"
   case AST.Abs(v, types, body)     => s"λ${v.name}: $types. $body"
   case AST.TyAbs(v, Kind.Star, body) => s"Λ${v.name}. $body"
@@ -148,7 +149,10 @@ val showAlg: Algebra[AST, ShowResult] = [x] => node => node match {
     case '\u0000' => "\\0"
     case ch => ch.toString
   } + "\""
-  case AST.StrInterp(parts)        => parts.map(p => s"{$p}").mkString("`", "", "`")
+  case AST.StrInterp(parts)        => parts.map {
+      case InterpPart.Text(value) => value
+      case InterpPart.Embed(value, _) => s"{$value}"
+    }.mkString("`", "", "`")
   case AST.Context(monad, steps, result, _) =>
     val bindingText = steps.map {
       case ContextStep.Bind(name, annotation, value) => s"${name.name}: $annotation = $value;"

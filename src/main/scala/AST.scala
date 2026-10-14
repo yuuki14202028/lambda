@@ -23,6 +23,8 @@ enum AST[R[_], I] {
   // operator + = add / prefix operator - = neg: 演算子が指す多相関数の宣言
   // infixl 6 + = add（fixity が None なら前置: prefix - = neg）
   case TopOperator(op: String, fixity: Option[Fixity], function: Variable) extends AST[R, Decl]
+  // interpolate = show / literal [] = Nil, Cons: 構文（文字列埋め込み・リストリテラル）が呼ぶ関数の宣言
+  case TopSyntax(hook: SyntaxHook, functions: Seq[Variable]) extends AST[R, Decl]
   case TopModule(name: String, decls: Seq[R[Decl]]) extends AST[R, Decl]
   case TopOpen(path: Seq[String]) extends AST[R, Decl]
   case TopModified(modifier: Modifier, decl: R[Decl]) extends AST[R, Decl]
@@ -61,7 +63,8 @@ enum AST[R[_], I] {
   case Num(value: String, typeName: String) extends AST[R, Expr]
   case Char(value: scala.Char) extends AST[R, Expr]
   case StringLit(value: String) extends AST[R, Expr]
-  case StrInterp(parts: Seq[R[Expr]]) extends AST[R, Expr]
+  // `a = {x}`: 文字列と埋め込みの並び。埋め込みの resolved は、型検査が決めた「interpolate に宣言された関数を x の型で具体化したもの」
+  case StrInterp(parts: Seq[InterpPart[R]]) extends AST[R, Expr]
   case Bool(value: Boolean) extends AST[R, Expr]
   case UnitLit() extends AST[R, Expr]
   case Block(discarded: Seq[R[Expr]], result: Option[R[Expr]]) extends AST[R, Expr]
@@ -226,6 +229,22 @@ enum IntrinsicOps {
 // 演算子の並びの 1 歩: 演算子（とその位置）と、右の被演算子
 case class OpStep[R[_]](op: String, span: Span, operand: R[Expr])
 
+enum InterpPart[R[_]] {
+  case Text(value: String)
+  case Embed(value: R[Expr], resolved: Option[R[Expr]])
+}
+
+// 構文が呼ぶ関数の宣言の種類
+enum SyntaxHook {
+  case Interpolate // interpolate = f: `{x}` は f[T](x)（T は x の型）
+  case ListLiteral // literal [] = nil, cons: [x, y] は cons[T](x)(cons[T](y)(nil[T]))（T は最初の要素の型）
+
+  def keyword: String = this match {
+    case Interpolate => "interpolate"
+    case ListLiteral => "literal []"
+  }
+}
+
 // 名前付きの構築の引数 name = value（span は名前の位置）
 case class NamedArg[R[_]](name: String, span: Span, value: R[Expr])
 
@@ -360,7 +379,8 @@ def varr(variable: Variable): Rec[Expr] = HFix(AST.Var(variable))
 def num(value: String, typeName: String): Rec[Expr] = HFix(AST.Num(value, typeName))
 def char(value: scala.Char): Rec[Expr] = HFix(AST.Char(value))
 def stringLit(value: String): Rec[Expr] = HFix(AST.StringLit(value))
-def strInterp(parts: Seq[Rec[Expr]]): Rec[Expr] = HFix(AST.StrInterp(parts))
+def strInterp(parts: Seq[InterpPart[Rec]]): Rec[Expr] = HFix(AST.StrInterp(parts))
+def strInterpT(t: TypeRec[Type], parts: Seq[InterpPart[TypeRec]]): TypeRec[Expr] = HCofree(ExprAnn(t), AST.StrInterp(parts))
 def bool(value: Boolean): Rec[Expr] = HFix(AST.Bool(value))
 def unitLit: Rec[Expr] = HFix(AST.UnitLit())
 def block(discarded: Seq[Rec[Expr]], result: Option[Rec[Expr]]): Rec[Expr] = HFix(AST.Block(discarded, result))
@@ -417,6 +437,8 @@ def topDeriveT(traitName: TypeVariable, target: TypeVariable): TypeRec[Decl] =
   HCofree(DeclAnn, AST.TopDerive(traitName, target))
 def topOperatorT(op: String, fixity: Option[Fixity], function: Variable): TypeRec[Decl] =
   HCofree(DeclAnn, AST.TopOperator(op, fixity, function))
+def topSyntaxT(hook: SyntaxHook, functions: Seq[Variable]): TypeRec[Decl] =
+  HCofree(DeclAnn, AST.TopSyntax(hook, functions))
 def topModuleT(name: String, decls: Seq[TypeRec[Decl]]): TypeRec[Decl] =
   HCofree(DeclAnn, AST.TopModule(name, decls))
 def topOpenT(path: Seq[String]): TypeRec[Decl] =
@@ -605,7 +627,10 @@ def freeVars(expr: Rec[Expr]): Set[Variable] = {
     case AST.BinOp(_, left, right, resolved) => left ++ right ++ resolved.getOrElse(Set.empty)
     case AST.OpSeq(first, rest) => first ++ rest.flatMap(_.operand)
     case AST.Intrinsic(_, args) => args.foldLeft(Set.empty[Variable])(_ ++ _)
-    case AST.StrInterp(parts) => parts.foldLeft(Set.empty[Variable])(_ ++ _)
+    case AST.StrInterp(parts) => parts.foldLeft(Set.empty[Variable]) {
+      case (acc, InterpPart.Embed(value, resolved)) => acc ++ value ++ resolved.getOrElse(Set.empty)
+      case (acc, InterpPart.Text(_)) => acc
+    }
     case AST.Context(_, steps, result, ops) =>
       val body = steps.foldRight(result) {
         case (ContextStep.Bind(name, _, value), acc) => value ++ (acc - name)

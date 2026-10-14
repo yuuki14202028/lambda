@@ -98,6 +98,8 @@ given HTraverse[AST] with {
       Applicative[G].pure(AST.TopOpen(path))
     case AST.TopOperator(op, fixity, function) =>
       Applicative[G].pure(AST.TopOperator(op, fixity, function))
+    case AST.TopSyntax(hook, functions) =>
+      Applicative[G].pure(AST.TopSyntax(hook, functions))
     case AST.TopModified(modifier, decl) =>
       f(decl).map(AST.TopModified(modifier, _))
     case AST.Abs(v, types, body) =>
@@ -167,7 +169,10 @@ given HTraverse[AST] with {
     case AST.Char(v) => Applicative[G].pure(AST.Char(v))
     case AST.StringLit(v) => Applicative[G].pure(AST.StringLit(v))
     case AST.StrInterp(parts) =>
-      parts.traverse(part => f(part)).map(AST.StrInterp(_))
+      parts.traverse {
+        case InterpPart.Text(value) => Applicative[G].pure(InterpPart.Text[S](value))
+        case InterpPart.Embed(value, resolved) => (f(value), resolved.traverse(e => f(e))).mapN(InterpPart.Embed[S](_, _))
+      }.map(AST.StrInterp(_))
     case AST.Context(monad, steps, result, ops) =>
       val stepsG = steps.traverse[G, ContextStep[S]] {
         case ContextStep.Bind(name, annotation, value) => (f(annotation), f(value)).mapN(ContextStep.Bind[S](name, _, _))

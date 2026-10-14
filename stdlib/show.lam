@@ -1,4 +1,4 @@
-// 値を文字列にする。文字列埋め込み（`value = {x}`）は、この show を使う。
+// 値を文字列にする。文字列埋め込み（`value = {x}`）は、interpolate に宣言したこの show を使う。
 
 import "std/operators"
 import "std/char"
@@ -11,6 +11,9 @@ import "std/list"
 trait Show[a] {
   def show(x: a): String
 }
+
+// 文字列埋め込み `{x}` は show[T](x)
+interpolate = show
 
 impl Show[i32] {
   def show = String.fromInt

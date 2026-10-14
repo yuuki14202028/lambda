@@ -337,6 +337,16 @@ object ParserAST {
     }.indexed
   }
 
+  // interpolate = show / literal [] = Nil, Cons
+  private lazy val syntaxP: Parser[IndexedRec[Decl]] = {
+    val interpolate = (keyword("interpolate") *> spaced('=') *> qualifiedIdentifier).map(f => AST.TopSyntax[IndexedRec, Decl](SyntaxHook.Interpolate, Seq(Variable(f))))
+    val literal = ((keyword("literal") *> Parser.char('[') *> sp *> Parser.char(']')).backtrack *> spaced('=') *>
+      ((qualifiedIdentifier <* spaced(',')) ~ qualifiedIdentifier)).map { case (nil, cons) =>
+        AST.TopSyntax[IndexedRec, Decl](SyntaxHook.ListLiteral, Seq(Variable(nil), Variable(cons)))
+      }
+    (interpolate.backtrack | literal).indexed
+  }
+
   private lazy val openP: Parser[IndexedRec[Decl]] =
     (keyword("open") *> identifier.repSep('.')).map(path => AST.TopOpen[IndexedRec, Decl](path.toList)).indexed
 
@@ -351,12 +361,12 @@ object ParserAST {
     (keyword("opaque") *> (recDataP | topDataP.backtrack | topTypeP)).map(decl => AST.TopModified[IndexedRec, Decl](Modifier.Opaque, decl)).indexed
 
   private lazy val privateP: Parser[IndexedRec[Decl]] = {
-    val decl = Parser.defer(moduleP | operatorP | opaqueP | topRecP | topDataP.backtrack | topTypeP.backtrack | traitP.backtrack | topLetP)
+    val decl = Parser.defer(moduleP | operatorP | syntaxP.backtrack | opaqueP | topRecP | topDataP.backtrack | topTypeP.backtrack | traitP.backtrack | topLetP)
     (keyword("private") *> decl).map(decl => AST.TopModified[IndexedRec, Decl](Modifier.Private, decl)).indexed
   }
 
   private lazy val topDeclP: Parser[IndexedRec[Decl]] =
-    Parser.defer(moduleP | openP | operatorP | privateP | opaqueP | topRecP |
+    Parser.defer(moduleP | openP | operatorP | syntaxP.backtrack | privateP | opaqueP | topRecP |
       topImportP.backtrack | topDataP.backtrack | topTypeP.backtrack | traitP.backtrack | implP.backtrack | topDeriveP.backtrack | topLetP)
 
   lazy val typeP: Parser[IndexedRec[Type]] = Parser.defer(forAllP | typeLambdaP | arrowTypeP)
@@ -646,15 +656,15 @@ object ParserAST {
       Parser.char('}').as('}') | commonStringEscape
     )
     val plain = Parser.charWhere(ch => ch != '`' && ch != '{' && ch != '\\' && ch != '\n' && ch != '\r')
-    val literalPart: Parser[Either[(Span, String), IndexedRec[Expr]]] =
-      (escaped | plain).rep.spanned.map { case (span, chars) => Left((span, chars.toList.mkString)) }
-    val exprPart: Parser[Either[(Span, String), IndexedRec[Expr]]] =
+    val literalPart: Parser[Either[String, IndexedRec[Expr]]] =
+      (escaped | plain).rep.map(chars => Left(chars.toList.mkString))
+    val exprPart: Parser[Either[String, IndexedRec[Expr]]] =
       ('{' -*> Parser.defer(expr) <*- '}').map(Right.apply)
     ('`' *> (literalPart | exprPart).rep0 <* '`').spanned.map { case (span, parts) =>
-      if (parts.forall(_.isLeft)) at(span, AST.StringLit(parts.collect { case Left((_, s)) => s }.mkString))
+      if (parts.forall(_.isLeft)) at(span, AST.StringLit(parts.collect { case Left(s) => s }.mkString))
       else at(span, AST.StrInterp(parts.map {
-        case Left((part, s)) => at(part, AST.StringLit(s))
-        case Right(e) => e
+        case Left(s) => InterpPart.Text[IndexedRec](s)
+        case Right(e) => InterpPart.Embed[IndexedRec](e, None)
       }))
     }
   }
