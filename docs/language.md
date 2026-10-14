@@ -726,17 +726,27 @@ let report: String = scores
 let lengths: List[i32] = ["ab", "cde"].map[i32](String.length)
 ```
 
+```lam
+let words: List[String] = "b a c a".split(" ")
+let counts: Map[String][i32] = words.foldLeft[Map[String][i32]](Map.empty[String][i32])(λm: Map[String][i32]. λw: String.
+  if m.contains(w) then m.update(w)(λn: i32. n + 1) else m.insert(w)(1))
+let report: String = counts.toList.map[String](λp: Pair[String][i32]. `{p.first}={p.second}`).join(", ")   // a=2, b=1, c=1
+let distinct: Set[String] = Set.fromList[String](words)
+```
+
 | ファイル | 内容 |
 | --- | --- |
 | `operators` | 組み込みの型の演算子 |
 | `option` | `Option`（`Some` / `None`）。module `Option`: `isSome`、`isNone`、`getOrElse`、`orElse` |
 | `pair` `either` `id` | `Pair`（`p.first` / `p.second`、`swap`）、`Either`（`Left` / `Right`）、`Id` |
-| `list` | `List`（`Nil` / `Cons`）。module `List`: `length`、`isEmpty`、`concat`、`reverse`、`filter`、`head`、`tail`、`last`、`nth`、`take`、`drop`、`find`、`any`、`all`、`contains`、`zip`、`zipWith`、`flatten`、`sorted`、`range` |
+| `list` | `List`（`Nil` / `Cons`）。module `List`: `length`、`isEmpty`、`concat`、`reverse`、`filter`、`head`、`tail`、`last`、`nth`、`take`、`drop`、`find`、`any`、`all`、`contains`、`zip`、`zipWith`、`flatten`、`sorted`、`sortBy`、`partition`、`indexOf`、`unique`、`intersperse`、`count`、`maximum`、`minimum`、`sum` / `product`（`i32`）、`join`（`List[String]`）、`range`。リテラル `[1, 2, 3]` |
 | `eq` `ord` | `Eq`（`eq` / `neq`）、`Ord`（`lt` / `leq` / `gt` / `geq`）。基本の型と、`Option` / `Either` / `Pair` / `List`（辞書順）のインスタンス |
 | `semigroup` `monoid` | `append`、`empty` |
 | `functor` `foldable` `traversable` `applicative` `monad` | `map`、`foldRight` / `foldLeft`、`traverse`、`pure` / `apply`、`flatMap`。どれも受け手が最初の引数（`xs.map[b](f)`、`xs.foldLeft[b](start)(f)`） |
 | `char` | module `char`: `isDigit`、`isLetter`、`isSpace`、`toUpper`、`code`、`toString` など |
-| `string` | 型 `String` と module `String`: `length`、`charAt`、`slice`、`startsWith`、`toList`、`toInt`、`fromInt` など。文字列の `==`・`<`・`+`。`n.toString`（`i32`） |
+| `string` | 型 `String` と module `String`: `length`、`charAt`、`slice`、`startsWith`、`endsWith`、`contains`、`indexOf`、`split`、`replace`、`trim`、`repeat`、`toUpper` / `toLower`、`reverse`、`toList`、`toInt`、`fromInt` など。文字列の `==`・`<`・`+`。`n.toString`（`i32`） |
+| `map` `set` | `Map[k][v]`（キーの順の平衡二分木）: `Map.empty`、`Map.fromList`、`insert`、`lookup`、`remove`、`contains`、`update`、`union`、`size`、`toList`、`keys`、`values`。値の `map` / `foldLeft`。`Set[a]`: `Set.fromList`、`insert`、`contains`、`remove`、`union`、`intersect`、`difference`、`toList` |
+| `result` | `Result[e][a]`（`Ok` / `Err`）: `isOk`、`isErr`、`getOrElse`、`toOption`、`mapErr`、`o.okOr(e)`（`Option`）。`Functor` / `Monad` など |
 | `show` | `Show`（`show`）と、基本の型・コンテナのインスタンス |
 | `io` | `print`、`println`、`display`、`readLine` |
 | `function` | `id`、`const`、`compose`、`flip`、`curry`、`uncurry` |

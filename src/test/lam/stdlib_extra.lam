@@ -1,0 +1,33 @@
+// 標準ライブラリの List・String・Map・Set・Result の関数。
+// 期待する出力は EndToEndSuite に書いてある。
+
+import "std/prelude"
+
+// 木の高さ（平衡していれば、200 個で 8）
+let height(m: Map[i32][i32]): i32 = match m {
+  MapNode(_)(_)(_)(_)(h) => h
+  MapEmpty => 0
+}
+
+let main(): i32 = {
+  println(`{[3, 1, 2].sum} {[1, 2, 3, 4].product} {[1, 2, 3, 4].count(λn: i32. n % 2 == 0)}`);
+  println(`{[3, 9, 2].maximum} {Nil[i32].minimum} {[3, 9, 2].minimum}`);
+  println(`{[1, 2, 3, 4, 5].partition(λn: i32. n > 2)}`);
+  println(`{["ccc", "a", "bb"].sortBy[i32](String.length)} {[1, 2, 3].indexOf(3)} {[1, 2, 1, 3, 2].unique} {[1, 2, 3].intersperse(0)}`);
+  println(`[{"a,b,,c".split(",").join("|")}] [{"  hi  ".trim}] {"hello".contains("ll")} {"hello".indexOf("lo")} {"a-b-c".replace("-")("+")}`);
+  println(`{"ab".repeat(3)} {"Hello".toUpper} {"Hello".toLower} {"abc".reverse} {"file.lam".endsWith(".lam")}`);
+  let m: Map[String][i32] = Map.fromList[String][i32]([Pair[String][i32]("b")(2), Pair[String][i32]("a")(1), Pair[String][i32]("c")(3)]) in {
+    println(`{m} {m.size} {m.lookup("b")} {m.lookup("z")} {m.contains("c")}`);
+    println(`{m.insert("d")(4).remove("a")} {m.map[i32](λn: i32. n * 10)} {m.keys} {m.values} {m.update("a")(λn: i32. n + 100)}`)
+  };
+  let big: Map[i32][i32] = List.range(0)(200).foldLeft[Map[i32][i32]](Map.empty[i32][i32])(λacc: Map[i32][i32]. λn: i32. acc.insert(n)(n * n)) in
+    println(`{big.size} {height(big)} {big.lookup(150)} {List.range(0)(200).foldLeft[Map[i32][i32]](big)(λacc: Map[i32][i32]. λn: i32. if n % 2 == 0 then acc.remove(n) else acc).size}`);
+  let s: Set[i32] = Set.fromList[i32]([3, 1, 2, 3]) in
+    println(`{s} {s.size} {s.contains(2)} {s.insert(5).remove(1)} {s.union(Set.fromList[i32]([9]))} {s.intersect(Set.fromList[i32]([2, 3, 4]))} {s.difference(Set.fromList[i32]([1]))}`);
+  let ok: Result[String][i32] = Ok[String][i32](2) in
+  let bad: Result[String][i32] = Err[String][i32]("boom") in {
+    println(`{ok} {bad} {ok.map[i32](λn: i32. n * 3)} {bad.getOrElse(0)} {ok.isOk} {bad.toOption} {bad.mapErr[i32](String.length)}`);
+    println(`{ok.flatMap[i32](λn: i32. if n > 1 then Ok[String][i32](n) else Err[String][i32]("small"))} {None[i32].okOr[String]("none")}`)
+  };
+  0
+}

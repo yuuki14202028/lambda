@@ -1,0 +1,53 @@
+// 値の集まり（重複なし）。値の順（Ord）で並べた Map で表す。
+// 関数は module Set にあり、s.insert(x)、s.contains(x) のように書ける。
+
+import "std/operators"
+import "std/option"
+import "std/pair"
+import "std/list"
+import "std/list_instances"
+import "std/eq"
+import "std/ord"
+import "std/foldable"
+import "std/string"
+import "std/show"
+import "std/map"
+
+data Set[a] = { MkSet(Map[a][unit]) }
+
+module Set {
+  let empty[a]: Set[a] = MkSet[a](Map.empty[a][unit])
+
+  private let entries[a](s: Set[a]): Map[a][unit] = match s {
+    MkSet(m) => m
+  }
+
+  let isEmpty[a](s: Set[a]): bool = s.entries.isEmpty
+  let size[a](s: Set[a]): i32 = s.entries.size
+
+  let contains[a](s: Set[a])(x: a): bool with Ord[a] = s.entries.contains(x)
+  let insert[a](s: Set[a])(x: a): Set[a] with Ord[a] = MkSet[a](s.entries.insert(x)(()))
+  let remove[a](s: Set[a])(x: a): Set[a] with Ord[a] = MkSet[a](s.entries.remove(x))
+
+  // 小さい順
+  let toList[a](s: Set[a]): List[a] = s.entries.keys
+
+  let fromList[a](xs: List[a]): Set[a] with Ord[a] = xs.foldLeft[Set[a]](empty[a])(λs: Set[a]. λx: a. insert[a](s)(x))
+
+  let union[a](s: Set[a])(other: Set[a]): Set[a] with Ord[a] = MkSet[a](s.entries.union(other.entries))
+
+  let intersect[a](s: Set[a])(other: Set[a]): Set[a] with Ord[a] =
+    fromList[a](toList[a](s).filter(λx: a. other.contains(x)))
+
+  let difference[a](s: Set[a])(other: Set[a]): Set[a] with Ord[a] =
+    fromList[a](toList[a](s).filter(λx: a. !other.contains(x)))
+}
+
+impl[a] Eq[Set[a]] with Eq[a] {
+  def eq(x: Set[a])(y: Set[a]): bool = Set.toList[a](x) == Set.toList[a](y)
+}
+
+// {1, 2, 3}
+impl[a] Show[Set[a]] with Show[a] {
+  def show(s: Set[a]): String = `\{{s.toList.map[String](λx: a. `{x}`).join(", ")}\}`
+}

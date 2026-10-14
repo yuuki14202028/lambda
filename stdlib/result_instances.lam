@@ -1,0 +1,37 @@
+import "std/result"
+import "std/functor"
+import "std/applicative"
+import "std/monad"
+import "std/foldable"
+import "std/traversable"
+import "std/eq"
+import "std/ord"
+import "std/show"
+
+derive Functor[Result]
+derive Foldable[Result]
+derive Traversable[Result]
+derive Eq[Result]
+// Ok(1)、Err(not found)
+derive Show[Result]
+
+// 最初の失敗で止まる
+impl[e] Applicative[Result[e]] {
+  def pure[a](x: a): Result[e][a] = Ok[e][a](x)
+
+  def apply[a][b](rf: Result[e][a → b]): Result[e][a] → Result[e][b] =
+    λr: Result[e][a]. match rf {
+      Err(err) => Err[e][b](err)
+      Ok(f) => match r {
+        Err(err) => Err[e][b](err)
+        Ok(x) => Ok[e][b](f(x))
+      }
+    }
+}
+
+impl[e] Monad[Result[e]] {
+  def flatMap[a][b](r: Result[e][a])(f: a → Result[e][b]): Result[e][b] = match r {
+    Ok(x) => f(x)
+    Err(err) => Err[e][b](err)
+  }
+}

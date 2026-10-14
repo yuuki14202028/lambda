@@ -1,4 +1,4 @@
-// 文字列。関数は module String にあり、s.length や s.startsWith("ab") のように書ける。
+// 文字列。関数は module String にあり、s.length や s.split(",") のように書ける。文字列のリストをつなぐのは xs.join(", ")（module List）。
 // Eq / Ord / Add（連結）/ Semigroup / Monoid のインスタンスがあるので、文字列どうしは ==・<・+ で扱える。
 
 import "std/operators"
@@ -43,6 +43,67 @@ module String {
   }
 
   let startsWith(s: String)(prefix: String): bool = equal(slice(s)(0)(length(prefix)))(prefix)
+
+  let endsWith(s: String)(suffix: String): bool =
+    length(suffix) <= length(s) && equal(slice(s)(length(s) - length(suffix))(length(suffix)))(suffix)
+
+  // sub が最初に現れる位置（0 から数える）
+  let indexOf(s: String)(sub: String): Option[i32] =
+    rec let from(index: i32): Option[i32] =
+      if index + length(sub) > length(s) then None[i32]
+      else if equal(slice(s)(index)(length(sub)))(sub) then Some[i32](index)
+      else from(index + 1)
+    in from(0)
+
+  let contains(s: String)(sub: String): bool = Option.isSome[i32](indexOf(s)(sub))
+
+  // sep で区切る。sep が空なら、区切らずに 1 つの要素にする
+  let split(s: String)(sep: String): List[String] =
+    rec let from(rest: String): List[String] = match indexOf(rest)(sep) {
+      Some(index) => Cons[String](slice(rest)(0)(index))(from(slice(rest)(index + length(sep))(length(rest))))
+      None => [rest]
+    } in if isEmpty(sep) then [s] else from(s)
+
+  let repeat(s: String)(count: i32): String =
+    rec let go(n: i32)(acc: String): String = if n <= 0 then acc else go(n - 1)(concat(acc)(s))
+    in go(count)("")
+
+  private rec let mapChars(chars: List[char])(f: char → char): List[char] = match chars {
+    Nil => Nil[char]
+    Cons(c)(rest) => Cons[char](f(c))(mapChars(rest)(f))
+  }
+
+  let toUpper(s: String): String = fromList(mapChars(toList(s))(char.toUpper))
+  let toLower(s: String): String = fromList(mapChars(toList(s))(char.toLower))
+
+  let reverse(s: String): String = fromList(List.reverse[char](toList(s)))
+
+  // 先頭・末尾の空白（空白・タブ・改行）を除く
+  let trimStart(s: String): String =
+    rec let from(index: i32): String =
+      if index < length(s) && char.isSpace(unsafeCharAt(s)(index)) then from(index + 1) else slice(s)(index)(length(s) - index)
+    in from(0)
+
+  let trimEnd(s: String): String =
+    rec let upTo(end: i32): String =
+      if end > 0 && char.isSpace(unsafeCharAt(s)(end - 1)) then upTo(end - 1) else slice(s)(0)(end)
+    in upTo(length(s))
+
+  let trim(s: String): String = trimEnd(trimStart(s))
+}
+
+module List {
+  // 文字列のリストを、間に sep を挟んでつなぐ: ["a", "b"].join(", ") は "a, b"
+  rec let join(xs: List[String])(sep: String): String = match xs {
+    Nil => ""
+    Cons(x)(Nil) => x
+    Cons(x)(rest) => String.concat(String.concat(x)(sep))(join(rest)(sep))
+  }
+}
+
+module String {
+  // from をすべて to に置き換える
+  let replace(s: String)(from: String)(to: String): String = List.join(split(s)(from))(to)
 }
 
 // 数と文字を文字列にする

@@ -258,39 +258,33 @@ rec let simplify(e: Expr): Expr = match e {
 
 data Failure = { DivisionByZero, Unbound(Name) }
 
-type Result = Either[Failure]
-
-impl[e] Monad[Either[e]] {
-  def flatMap[a][b](v: Either[e][a])(f: a → Either[e][b]): Either[e][b] = match v {
-    Left(err) => Left[e][b](err)
-    Right(x) => f(x)
-  }
-}
+// 評価の結果は std/result の Result[Failure][i32]。context[Result[Failure]] は最初の失敗で止まる
+type Evaluated = Result[Failure]
 
 type Bindings = List[Pair[Name][i32]]
 
-rec let lookup(name: Name)(bindings: Bindings): Result[i32] = match bindings {
-  Nil => Left[Failure][i32](Unbound(name))
-  Cons(Pair(bound)(value))(_) if bound == name => Right[Failure][i32](value)
+rec let lookup(name: Name)(bindings: Bindings): Evaluated[i32] = match bindings {
+  Nil => Err[Failure][i32](Unbound(name))
+  Cons(Pair(bound)(value))(_) if bound == name => Ok[Failure][i32](value)
   Cons(_)(rest) => lookup(name)(rest)
 }
 
-rec let evaluate(bindings: Bindings)(e: Expr): Result[i32] = match e {
-  Number(n) => Right[Failure][i32](n)
+rec let evaluate(bindings: Bindings)(e: Expr): Evaluated[i32] = match e {
+  Number(n) => Ok[Failure][i32](n)
   Variable(name) => lookup(name)(bindings)
   Negate(inner) => evaluate(bindings)(inner).map[i32](λv: i32. 0 - v)
-  Binary(op)(left)(right) => context[Result] {
+  Binary(op)(left)(right) => context[Evaluated] {
     a: i32 = evaluate(bindings)(left);
     b: i32 = evaluate(bindings)(right);
     v: i32 = match op {
-      Plus => Right[Failure][i32](a + b)
-      Minus => Right[Failure][i32](a - b)
-      Times => Right[Failure][i32](a * b)
-      Divide => if b == 0 then Left[Failure][i32](DivisionByZero) else Right[Failure][i32](a / b)
+      Plus => Ok[Failure][i32](a + b)
+      Minus => Ok[Failure][i32](a - b)
+      Times => Ok[Failure][i32](a * b)
+      Divide => if b == 0 then Err[Failure][i32](DivisionByZero) else Ok[Failure][i32](a / b)
     };
     v
   }
-  LetIn(name)(bound)(body) => context[Result] {
+  LetIn(name)(bound)(body) => context[Evaluated] {
     value: i32 = evaluate(bindings)(bound);
     result: i32 = evaluate(Cons[Pair[Name][i32]](Pair[Name][i32](name)(value))(bindings))(body);
     result
@@ -311,8 +305,8 @@ let calculate(text: String): unit = match parse[Expr](program)(text) {
   Parsed(e)(_) => {
     print(`{text}\n  parsed:     {e}\n  simplified: {simplify(e)}\n`);
     match evaluate(Nil[Pair[Name][i32]])(e) {
-      Right(value) => print(`  value:      {value}\n`)
-      Left(failure) => print(`  error:      {failure}\n`)
+      Ok(value) => print(`  value:      {value}\n`)
+      Err(failure) => print(`  error:      {failure}\n`)
     }
   }
 }

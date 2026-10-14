@@ -131,6 +131,81 @@ module List {
     Cons(x)(rest) => insert[a](sorted[a](rest))(x)
   }
 
+  // ---- 集計 ----
+
+  rec let sum(xs: List[i32]): i32 = match xs {
+    Nil => 0
+    Cons(x)(rest) => x + sum(rest)
+  }
+
+  rec let product(xs: List[i32]): i32 = match xs {
+    Nil => 1
+    Cons(x)(rest) => x * product(rest)
+  }
+
+  // 条件を満たす要素の数
+  rec let count[a](xs: List[a])(test: a → bool): i32 = match xs {
+    Nil => 0
+    Cons(x)(rest) => (if test(x) then 1 else 0) + count[a](rest)(test)
+  }
+
+  // better(x)(y) が真なら x を選びながら、best から残りを見ていく
+  private rec let pick[a](best: a)(rest: List[a])(better: a → a → bool): a = match rest {
+    Nil => best
+    Cons(x)(more) => pick[a](if better(x)(best) then x else best)(more)(better)
+  }
+
+  let maximum[a](xs: List[a]): Option[a] with Ord[a] = match xs {
+    Nil => None[a]
+    Cons(x)(rest) => Some[a](pick[a](x)(rest)(λl: a. λr: a. l > r))
+  }
+
+  let minimum[a](xs: List[a]): Option[a] with Ord[a] = match xs {
+    Nil => None[a]
+    Cons(x)(rest) => Some[a](pick[a](x)(rest)(λl: a. λr: a. l < r))
+  }
+
+  // ---- 分ける・並べ直す ----
+
+  // 条件を満たす要素と、満たさない要素（どちらも元の順）
+  rec let partition[a](xs: List[a])(test: a → bool): Pair[List[a]][List[a]] = match xs {
+    Nil => Pair[List[a]][List[a]](Nil[a])(Nil[a])
+    Cons(x)(rest) => match partition[a](rest)(test) {
+      Pair(yes)(no) => if test(x) then Pair[List[a]][List[a]](Cons[a](x)(yes))(no) else Pair[List[a]][List[a]](yes)(Cons[a](x)(no))
+    }
+  }
+
+  private rec let insertBy[a][b](sorted: List[a])(x: a)(key: a → b): List[a] with Ord[b] = match sorted {
+    Nil => Cons[a](x)(Nil[a])
+    Cons(y)(rest) => if key(x) < key(y) then Cons[a](x)(sorted) else Cons[a](y)(insertBy[a][b](rest)(x)(key))
+  }
+
+  // key の小さい順に並べる（key が同じ要素の順は保つ）
+  rec let sortBy[a][b](xs: List[a])(key: a → b): List[a] with Ord[b] = match xs {
+    Nil => Nil[a]
+    Cons(x)(rest) => insertBy[a][b](sortBy[a][b](rest)(key))(x)(key)
+  }
+
+  // x が最初に現れる位置（0 から数える）
+  let indexOf[a](xs: List[a])(x: a): Option[i32] with Eq[a] =
+    rec let from(ys: List[a])(index: i32): Option[i32] = match ys {
+      Nil => None[i32]
+      Cons(y)(rest) => if y == x then Some[i32](index) else from(rest)(index + 1)
+    } in from(xs)(0)
+
+  // 重複を除く（最初に現れたものを残す）
+  let unique[a](xs: List[a]): List[a] with Eq[a] =
+    rec let go(seen: List[a])(ys: List[a]): List[a] = match ys {
+      Nil => Nil[a]
+      Cons(y)(rest) => if contains[a](seen)(y) then go(seen)(rest) else Cons[a](y)(go(Cons[a](y)(seen))(rest))
+    } in go(Nil[a])(xs)
+
+  // 要素の間に sep を挟む
+  rec let intersperse[a](xs: List[a])(sep: a): List[a] = match xs {
+    Cons(x)(Cons(y)(rest)) => Cons[a](x)(Cons[a](sep)(intersperse[a](Cons[a](y)(rest))(sep)))
+    _ => xs
+  }
+
   // ---- 作る ----
 
   // low 以上 high 未満の整数

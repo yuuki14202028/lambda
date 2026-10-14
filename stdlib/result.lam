@@ -1,0 +1,43 @@
+// 成功（Ok）か失敗（Err）。関数は module Result にあり、r.getOrElse(0) のように書ける。
+// map / flatMap などは trait（Functor / Monad）のメソッド（インスタンスは std/result_instances）。
+
+import "std/option"
+
+data Result[e][a] = { Ok(a), Err(e) }
+
+module Result {
+  let isOk[e][a](r: Result[e][a]): bool = match r {
+    Ok(_) => true
+    Err(_) => false
+  }
+
+  let isErr[e][a](r: Result[e][a]): bool = match r {
+    Ok(_) => false
+    Err(_) => true
+  }
+
+  // 成功ならその値を、失敗なら fallback を返す
+  let getOrElse[e][a](r: Result[e][a])(fallback: a): a = match r {
+    Ok(x) => x
+    Err(_) => fallback
+  }
+
+  let toOption[e][a](r: Result[e][a]): Option[a] = match r {
+    Ok(x) => Some[a](x)
+    Err(_) => None[a]
+  }
+
+  // 失敗の値を変換する
+  let mapErr[e][a][f](r: Result[e][a])(g: e → f): Result[f][a] = match r {
+    Ok(x) => Ok[f][a](x)
+    Err(err) => Err[f][a](g(err))
+  }
+}
+
+module Option {
+  // 値がなければ、失敗 err にする
+  let okOr[a][e](o: Option[a])(err: e): Result[e][a] = match o {
+    Some(x) => Ok[e][a](x)
+    None => Err[e][a](err)
+  }
+}

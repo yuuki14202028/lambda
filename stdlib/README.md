@@ -11,6 +11,9 @@
 - **pair.lam** - `Pair[a][b]` 型（2つの値の組。`p.first` / `p.second` / `p.swap`）
 - **list.lam** - `List[a]` 型（連結リスト）と module `List`（`xs.length` / `xs.filter(p)` / `xs.sorted` / `xs.head` / `xs.concat(ys)` など。どの関数もリストを最初の引数に取る）
 - **id.lam** - `Id[a]` 型（恒等ファンクター、`Functor` は derive）
+- **result.lam** - `Result[e][a]` 型（`Ok(a)` または `Err(e)`）と module `Result`（`r.getOrElse(d)` / `r.mapErr[f](g)` / `r.toOption` など）
+- **map.lam** - `Map[k][v]` 型（キーの順で並べた AVL 木）と module `Map`（`m.insert(k)(v)` / `m.lookup(k)` / `m.remove(k)` / `m.toList` など）
+- **set.lam** - `Set[a]` 型と module `Set`（`s.insert(x)` / `s.contains(x)` / `s.union(t)` など）
 
 ### 型クラス (Traits)
 
@@ -42,6 +45,7 @@
 - **option_instances.lam** - `Option` の `Functor` / `Foldable` / `Traversable` / `Eq`（derive）, `Applicative`, `Monad`, `Semigroup`, `Monoid`, `Ord`（None が先）
 - **either_instances.lam** - `Either` の `Functor` / `Foldable` / `Traversable` / `Eq` / `Ord`（derive）, `Applicative`
 - **pair_instances.lam** - `Pair` の `Functor` / `Foldable` / `Traversable` / `Eq` / `Ord`（derive）
+- **result_instances.lam** - `Result` の `Functor` / `Foldable` / `Traversable` / `Eq` / `Show`（derive）, `Applicative`, `Monad`
 - **list_instances.lam** - `List` の `Functor` / `Foldable` / `Traversable` / `Eq` / `Ord`（derive）, `Applicative`, `Monad`, `Semigroup`, `Monoid`
 - **eq_instances.lam** - 基本型（`i8`, `i16`, ..., `bool`, `unit` など）の `Eq` インスタンス
 - **ord_instances.lam** - 数値型の `Ord` インスタンス

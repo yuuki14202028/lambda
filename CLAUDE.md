@@ -131,7 +131,7 @@ PatternDesugar は行列から決定木を作り、構成子 1 段の `Match`（
 
 ### その他
 
-- `stdlib/*.lam` — `import std/...` で解決される標準ライブラリ。`StandardLibrary.scala` が `intrinsic[add_i32]` などの名前を組み込み演算へ対応付ける。型ごとの関数は、その型の module に、値を最初の引数に取る形で置く（ドット記法で呼べるように）: `List` / `Option` / `Pair` / `char` / `String` / `i32`。trait のメソッドと同じ名前の関数は module に置かない（ドット記法が曖昧になる）
+- `stdlib/*.lam` — `import std/...` で解決される標準ライブラリ。`StandardLibrary.scala` が `intrinsic[add_i32]` などの名前を組み込み演算へ対応付ける。型ごとの関数は、その型の module に、値を最初の引数に取る形で置く（ドット記法で呼べるように）: `List` / `Option` / `Pair` / `char` / `String` / `i32` / `Result` / `Map` / `Set`（Map は AVL 木で、構成子 `MapEmpty` / `MapNode` は直接使わない）。trait のメソッドと同じ名前の関数は module に置かない（ドット記法が曖昧になる）
 - `runtime/ffi.c` — `foreign` で参照する C 関数の実装。関数値はコードポインタ + 環境ポインタのクロージャ
 - Generator: 束縛はすべてヒープの環境フレームに置き、`[x29, -16]` が現在のフレームを指す。関数本体の末尾位置の呼び出し（`Env.tail`）はフレームを畳んでジャンプにするので、末尾再帰はスタックを消費しない。メモリは `malloc` するだけで解放しない
 - `src/test/lam/*.lam` — EndToEndSuite が実行するプログラム（期待する出力はスイート側に書く）

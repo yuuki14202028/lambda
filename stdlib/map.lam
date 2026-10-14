@@ -1,0 +1,146 @@
+// キーから値への対応。キーの順（Ord）で並べた平衡二分探索木（AVL 木）。
+// 関数は module Map にあり、m.insert(k)(v)、m.lookup(k) のように書ける。値の map / foldLeft は Functor / Foldable のメソッド。
+//
+//   let ages: Map[String][i32] = Map.fromList[String][i32]([Pair[String][i32]("alice")(30)])
+//   ages.insert("bob")(25).lookup("bob")   // Some(25)
+
+import "std/operators"
+import "std/option"
+import "std/pair"
+import "std/list"
+import "std/list_instances"
+import "std/pair_instances"
+import "std/eq"
+import "std/ord"
+import "std/functor"
+import "std/foldable"
+import "std/string"
+import "std/show"
+
+// MapNode(左)(キー)(値)(右)(高さ)。構成子は直接使わず、module Map の関数で扱う
+rec data Map[k][v] = { MapEmpty, MapNode(Map[k][v])(k)(v)(Map[k][v])(i32) }
+
+// 値を変換・畳み込む（キーの順）
+derive Functor[Map]
+derive Foldable[Map]
+
+module Map {
+  let empty[k][v]: Map[k][v] = MapEmpty[k][v]
+
+  let singleton[k][v](key: k)(value: v): Map[k][v] = MapNode[k][v](MapEmpty[k][v])(key)(value)(MapEmpty[k][v])(1)
+
+  let isEmpty[k][v](m: Map[k][v]): bool = match m {
+    MapEmpty => true
+    _ => false
+  }
+
+  rec let size[k][v](m: Map[k][v]): i32 = match m {
+    MapEmpty => 0
+    MapNode(l)(_)(_)(r)(_) => size[k][v](l) + 1 + size[k][v](r)
+  }
+
+  // ---- 平衡 ----
+
+  private let height[k][v](m: Map[k][v]): i32 = match m {
+    MapEmpty => 0
+    MapNode(_)(_)(_)(_)(h) => h
+  }
+
+  private let node[k][v](l: Map[k][v])(key: k)(value: v)(r: Map[k][v]): Map[k][v] =
+    MapNode[k][v](l)(key)(value)(r)(1 + (if l.height > r.height then l.height else r.height))
+
+  // 左右の高さの差が 2 になった木を、回転して差 1 以内に戻す
+  private let balance[k][v](l: Map[k][v])(key: k)(value: v)(r: Map[k][v]): Map[k][v] =
+    if l.height > r.height + 1 then match l {
+      MapNode(ll)(lk)(lv)(lr)(_) if ll.height >= lr.height => node[k][v](ll)(lk)(lv)(node[k][v](lr)(key)(value)(r))
+      MapNode(ll)(lk)(lv)(MapNode(lrl)(lrk)(lrv)(lrr)(_))(_) =>
+        node[k][v](node[k][v](ll)(lk)(lv)(lrl))(lrk)(lrv)(node[k][v](lrr)(key)(value)(r))
+      _ => node[k][v](l)(key)(value)(r)
+    }
+    else if r.height > l.height + 1 then match r {
+      MapNode(rl)(rk)(rv)(rr)(_) if rr.height >= rl.height => node[k][v](node[k][v](l)(key)(value)(rl))(rk)(rv)(rr)
+      MapNode(MapNode(rll)(rlk)(rlv)(rlr)(_))(rk)(rv)(rr)(_) =>
+        node[k][v](node[k][v](l)(key)(value)(rll))(rlk)(rlv)(node[k][v](rlr)(rk)(rv)(rr))
+      _ => node[k][v](l)(key)(value)(r)
+    }
+    else node[k][v](l)(key)(value)(r)
+
+  // ---- 探す・足す・除く ----
+
+  rec let lookup[k][v](m: Map[k][v])(key: k): Option[v] with Ord[k] = match m {
+    MapEmpty => None[v]
+    MapNode(l)(nk)(nv)(r)(_) =>
+      if key < nk then lookup[k][v](l)(key) else if nk < key then lookup[k][v](r)(key) else Some[v](nv)
+  }
+
+  let contains[k][v](m: Map[k][v])(key: k): bool with Ord[k] = Option.isSome[v](lookup[k][v](m)(key))
+
+  // 同じキーがあれば、値を置き換える
+  rec let insert[k][v](m: Map[k][v])(key: k)(value: v): Map[k][v] with Ord[k] = match m {
+    MapEmpty => singleton[k][v](key)(value)
+    MapNode(l)(nk)(nv)(r)(h) =>
+      if key < nk then balance[k][v](insert[k][v](l)(key)(value))(nk)(nv)(r)
+      else if nk < key then balance[k][v](l)(nk)(nv)(insert[k][v](r)(key)(value))
+      else MapNode[k][v](l)(key)(value)(r)(h)
+  }
+
+  // 最小のキーの組と、それを除いた木
+  private rec let removeMin[k][v](l: Map[k][v])(key: k)(value: v)(r: Map[k][v]): Pair[Pair[k][v]][Map[k][v]] = match l {
+    MapEmpty => Pair[Pair[k][v]][Map[k][v]](Pair[k][v](key)(value))(r)
+    MapNode(ll)(lk)(lv)(lr)(_) => match removeMin[k][v](ll)(lk)(lv)(lr) {
+      Pair(found)(rest) => Pair[Pair[k][v]][Map[k][v]](found)(balance[k][v](rest)(key)(value)(r))
+    }
+  }
+
+  // l のキーはすべて r のキーより小さい
+  private let merge[k][v](l: Map[k][v])(r: Map[k][v]): Map[k][v] = match r {
+    MapEmpty => l
+    MapNode(rl)(rk)(rv)(rr)(_) => match removeMin[k][v](rl)(rk)(rv)(rr) {
+      Pair(Pair(mk)(mv))(rest) => balance[k][v](l)(mk)(mv)(rest)
+    }
+  }
+
+  rec let remove[k][v](m: Map[k][v])(key: k): Map[k][v] with Ord[k] = match m {
+    MapEmpty => m
+    MapNode(l)(nk)(nv)(r)(_) =>
+      if key < nk then balance[k][v](remove[k][v](l)(key))(nk)(nv)(r)
+      else if nk < key then balance[k][v](l)(nk)(nv)(remove[k][v](r)(key))
+      else merge[k][v](l)(r)
+  }
+
+  // ---- 取り出す・作る ----
+
+  // キーの順に並べた組
+  let toList[k][v](m: Map[k][v]): List[Pair[k][v]] =
+    rec let go(n: Map[k][v])(acc: List[Pair[k][v]]): List[Pair[k][v]] = match n {
+      MapEmpty => acc
+      MapNode(l)(nk)(nv)(r)(_) => go(l)(Cons[Pair[k][v]](Pair[k][v](nk)(nv))(go(r)(acc)))
+    } in go(m)(Nil[Pair[k][v]])
+
+  let keys[k][v](m: Map[k][v]): List[k] = toList[k][v](m).map[k](Pair.first[k][v])
+  let values[k][v](m: Map[k][v]): List[v] = toList[k][v](m).map[v](Pair.second[k][v])
+
+  // 後ろの組ほど優先する（同じキーなら後ろの値）
+  let fromList[k][v](pairs: List[Pair[k][v]]): Map[k][v] with Ord[k] =
+    pairs.foldLeft[Map[k][v]](empty[k][v])(λm: Map[k][v]. λp: Pair[k][v]. insert[k][v](m)(p.first)(p.second))
+
+  // 2 つを合わせる（同じキーなら other の値）
+  let union[k][v](m: Map[k][v])(other: Map[k][v]): Map[k][v] with Ord[k] =
+    toList[k][v](other).foldLeft[Map[k][v]](m)(λacc: Map[k][v]. λp: Pair[k][v]. insert[k][v](acc)(p.first)(p.second))
+
+  // 値を更新する（キーがなければそのまま）
+  let update[k][v](m: Map[k][v])(key: k)(f: v → v): Map[k][v] with Ord[k] = match lookup[k][v](m)(key) {
+    Some(value) => insert[k][v](m)(key)(f(value))
+    None => m
+  }
+}
+
+// キーと値の組が同じなら等しい（木の形は問わない）
+impl[k][v] Eq[Map[k][v]] with Eq[k], Eq[v] {
+  def eq(x: Map[k][v])(y: Map[k][v]): bool = Map.toList[k][v](x) == Map.toList[k][v](y)
+}
+
+// {1: a, 2: b}
+impl[k][v] Show[Map[k][v]] with Show[k], Show[v] {
+  def show(m: Map[k][v]): String = `\{{m.toList.map[String](λp: Pair[k][v]. `{p.first}: {p.second}`).join(", ")}\}`
+}

@@ -76,6 +76,12 @@ class EndToEndSuite extends munit.FunSuite {
   program("src/test/lam/traverse.lam", "6\n-1\n7\n-1\n6\n-7\n4\n100\n-1\n")
   program("src/test/lam/operators.lam", "14\n5\n26\n4\n321\n512\n18\n321\n6\n1\n12\n24\n")
   program("src/test/lam/dot_notation.lam", "3\n1\n60\n1\n6\n6\n9\n3\n")
+  program("src/test/lam/stdlib_extra.lam",
+    "6 24 2\nSome(9) None Some(2)\n([3, 4, 5], [1, 2])\n[a, bb, ccc] Some(2) [1, 2, 3] [1, 0, 2, 0, 3]\n" +
+      "[a|b||c] [hi] true Some(3) a+b+c\nababab HELLO hello cba true\n" +
+      "{a: 1, b: 2, c: 3} 3 Some(2) None true\n{b: 2, c: 3, d: 4} {a: 10, b: 20, c: 30} [a, b, c] [1, 2, 3] {a: 101, b: 2, c: 3}\n" +
+      "200 8 Some(22500) 100\n{1, 2, 3} 3 true {2, 3, 5} {1, 2, 3, 9} {2, 3} {2, 3}\n" +
+      "Ok(2) Err(boom) Ok(6) 0 true None Err(4)\nOk(2) Err(none)\n")
   program("src/test/lam/derive_values.lam",
     "Green\ntrue false true false true\nMkStudent(name = alice, math = 90)\ntrue false true true\n" +
       "[MkStudent(name = alice, math = 90), MkStudent(name = bob, math = 70)]\nNode(Leaf, 1, Node(Leaf, 2, Leaf))\n" +
