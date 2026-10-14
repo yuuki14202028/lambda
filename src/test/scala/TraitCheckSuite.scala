@@ -158,4 +158,19 @@ class TraitCheckSuite extends munit.FunSuite {
       case Left(err) => fail(err)
     }
   }
+
+  test("impl の型パラメータが trait やメソッドの型パラメータと同じ名前でも、メソッドの型を正しく求める") {
+    val src =
+      """trait Functor[f: * → *] { def map[a][b](x: f[a])(g: a → b): f[b] }
+        |data Pair[a][b] = { MkPair(a)(b) }
+        |impl[a] Functor[Pair[a]] { def map[c][d](x: Pair[a][c])(g: c → d): Pair[a][d] = match x { MkPair(p)(q) => MkPair[a][d](p)(g(q)) } }
+        |trait Conv[a][b] { def conv(x: a): b }
+        |impl[b][a] Conv[Pair[a][b]][Pair[b][a]] { def conv(x: Pair[a][b]): Pair[b][a] = match x { MkPair(p)(q) => MkPair[b][a](q)(p) } }
+        |trait Semigroup[a] { def append(x: a)(y: a): a }
+        |data Box[a] = { MkBox(a) }
+        |impl[a] Semigroup[Box[a]] { def append(x: Box[a])(y: Box[a]): Box[a] = x }
+        |let main(): i32 = 0
+        |""".stripMargin
+    assert(church(src).isRight, clue(church(src)))
+  }
 }

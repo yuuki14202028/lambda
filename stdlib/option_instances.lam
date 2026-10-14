@@ -32,15 +32,15 @@ impl Monad[Option] {
     }
 }
 
-impl[t] Semigroup[Option[t]] {
-  def append(x: Option[t])(y: Option[t]): Option[t] = match x {
+impl[a] Semigroup[Option[a]] {
+  def append(x: Option[a])(y: Option[a]): Option[a] = match x {
     Some(_) => x
     None => y
   }
 }
 
-impl[t] Monoid[Option[t]] {
-  def empty: Option[t] = None[t]
+impl[a] Monoid[Option[a]] {
+  def empty: Option[a] = None[a]
 }
 
 derive Eq[Option]

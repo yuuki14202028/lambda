@@ -27,12 +27,12 @@ impl Monad[List] {
   def flatMap[a][b](xs: List[a])(f: a → List[b]): List[b] = List.flatten[b](map[List][a][List[b]](xs)(f))
 }
 
-impl[t] Semigroup[List[t]] {
-  def append(xs: List[t])(ys: List[t]): List[t] = List.concat[t](xs)(ys)
+impl[a] Semigroup[List[a]] {
+  def append(xs: List[a])(ys: List[a]): List[a] = List.concat[a](xs)(ys)
 }
 
-impl[t] Monoid[List[t]] {
-  def empty: List[t] = Nil[t]
+impl[a] Monoid[List[a]] {
+  def empty: List[a] = Nil[a]
 }
 
 // 要素を先頭から順に比べる（辞書順。Nil が Cons より前なので、短いほうが前）
