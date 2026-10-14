@@ -245,9 +245,12 @@ enum CompileError {
   case DeriveTargetNotData(target: TypeVariable)
   case DeriveTraitSigMismatch(traitName: TypeVariable, method: Variable, expected: TypeRec[Type], actual: TypeRec[Type])
   case DeriveKindMismatch(traitName: TypeVariable, target: TypeVariable)
+  case DeriveParamKind(traitName: TypeVariable, target: TypeVariable, param: TypeVariable, kind: Kind)
   case DeriveNegativeOccurrence(traitName: TypeVariable, target: TypeVariable, constructor: Variable, field: TypeRec[Type])
   case DeriveUnsupportedField(traitName: TypeVariable, target: TypeVariable, constructor: Variable, field: TypeRec[Type])
   case DeriveFieldInstanceMissing(traitName: TypeVariable, target: TypeVariable, constructor: Variable, head: String)
+  // Eq / Ord / Show の導出で、フィールドの型のインスタンス required[field] が解決できない
+  case DeriveFieldNoInstance(traitName: TypeVariable, target: TypeVariable, constructor: Variable, required: TypeVariable, field: TypeRec[Type])
 
   // ---- 制約の解決（Resolver） ----
   case NoInstance(name: TypeVariable, args: Seq[TypeRec[Type]])
@@ -462,12 +465,14 @@ enum CompileError {
       s"${impl.shown}: method ${method.name} uses its own instance, so it must be a function (otherwise the instance is read before it is initialized)"
 
     case DeriveUnsupportedTrait(traitName) =>
-      s"derive: trait ${traitName.name} is not derivable (supported: Functor, Foldable with canonical signatures)"
+      s"derive: trait ${traitName.name} is not derivable (supported: Functor, Foldable, Traversable, Eq, Ord, Show with canonical signatures)"
     case DeriveTargetNotData(target) => s"derive: ${target.name} is not a data type"
     case DeriveTraitSigMismatch(traitName, method, expected, actual) =>
       s"derive ${traitName.name}: method ${method.name} must have signature ${expected.show}, actual ${actual.show}"
     case DeriveKindMismatch(traitName, target) =>
       s"derive ${traitName.name}[${target.name}]: data type must have a final type parameter of kind *"
+    case DeriveParamKind(traitName, target, param, kind) =>
+      s"derive ${traitName.name}[${target.name}]: type parameter ${param.name} must have kind *, actual ${kind.show}"
     case DeriveNegativeOccurrence(traitName, target, constructor, field) =>
       s"derive ${traitName.name}[${target.name}]: type parameter occurs in a negative position in ${constructor.name} field ${field.show}"
     case DeriveUnsupportedField(traitName, target, constructor, field) =>
@@ -475,6 +480,8 @@ enum CompileError {
     case DeriveFieldInstanceMissing(traitName, target, constructor, head) =>
       s"derive ${traitName.name}[${target.name}]: ${constructor.name} field requires instance ${traitName.name}[$head], which is not defined at this point"
 
+    case DeriveFieldNoInstance(traitName, target, constructor, required, field) =>
+      s"derive ${traitName.name}[${target.name}]: ${constructor.name} field requires instance ${required.name}[${field.show}]"
     case NoInstance(name, args) => s"No instance for ${constraintShown(name, args)}"
     case ResolutionDepthExceeded(name, args) =>
       s"Instance resolution depth limit exceeded while resolving ${constraintShown(name, args)} (possible cycle)"

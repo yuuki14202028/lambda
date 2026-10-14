@@ -135,8 +135,8 @@ class DeriveSuite extends munit.FunSuite {
   // ---- エラー ----
 
   test("エラー: 未対応の trait は導出できない") {
-    val src = "trait Show[a] {\n  def show(x: a): i32\n}\n" + optionData +
-      "derive Show[Option]\n" + mainDecl
+    val src = "trait Pretty[a] {\n  def pretty(x: a): i32\n}\n" + optionData +
+      "derive Pretty[Option]\n" + mainDecl
     assertLeftContains(validate(src), "not derivable")
   }
 
@@ -286,5 +286,47 @@ class DeriveSuite extends munit.FunSuite {
         |}
         |""".stripMargin + mainDecl
     assertRight(church(src))
+  }
+
+  // ---- Eq / Ord / Show ----
+
+  private val valueTraits =
+    """trait Eq[a] { def eq(x: a)(y: a): bool }
+      |trait Ord[a] with Eq[a] { def lt(x: a)(y: a): bool }
+      |trait Show[a] { def show(x: a): foreign.C.String }
+      |impl Eq[i32] { def eq(x: i32)(y: i32): bool = intrinsic[eq_i32](x)(y) }
+      |impl Ord[i32] { def lt(x: i32)(y: i32): bool = intrinsic[lt_i32](x)(y) }
+      |impl Show[i32] { def show = foreign[i32 → foreign.C.String] int_to_string }
+      |""".stripMargin
+
+  test("derive Eq / Ord / Show: 型パラメータごとに同じ trait の文脈を持つインスタンスになる") {
+    val src = valueTraits + listData + "derive Eq[List]\nderive Ord[List]\nderive Show[List]\n" +
+      "let same: bool = eq[List[i32]](Nil[i32])(Nil[i32])\n" + mainDecl
+    val typed = validate(src).fold(fail(_), identity)
+    val env = typed.extract match { case ProgramAnn(e) => e }
+    val inst = env.instances(instanceKey(TypeVariable("Eq"), Seq("List")))
+    assertEquals(inst.context.map(showTypeConstraint), Seq("Eq[a]"))
+    assertRight(church(src))
+  }
+
+  test("derive Eq / Ord / Show: 型パラメータのない data・フィールドのない構成子") {
+    assertRight(church(valueTraits + "data Color = { Red, Green }\nderive Eq[Color]\nderive Ord[Color]\nderive Show[Color]\n" + mainDecl))
+  }
+
+  test("derive Ord: スーパークラスの Eq が先に要る") {
+    assertLeftContains(validate(valueTraits + "data Color = { Red, Green }\nderive Ord[Color]\n" + mainDecl), "No instance for Eq[Color]")
+  }
+
+  test("derive Eq: インスタンスのないフィールドはエラー") {
+    assertLeftContains(validate(valueTraits + "data F = { MkF(i32 → i32) }\nderive Eq[F]\n" + mainDecl), "field requires instance Eq[i32 → i32]")
+  }
+
+  test("derive Eq: 型パラメータはカインド * に限る") {
+    assertLeftContains(validate(valueTraits + "data Apply[f: * → *] = { MkApply(f[i32]) }\nderive Eq[Apply]\n" + mainDecl), "must have kind *")
+  }
+
+  test("derive Show: 正準シグネチャと違えばエラー") {
+    val src = "trait Show[a] { def show(x: a): i32 }\ndata Color = { Red }\nderive Show[Color]\n" + mainDecl
+    assertLeftContains(validate(src), "must have signature")
   }
 }

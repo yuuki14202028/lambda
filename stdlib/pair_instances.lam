@@ -11,14 +11,5 @@ derive Foldable[Pair]
 derive Traversable[Pair]
 
 // 1 つ目を先に比べ、等しければ 2 つ目を比べる
-impl[a][b] Eq[Pair[a][b]] with Eq[a], Eq[b] {
-  def eq(x: Pair[a][b])(y: Pair[a][b]): bool = match Pair[Pair[a][b]][Pair[a][b]](x)(y) {
-    Pair(Pair(a1)(b1))(Pair(a2)(b2)) => eq[a](a1)(a2) && eq[b](b1)(b2)
-  }
-}
-
-impl[a][b] Ord[Pair[a][b]] with Ord[a], Ord[b] {
-  def lt(x: Pair[a][b])(y: Pair[a][b]): bool = match Pair[Pair[a][b]][Pair[a][b]](x)(y) {
-    Pair(Pair(a1)(b1))(Pair(a2)(b2)) => lt[a](a1)(a2) || (eq[a](a1)(a2) && lt[b](b1)(b2))
-  }
-}
+derive Eq[Pair]
+derive Ord[Pair]

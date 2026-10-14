@@ -43,15 +43,9 @@ impl[t] Monoid[Option[t]] {
   def empty: Option[t] = None[t]
 }
 
-// 中身が等しければ等しい。None は Some より前
-impl[a] Eq[Option[a]] with Eq[a] {
-  def eq(x: Option[a])(y: Option[a]): bool = match Pair[Option[a]][Option[a]](x)(y) {
-    Pair(Some(l))(Some(r)) => eq[a](l)(r)
-    Pair(None)(None) => true
-    _ => false
-  }
-}
+derive Eq[Option]
 
+// None は Some より前（構成子の宣言順と逆なので、導出せずに書く）
 impl[a] Ord[Option[a]] with Ord[a] {
   def lt(x: Option[a])(y: Option[a]): bool = match Pair[Option[a]][Option[a]](x)(y) {
     Pair(Some(l))(Some(r)) => lt[a](l)(r)

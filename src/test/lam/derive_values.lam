@@ -1,0 +1,56 @@
+// derive Eq / Ord / Show: 比較と表示を、データ型の構造から作る。
+// 期待する出力は EndToEndSuite に書いてある。
+
+import "std/prelude"
+
+data Color = { Red, Green, Blue }
+derive Eq[Color]
+derive Ord[Color]
+derive Show[Color]
+
+// 名前付きのフィールドは、表示に名前が出る
+data Student = { MkStudent(name: String)(math: i32) }
+derive Eq[Student]
+derive Ord[Student]
+derive Show[Student]
+
+// 自身を含むデータ型も、そのまま導出できる（型パラメータには同じ trait の文脈が付く）
+rec data Tree[a] = { Leaf, Node(Tree[a])(a)(Tree[a]) }
+derive Eq[Tree]
+derive Ord[Tree]
+derive Show[Tree]
+
+// 他の型のインスタンスを使うフィールド
+data Wrap[a] = { MkWrap(List[a])(Option[a]) }
+derive Eq[Wrap]
+derive Show[Wrap]
+
+// 互いに参照するデータ型は、rec の組で導出する
+rec {
+  data Even = { Zero, E(Odd) }
+  data Odd = { O(Even) }
+}
+rec {
+  derive Eq[Even]
+  derive Eq[Odd]
+}
+
+let leaf: Tree[i32] = Leaf[i32]
+let node(l: Tree[i32])(x: i32)(r: Tree[i32]): Tree[i32] = Node[i32](l)(x)(r)
+
+let main(): i32 = {
+  display[Color](Green);
+  println(`{Red == Red} {Red == Blue} {Red < Blue} {Blue < Green} {Green != Blue}`);
+  let alice: Student = MkStudent(name = "alice", math = 90) in
+  let bob: Student = MkStudent(name = "bob", math = 70) in {
+    display[Student](alice);
+    println(`{alice == alice} {alice == bob} {alice < bob} {MkStudent("alice")(80) < alice}`);
+    display[List[Student]](Cons[Student](bob)(Cons[Student](alice)(Nil[Student])).sorted)
+  };
+  display[Tree[i32]](node(leaf)(1)(node(leaf)(2)(leaf)));
+  println(`{node(leaf)(1)(leaf) == node(leaf)(1)(leaf)} {node(leaf)(1)(leaf) == node(leaf)(2)(leaf)} {leaf < node(leaf)(1)(leaf)} {node(leaf)(2)(leaf) < node(leaf)(1)(leaf)}`);
+  display[Wrap[i32]](MkWrap[i32](Cons[i32](1)(Cons[i32](2)(Nil[i32])))(Some[i32](3)));
+  println(`{MkWrap[i32](Nil[i32])(None[i32]) == MkWrap[i32](Nil[i32])(None[i32])}`);
+  println(`{E(O(Zero)) == E(O(Zero))} {E(O(Zero)) == Zero}`);
+  0
+}

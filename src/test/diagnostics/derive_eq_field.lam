@@ -1,0 +1,4 @@
+trait Eq[a] { def eq(x: a)(y: a): bool }
+data Handler = { MkHandler(i32 → i32) }
+derive Eq[Handler]
+let main(): i32 = 0

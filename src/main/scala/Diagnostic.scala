@@ -585,7 +585,7 @@ object Diagnostic {
       // ---- derive ----
       case DeriveUnsupportedTrait(traitName) => Description(
         s"trait ${name(traitName.name)} cannot be derived", "this derive",
-        notes = Seq("`derive` supports `Functor`, `Foldable` and `Traversable` with their standard signatures (see `stdlib/`)"))
+        notes = Seq("`derive` supports `Functor`, `Foldable`, `Traversable`, `Eq`, `Ord` and `Show` with their standard signatures (see `stdlib/`)"))
       case DeriveTargetNotData(target) => Description(s"${name(target.name)} is not a data type", "this derive")
       case DeriveTraitSigMismatch(traitName, method, expected, actual) =>
         Description(s"`derive ${traitName.name}` needs the standard signature of ${name(method.name)}", "this derive",
@@ -593,6 +593,10 @@ object Diagnostic {
       case DeriveKindMismatch(traitName, target) => Description(
         s"${name(target.name)} has no last type parameter to derive `${traitName.name}` over", "this derive",
         notes = Seq("the instance is derived over the last type parameter, which must have kind `*`"))
+      case DeriveParamKind(traitName, target, param, k) => Description(
+        s"cannot derive `${traitName.name}` for ${name(target.name)}", "this derive",
+        notes = Seq(s"the type parameter ${name(param.name)} has kind ${kind(k)}; `derive ${traitName.name}` needs `${traitName.name}[${param.name}]` for every type parameter, so they must have kind `*`"),
+        helps = Seq("write the `impl` by hand"))
       case DeriveNegativeOccurrence(traitName, target, constructor, field) => Description(
         s"cannot derive `${traitName.name}` for ${name(target.name)}", "this derive",
         notes = Seq(s"in the constructor ${name(constructor.name)}, the type parameter appears as a function argument in the field ${ty(field)}",
@@ -605,6 +609,10 @@ object Diagnostic {
         s"`derive ${traitName.name}[${target.name}]` needs an instance for ${name(head)}", "this derive",
         notes = Seq(s"the constructor ${name(constructor.name)} has a field built with ${name(head)}, and `${traitName.name}[$head]` is not declared before this point"),
         helps = Seq(s"declare `derive ${traitName.name}[$head]` first; if the two types refer to each other, put both derives in one `rec { … }`"))
+      case DeriveFieldNoInstance(traitName, target, constructor, required, field) => Description(
+        s"`derive ${traitName.name}[${target.name}]` needs `${required.name}[${field.show}]`", "this derive",
+        notes = Seq(s"the constructor ${name(constructor.name)} has a field of type ${ty(field)}, and the derived instance compares or shows each field with `${required.name}`"),
+        helps = Seq(s"declare an instance `${required.name}[…]` for the field's type before this derive (for a data type, `derive ${required.name}[…]`; if the types refer to each other, put the derives in one `rec { … }`), or write the `impl` by hand"))
 
       // ---- 制約の解決 ----
       case NoInstance(traitName, args) => Description(

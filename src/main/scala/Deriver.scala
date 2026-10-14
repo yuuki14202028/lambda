@@ -8,14 +8,34 @@ import cats.syntax.all.*
  * 合成（desugar）は TAnalyser の後・TraitEncoder の前のフェーズとして走り、TopDerive を
  * 手書き impl と同じ形の TopImpl へ置き換える。以降のフェーズは derive の存在を知らない。
  *
- * 導出対象は構造から一意に決まる trait（Functor / Foldable）に限る。trait は名前ではなく
- * 正準シグネチャとの α 同値で照合するため、同名の独自 trait に対して不正なコードを合成しない。
+ * 導出対象は構造から一意に決まる trait に限る。
+ *  - 最後の型パラメータについての Functor / Foldable / Traversable（インスタンスは D[p̄] に対するもの）
+ *  - 値どうしの比較と表示 Eq / Ord / Show（インスタンスは D[ā] に対するもので、型パラメータごとに同じ trait を文脈に持つ）。
+ *    Eq は構造が等しいか、Ord は構成子の宣言順、同じ構成子ならフィールドの辞書順、
+ *    Show は C(x = …, …)（名前のないフィールドは値だけ）
+ * trait は名前で選び、正準シグネチャとの α 同値で照合するため、同名の独自 trait に対して不正なコードを合成しない。
  */
 object Deriver {
 
   private def invariant(msg: String): Nothing = sys.error(s"Compiler invariant violation: $msg")
 
-  private enum Rule { case FunctorRule, FoldableRule, TraversableRule }
+  private enum Rule {
+    case FunctorRule, FoldableRule, TraversableRule, EqRule, OrdRule, ShowRule
+
+    // 値どうしの比較・表示（trait のパラメータのカインドは *、インスタンスは型パラメータごとの文脈を持つ）
+    def firstOrder: Boolean = this match {
+      case EqRule | OrdRule | ShowRule => true
+      case _ => false
+    }
+  }
+
+  /** Eq / Ord / Show の導出で、フィールド 1 つをどう扱うか。
+   *  recursive は D[ā] そのもの（導出するメソッドの中の再帰関数で処理する）。
+   *  evidence は trait[フィールドの型] の根拠（recursive なら None）、eqEvidence は Ord が等しさを調べるための Eq[フィールドの型] の根拠 */
+  private final case class FieldCompare(recursive: Boolean, evidence: Option[Evidence[TypeRec]], eqEvidence: Option[Evidence[TypeRec]])
+
+  // Eq / Ord / Show の導出が使う trait のメソッド（method は導出する trait の、eq は Ord のスーパークラス Eq の）
+  private final case class Methods(method: Variable, eq: Option[Variable])
 
   /** フィールド型の分類。検査と合成でコード形状を共有する。
    *  Nested の container / inner は導出パラメータ置換前の形なので、合成時は
@@ -34,7 +54,9 @@ object Deriver {
       dataDef: DataDef,
       fieldPlans: Seq[Seq[FieldPlan]],
       inst: InstanceDef,
-      superEvidence: Seq[Evidence[TypeRec]]
+      superEvidence: Seq[Evidence[TypeRec]],
+      compares: Seq[Seq[FieldCompare]] = Seq.empty,
+      methods: Option[Methods] = None
   )
 
   private val functorMethod = Variable("map")
@@ -87,14 +109,43 @@ object Deriver {
     case "Functor" => Some(Rule.FunctorRule)
     case "Foldable" => Some(Rule.FoldableRule)
     case "Traversable" => Some(Rule.TraversableRule)
+    case "Eq" => Some(Rule.EqRule)
+    case "Ord" => Some(Rule.OrdRule)
+    case "Show" => Some(Rule.ShowRule)
     case _ => None
   }
+
+  // Eq / Ord / Show の必須メソッドの短い名前と正準シグネチャ（a は trait のパラメータ）
+  private def firstOrderSig(rule: Rule, a: TypeVariable): (String, TypeRec[Type]) = {
+    val aT = typeVarT(a)
+    rule match {
+      case Rule.EqRule => "eq" -> arrowT(aT, arrowT(aT, boolTypeT))
+      case Rule.OrdRule => "lt" -> arrowT(aT, arrowT(aT, boolTypeT))
+      case _ => "show" -> arrowT(aT, stringTypeT)
+    }
+  }
+
+  private def shortName(v: Variable): String = v.name.substring(v.name.lastIndexOf('.') + 1)
+
+  // trait の必須メソッドが、規則の正準シグネチャのものただ 1 つであることを確かめ、その（完全な）名前を返す
+  private def firstOrderMethod(rule: Rule, traitName: TypeVariable, traitDef: TraitDef): EitherS[Variable] = for {
+    _ <- Either.cond(traitDef.param.map(_._2) == Seq(Kind.Star), (), CompileError.DeriveUnsupportedTrait(traitName))
+    (expectedName, expected) = firstOrderSig(rule, traitDef.param.head._1)
+    method <- traitDef.required match {
+      case Seq((name, _)) if shortName(name) == expectedName => Right(name)
+      case _ => Left(CompileError.DeriveUnsupportedTrait(traitName))
+    }
+    actual = traitDef.required.head._2
+    _ <- Either.cond(Equivalence.alpha(expected, actual), (), CompileError.DeriveTraitSigMismatch(traitName, method, expected, actual))
+  } yield method
 
   // ---- 検査（TAnalyser から宣言単位で呼ばれる） ----
 
   /** derive が登録するインスタンス。フィールドの検査をせずに決まるので、rec の組では
    * 全員のインスタンスを先に求めて互いに見えるようにしてから、各 derive を check する */
-  def instanceOf(traitName: TypeVariable, target: TypeVariable, env: Env): EitherS[InstanceDef] = for {
+  def instanceOf(traitName: TypeVariable, target: TypeVariable, env: Env): EitherS[InstanceDef] =
+    if (ruleFor(traitName).exists(_.firstOrder)) firstOrderInstance(traitName, target, env)
+    else for {
     dataDef <- env.dataTypes.get(target).filter(_ => !env.traits.contains(target))
       .toRight(CompileError.DeriveTargetNotData(target))
     _ <- Either.cond(dataDef.params.nonEmpty, (), CompileError.DeriveKindMismatch(traitName, target))
@@ -103,6 +154,21 @@ object Deriver {
     val targets = Seq(applyTypeConstructor(target, prefix.map { case (v, _) => typeVarT(v) }))
     InstanceDef(traitName, targets, Seq.empty, instanceDictionaryName(traitName, Seq(target.name)), prefix)
   }
+
+  // Eq / Ord / Show: impl[ā] C[D[ā]] with C[a₁], …, C[aₙ]
+  private def firstOrderInstance(traitName: TypeVariable, target: TypeVariable, env: Env): EitherS[InstanceDef] = for {
+    dataDef <- env.dataTypes.get(target).filter(_ => !env.traits.contains(target))
+      .toRight(CompileError.DeriveTargetNotData(target))
+    _ <- dataDef.params.traverse_ { case (param, kind) =>
+      Either.cond(kind == Kind.Star, (), CompileError.DeriveParamKind(traitName, target, param, kind))
+    }
+  } yield InstanceDef(
+    traitName,
+    Seq(applyTypeConstructor(target, dataDef.paramVars.map(typeVarT))),
+    dataDef.paramVars.map(p => TypeConstraint(traitName, Seq(typeVarT(p)))),
+    instanceDictionaryName(traitName, Seq(target.name)),
+    dataDef.params
+  )
 
   /** supers は、スーパークラスの解決に使えるインスタンスの Env。導出したインスタンスは文脈を持たず辞書がすぐ作られるので、
    * rec の組の中では、スーパークラスのインスタンスは先に宣言されたものに限る（フィールドの検査には組の全員を使う）。 */
@@ -116,7 +182,46 @@ object Deriver {
 
   private def plan(traitName: TypeVariable, target: TypeVariable, env: Env): EitherS[Plan] = plan(traitName, target, env, env)
 
-  private def plan(traitName: TypeVariable, target: TypeVariable, env: Env, supers: Env): EitherS[Plan] = for {
+  private def plan(traitName: TypeVariable, target: TypeVariable, env: Env, supers: Env): EitherS[Plan] =
+    ruleFor(traitName).filter(_.firstOrder) match {
+      case Some(rule) => firstOrderPlan(rule, traitName, target, env, supers)
+      case None => higherKindedPlan(traitName, target, env, supers)
+    }
+
+  private def firstOrderPlan(rule: Rule, traitName: TypeVariable, target: TypeVariable, env: Env, supers: Env): EitherS[Plan] = for {
+    traitDef <- env.traits.get(traitName).toRight(CompileError.UndefinedTrait(traitName, None))
+    method <- firstOrderMethod(rule, traitName, traitDef)
+    // Ord はフィールドが等しいかも調べるので、スーパークラスの Eq のメソッドを使う
+    eq <- if (rule != Rule.OrdRule) Right(None) else
+      traitDef.supers.collectFirst { case c if ruleFor(c.name).contains(Rule.EqRule) && env.traits.contains(c.name) => c.name } match {
+        case Some(eqTrait) => firstOrderMethod(Rule.EqRule, eqTrait, env.traits(eqTrait)).map(m => Some(eqTrait -> m))
+        case None => Left(CompileError.DeriveUnsupportedTrait(traitName))
+      }
+    dataDef <- env.dataTypes.get(target).filter(_ => !env.traits.contains(target))
+      .toRight(CompileError.DeriveTargetNotData(target))
+    inst <- firstOrderInstance(traitName, target, env)
+    superEvidence <- Resolver.superConstraints(traitDef, inst.targets).traverse(Resolver.resolve)
+      .run(supers.withTypeVars(inst.params).withGivens(inst.context))
+      .left.map(CompileError.RequiredBy(_, showTypeConstraint(TypeConstraint(traitName, inst.targets)),
+        s"trait ${traitName.name}${traitDef.supers.map(showTypeConstraint).mkString(" with ", ", ", "")}"))
+    // フィールドのインスタンスは、型パラメータの文脈の下で解決する
+    fieldEnv = env.withTypeVars(inst.params).withGivens(inst.context)
+    self = inst.targets.head
+    compares <- dataDef.constructors.toList.traverse { c =>
+      c.fields.toList.traverse { field =>
+        def resolve(name: TypeVariable): EitherS[Evidence[TypeRec]] =
+          Resolver.resolve(TypeConstraint(name, Seq(field))).run(fieldEnv)
+            .left.map(_ => CompileError.DeriveFieldNoInstance(traitName, target, c.name, name, field))
+        val recursive = Equivalence.alpha(field, self)
+        for {
+          evidence <- if (recursive) Right(None) else resolve(traitName).map(Some(_))
+          eqEvidence <- eq.traverse { case (eqTrait, _) => resolve(eqTrait) }
+        } yield FieldCompare(recursive, evidence, eqEvidence)
+      }
+    }
+  } yield Plan(rule, target, dataDef, Seq.empty, inst, superEvidence, compares, Some(Methods(method, eq.map(_._2))))
+
+  private def higherKindedPlan(traitName: TypeVariable, target: TypeVariable, env: Env, supers: Env): EitherS[Plan] = for {
     traitDef <- env.traits.get(traitName).toRight(CompileError.UndefinedTrait(traitName, None))
     dataDef <- env.dataTypes.get(target).filter(_ => !env.traits.contains(target))
       .toRight(CompileError.DeriveTargetNotData(target))
@@ -225,6 +330,13 @@ object Deriver {
     val p = plan(traitName, target, env)
       .fold(err => invariant(s"derive ${traitName.name}[${target.name}] failed after validation: ${err.render}"), identity)
     val methods = p.rule match {
+      case Rule.EqRule | Rule.OrdRule | Rule.ShowRule =>
+        val names = p.methods.getOrElse(invariant(s"derive ${traitName.name}: the plan has no methods"))
+        Seq(MethodImpl[TypeRec](names.method, None, p.rule match {
+          case Rule.EqRule => equalityBody(p, env, names)
+          case Rule.OrdRule => orderBody(p, env, names)
+          case _ => showBody(p, env, names)
+        }))
       case Rule.FunctorRule => Seq(MethodImpl[TypeRec](functorMethod, None, mapBody(p, env)))
       case Rule.TraversableRule => Seq(MethodImpl[TypeRec](traverseMethod, None, traverseBody(p, env)))
       case Rule.FoldableRule => Seq(
@@ -232,7 +344,7 @@ object Deriver {
         MethodImpl[TypeRec](foldLeftMethod, None, foldBody(p, env, rightward = false))
       )
     }
-    topImplT(traitName, p.inst.params, p.inst.targets, Seq.empty, methods, p.superEvidence)
+    topImplT(traitName, p.inst.params, p.inst.targets, p.inst.context, methods, p.superEvidence)
   }
 
   // ---- 型付き AST 構築ヘルパー ----
@@ -446,5 +558,102 @@ object Deriver {
     val goValue = mkAbs(dVar, dAlpha, mkAbs(accVar, bT, matchExprT(bT, varrType(dVar, dAlpha), cases)))
     val letR = letRecT(goVar, bT, goType, goValue, mkApp(mkApp(goRef, varrType(vVar, dAlpha)), varrType(zVar, bT)))
     mkTyAbs(s.alpha, Kind.Star, mkTyAbs(s.beta, Kind.Star, mkAbs(vVar, dAlpha, mkAbs(zVar, bT, mkAbs(fVar, fType, letR)))))
+  }
+
+  // ---- Eq / Ord / Show ----
+
+  // trait のメソッド method を型 t で具体化し、根拠 evidence で制約を満たしたもの
+  private def methodAt(env: Env, method: Variable, t: TypeRec[Type], evidence: Evidence[TypeRec]): TypeRec[Expr] = {
+    val applied = mkTyApp(valueRef(env, method), t)
+    val (_, to) = destructInstArrow(typeOf(applied))
+      .getOrElse(invariant(s"derive: ${method.name} is not a trait method: ${typeOf(applied).show}"))
+    instAppT(to, applied, evidence)
+  }
+
+  private def evidenceOf(field: Option[Evidence[TypeRec]]): Evidence[TypeRec] =
+    field.getOrElse(invariant("derive: a non-recursive field has no evidence"))
+
+  /** 2 つの値を比べる関数 λx. λy. letRec go = λl. λr. match l { Kᵢ(x̄) → match r { Kⱼ(ȳ) → body(i, j, x̄, ȳ) } } in go(x)(y)。
+   *  body はフィールドごとの比較（FieldCompare）と、変数として参照したフィールドの値を受け取る */
+  private def comparison(p: Plan)(body: (Variable, Int, Int, Seq[(FieldCompare, TypeRec[Type], TypeRec[Expr], TypeRec[Expr])]) => TypeRec[Expr]): TypeRec[Expr] = {
+    val self = p.inst.targets.head
+    val predicate = arrowT(self, arrowT(self, boolTypeT))
+    val go = Variable("$go")
+    val (l, r, x, y) = (Variable("$l"), Variable("$r"), Variable("$x"), Variable("$y"))
+    val constructors = p.dataDef.constructors.zip(p.compares).zipWithIndex
+    val outer = constructors.map { case ((left, compares), i) =>
+      val xs = left.fields.indices.map(k => Variable(s"$$x_$k"))
+      val inner = constructors.map { case ((right, _), j) =>
+        val ys = right.fields.indices.map(k => Variable(s"$$y_$k"))
+        // 同じ構成子どうし（i == j）のときだけ、フィールドを組にして渡す
+        val fields = if (i != j) Seq.empty else compares.indices.map { k =>
+          (compares(k), left.fields(k), varrType(xs(k), left.fields(k)), varrType(ys(k), right.fields(k)))
+        }
+        MatchCase[TypeRec](right.name, ys, body(go, i, j, fields))
+      }
+      MatchCase[TypeRec](left.name, xs, matchExprT(boolTypeT, varrType(r, self), inner))
+    }
+    val goValue = mkAbs(l, self, mkAbs(r, self, matchExprT(boolTypeT, varrType(l, self), outer)))
+    val start = mkApp(mkApp(varrType(go, predicate), varrType(x, self)), varrType(y, self))
+    mkAbs(x, self, mkAbs(y, self, letRecT(go, boolTypeT, predicate, goValue, start)))
+  }
+
+  private val falseT: TypeRec[Expr] = boolT(false, boolTypeT)
+  private val trueT: TypeRec[Expr] = boolT(true, boolTypeT)
+
+  /** eq: 構成子が同じで、フィールドがすべて等しい */
+  private def equalityBody(p: Plan, env: Env, names: Methods): TypeRec[Expr] = comparison(p) { (go, i, j, fields) =>
+    def equal(field: FieldCompare, t: TypeRec[Type], x: TypeRec[Expr], y: TypeRec[Expr]): TypeRec[Expr] =
+      if (field.recursive) mkApp(mkApp(varrType(go, arrowT(t, arrowT(t, boolTypeT))), x), y)
+      else mkApp(mkApp(methodAt(env, names.method, t, evidenceOf(field.evidence)), x), y)
+    if (i != j) falseT
+    else fields.foldRight(trueT) { case ((field, t, x, y), rest) =>
+      if (rest eq trueT) equal(field, t, x, y) else ifT(boolTypeT, equal(field, t, x, y), rest, falseT)
+    }
+  }
+
+  /** lt: 構成子の宣言順。同じ構成子なら、フィールドを前から比べる（辞書順） */
+  private def orderBody(p: Plan, env: Env, names: Methods): TypeRec[Expr] = comparison(p) { (go, i, j, fields) =>
+    val eqMethod = names.eq.getOrElse(invariant("derive Ord: the plan has no eq method"))
+    def less(field: FieldCompare, t: TypeRec[Type], x: TypeRec[Expr], y: TypeRec[Expr]): TypeRec[Expr] =
+      if (field.recursive) mkApp(mkApp(varrType(go, arrowT(t, arrowT(t, boolTypeT))), x), y)
+      else mkApp(mkApp(methodAt(env, names.method, t, evidenceOf(field.evidence)), x), y)
+    def equal(field: FieldCompare, t: TypeRec[Type], x: TypeRec[Expr], y: TypeRec[Expr]): TypeRec[Expr] =
+      mkApp(mkApp(methodAt(env, eqMethod, t, evidenceOf(field.eqEvidence)), x), y)
+    def lexicographic(rest: Seq[(FieldCompare, TypeRec[Type], TypeRec[Expr], TypeRec[Expr])]): TypeRec[Expr] = rest match {
+      case Seq() => falseT
+      case Seq((field, t, x, y)) => less(field, t, x, y)
+      case (field, t, x, y) +: more => ifT(boolTypeT, less(field, t, x, y), trueT, ifT(boolTypeT, equal(field, t, x, y), lexicographic(more), falseT))
+    }
+    if (i < j) trueT else if (i > j) falseT else lexicographic(fields)
+  }
+
+  /** show: 構成子の名前と、フィールドの表示。名前付きのフィールドは name = 値、名前のないものは値だけ: C(x = 1, 2) */
+  private def showBody(p: Plan, env: Env, names: Methods): TypeRec[Expr] = {
+    val self = p.inst.targets.head
+    val shower = arrowT(self, stringTypeT)
+    val concatType = arrowT(stringTypeT, arrowT(stringTypeT, stringTypeT))
+    def text(value: String): TypeRec[Expr] = stringLitT(value, stringTypeT)
+    def concat(parts: Seq[TypeRec[Expr]]): TypeRec[Expr] =
+      parts.reduceLeft((acc, part) => mkApp(mkApp(foreignT(Variable("concat"), concatType, concatType), acc), part))
+    val (go, v, x) = (Variable("$go"), Variable("$v"), Variable("$x"))
+    val cases = p.dataDef.constructors.zip(p.compares).map { case (constructor, compares) =>
+      val xs = constructor.fields.indices.map(k => Variable(s"$$x_$k"))
+      val label = shortName(constructor.name)
+      val shown = compares.indices.map { k =>
+        val value = varrType(xs(k), constructor.fields(k))
+        val compare = compares(k)
+        val rendered =
+          if (compare.recursive) mkApp(varrType(go, shower), value)
+          else mkApp(methodAt(env, names.method, constructor.fields(k), evidenceOf(compare.evidence)), value)
+        constructor.names(k).fold(Seq(rendered))(field => Seq(text(s"$field = "), rendered))
+      }
+      val body =
+        if (shown.isEmpty) text(label)
+        else concat(text(s"$label(") +: shown.zipWithIndex.flatMap { case (part, k) => if (k == 0) part else text(", ") +: part } :+ text(")"))
+      MatchCase[TypeRec](constructor.name, xs, body)
+    }
+    val goValue = mkAbs(v, self, matchExprT(stringTypeT, varrType(v, self), cases))
+    mkAbs(x, self, letRecT(go, stringTypeT, shower, goValue, mkApp(varrType(go, shower), varrType(x, self))))
   }
 }

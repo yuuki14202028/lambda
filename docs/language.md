@@ -445,6 +445,33 @@ let tree: Rose[i32] = Node[i32](1)(Cons[Rose[i32]](Node[i32](2)(Nil[Rose[i32]]))
 let total: i32 = tree.map[i32](λx: i32. x * 10).foldLeft[i32](0)(λacc: i32. λx: i32. acc + x)
 ```
 
+### 比較と表示の derive
+
+`Eq` / `Ord` / `Show` のインスタンスも `derive` で作れます。作られるのは `impl[ā] C[D[ā]] with C[a₁], …` で、型パラメータごとに同じ trait を文脈に持ちます。
+
+- `Eq`: 構成子が同じで、フィールドがすべて等しいとき等しい。
+- `Ord`: 構成子は宣言した順に小さい。同じ構成子なら、フィールドを前から比べる（辞書順）。スーパークラスの `Eq` を先に宣言しておきます。
+- `Show`: `MkStudent(name = alice, math = 90)` のように、構成子の名前とフィールドを表示する。名前のないフィールドは値だけ（`Node(Leaf, 1, Leaf)`）、フィールドのない構成子は名前だけ。
+
+```lam
+import "std/prelude"
+
+data Student = { MkStudent(name: String)(math: i32) }
+derive Eq[Student]
+derive Ord[Student]
+derive Show[Student]
+
+// 自身を含む型も、そのまま導出できる
+rec data Tree[a] = { Leaf, Node(Tree[a])(a)(Tree[a]) }
+derive Eq[Tree]
+derive Show[Tree]
+
+let sorted: List[Student] = Cons[Student](MkStudent(name = "bob", math = 70))(Cons[Student](MkStudent(name = "alice", math = 90))(Nil[Student])).sorted
+let shown: String = Node[i32](Leaf[i32])(1)(Leaf[i32]).show
+```
+
+フィールドの型にはインスタンスが要ります（関数のフィールドは比べられません）。互いに参照するデータ型は、`rec { derive Eq[A]  derive Eq[B] }` のように組で導出します。
+
 ### 量化された制約
 
 制約そのものを多相にできます。`∀a. Show[a] ⇒ Show[f[a]]` は、「どの `a` についても、`Show[a]` があれば `Show[f[a]]` がある」という要求です。型構成子を引数に取る型のインスタンスに使います。

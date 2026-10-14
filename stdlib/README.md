@@ -37,12 +37,12 @@
 
 ### インスタンス定義
 
-`Functor` / `Foldable` のインスタンスは `derive` による自動導出です。
+`Functor` / `Foldable` / `Traversable` と、構造どおりの `Eq` / `Ord` / `Show` のインスタンスは `derive` による自動導出です。
 
-- **option_instances.lam** - `Option` の `Functor`（derive）, `Foldable`（derive）, `Applicative`, `Monad`, `Semigroup`, `Monoid`
-- **either_instances.lam** - `Either` の `Functor`（derive）, `Applicative`
-- **pair_instances.lam** - `Pair` の `Functor`（derive）, `Foldable`（derive）
-- **list_instances.lam** - `List` の `Functor`（derive）, `Foldable`（derive）, `Traversable`（derive）, `Applicative`, `Monad`, `Semigroup`, `Monoid`, `Eq`, `Ord`
+- **option_instances.lam** - `Option` の `Functor` / `Foldable` / `Traversable` / `Eq`（derive）, `Applicative`, `Monad`, `Semigroup`, `Monoid`, `Ord`（None が先）
+- **either_instances.lam** - `Either` の `Functor` / `Foldable` / `Traversable` / `Eq` / `Ord`（derive）, `Applicative`
+- **pair_instances.lam** - `Pair` の `Functor` / `Foldable` / `Traversable` / `Eq` / `Ord`（derive）
+- **list_instances.lam** - `List` の `Functor` / `Foldable` / `Traversable` / `Eq` / `Ord`（derive）, `Applicative`, `Monad`, `Semigroup`, `Monoid`
 - **eq_instances.lam** - 基本型（`i8`, `i16`, ..., `bool`, `unit` など）の `Eq` インスタンス
 - **ord_instances.lam** - 数値型の `Ord` インスタンス
 - **semigroup_instances.lam** - 基本型の `Semigroup` インスタンス
@@ -87,7 +87,7 @@ derive Foldable[Tree]
 import "std/prelude"
 
 let increment(x: Option[i32]): Option[i32] =
-  map[Option][i32][i32](λn: i32. n + 1)(x)
+  x.map[i32](λn: i32. n + 1)
 
 let divSafe(x: i32)(y: i32): Option[i32] =
   if y == 0 then None[i32] else Some[i32](x / y)
@@ -101,7 +101,7 @@ import "std/prelude"
 let nums(): List[i32] = Cons[i32](1)(Cons[i32](2)(Cons[i32](3)(Nil[i32])))
 
 let total(): i32 =
-  foldLeft[List][i32][i32](λacc: i32. λx: i32. acc + x)(0)(nums())
+  nums().foldLeft[i32](0)(λacc: i32. λx: i32. acc + x)
 ```
 
 ### Context 記法（do 記法）

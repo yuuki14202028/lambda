@@ -40,19 +40,9 @@ impl Show[unit] {
   def show = λu: unit. "()"
 }
 
-impl[a] Show[Option[a]] with Show[a] {
-  def show = λo: Option[a]. match o {
-    Some(x) => `Some({show[a](x)})`
-    None => "None"
-  }
-}
-
-impl[e][a] Show[Either[e][a]] with Show[e], Show[a] {
-  def show = λv: Either[e][a]. match v {
-    Left(err) => `Left({show[e](err)})`
-    Right(x) => `Right({show[a](x)})`
-  }
-}
+// Some(1)、None、Left(e)、Right(x)
+derive Show[Option]
+derive Show[Either]
 
 impl[a][b] Show[Pair[a][b]] with Show[a], Show[b] {
   def show = λp: Pair[a][b]. match p {

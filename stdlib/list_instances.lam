@@ -35,19 +35,6 @@ impl[t] Monoid[List[t]] {
   def empty: List[t] = Nil[t]
 }
 
-// 要素を先頭から順に比べる（辞書順）。短いほうが前
-rec impl[a] Eq[List[a]] with Eq[a] {
-  def eq(xs: List[a])(ys: List[a]): bool = match Pair[List[a]][List[a]](xs)(ys) {
-    Pair(Nil)(Nil) => true
-    Pair(Cons(x)(xt))(Cons(y)(yt)) => eq[a](x)(y) && eq[List[a]](xt)(yt)
-    _ => false
-  }
-}
-
-rec impl[a] Ord[List[a]] with Ord[a] {
-  def lt(xs: List[a])(ys: List[a]): bool = match Pair[List[a]][List[a]](xs)(ys) {
-    Pair(Nil)(Cons(_)(_)) => true
-    Pair(Cons(x)(xt))(Cons(y)(yt)) => lt[a](x)(y) || (eq[a](x)(y) && lt[List[a]](xt)(yt))
-    _ => false
-  }
-}
+// 要素を先頭から順に比べる（辞書順。Nil が Cons より前なので、短いほうが前）
+derive Eq[List]
+derive Ord[List]

@@ -34,8 +34,9 @@ ParserAST (cats-parse) → ImportResolver → TAnalyser (型検査)
   → Generator (ARM64 アセンブリ生成)
 ```
 
-制約・スーパークラスは宣言末尾の `with C[a]` 節（let・trait メソッド・impl メソッドは返り値注釈の後）。`derive Functor[D]` / `derive Foldable[D]` / `derive Traversable[D]` は
-TAnalyser が検査して InstanceDef を Env に登録し、Deriver が手書き impl と同形の TopImpl を合成する（Deriver.scala）。
+制約・スーパークラスは宣言末尾の `with C[a]` 節（let・trait メソッド・impl メソッドは返り値注釈の後）。`derive Functor[D]` / `derive Foldable[D]` / `derive Traversable[D]` / `derive Eq[D]` / `derive Ord[D]` / `derive Show[D]` は
+TAnalyser が検査して InstanceDef を Env に登録し、Deriver が手書き impl と同形の TopImpl を合成する（Deriver.scala）。trait は名前で選び、正準シグネチャと照合する。
+Functor などは最後の型パラメータについて `impl[p̄] C[D[p̄]]`。Eq / Ord / Show は `impl[ā] C[D[ā]] with C[a₁], …`（型パラメータはカインド * に限る）で、フィールドのインスタンスはその文脈の下で解決し（`FieldCompare`）、D[ā] そのもののフィールドはメソッドの中の再帰関数で扱う（`rec` なしで自己再帰の型に使える）。Eq は構造の比較、Ord は構成子の宣言順→フィールドの辞書順（スーパークラス Eq のメソッドを使う）、Show は `C(name = 値, 値)`（文字列の連結は foreign の concat）。
 
 ### 制約の表現（Lean 4 風）
 

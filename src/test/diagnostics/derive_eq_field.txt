@@ -1,0 +1,8 @@
+error: `derive Eq[Handler]` needs `Eq[i32 → i32]`
+ --> derive_eq_field.lam:3:1
+  |
+3 | derive Eq[Handler]
+  | ^^^^^^^^^^^^^^^^^^ this derive
+  |
+  = note: the constructor `MkHandler` has a field of type `i32 → i32`, and the derived instance compares or shows each field with `Eq`
+  = help: declare an instance `Eq[…]` for the field's type before this derive (for a data type, `derive Eq[…]`; if the types refer to each other, put the derives in one `rec { … }`), or write the `impl` by hand

@@ -76,6 +76,10 @@ class EndToEndSuite extends munit.FunSuite {
   program("src/test/lam/traverse.lam", "6\n-1\n7\n-1\n6\n-7\n4\n100\n-1\n")
   program("src/test/lam/operators.lam", "14\n5\n26\n4\n321\n512\n18\n321\n6\n1\n12\n24\n")
   program("src/test/lam/dot_notation.lam", "3\n1\n60\n1\n6\n6\n9\n3\n")
+  program("src/test/lam/derive_values.lam",
+    "Green\ntrue false true false true\nMkStudent(name = alice, math = 90)\ntrue false true true\n" +
+      "[MkStudent(name = alice, math = 90), MkStudent(name = bob, math = 70)]\nNode(Leaf, 1, Node(Leaf, 2, Leaf))\n" +
+      "true false true false\nMkWrap([1, 2], Some(3))\ntrue\ntrue false\n")
   program("src/test/lam/records.lam", "3\n4\n3\n7\n24\n3\n7\n4\n2\n3\n9\n1\n12\n5\n6\n6\n8\n1\n")
   program("src/test/lam/impl_rec.lam", "3\n4\n")
   program("src/test/lam/tail_calls.lam", "1000000\n2050477040\n1\n42\n7\n")
