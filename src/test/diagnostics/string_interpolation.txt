@@ -2,7 +2,7 @@ error: string interpolation is not declared
  --> string_interpolation.lam:1:21
   |
 1 | let main(): i32 = { `value = {1}`; 0 }
-  |                     ^^^^^^^^^^^^^ this string
+  |                     ^^^^^^^^^^^^^ used here
   |
-  = note: `{x}` calls the function declared with `interpolate = f`, with the type of `x`: `f[T](x)`
+  = note: `{x}` calls the function declared with `interpolate = f`: `f(x)`
   = help: the standard library declares `interpolate = show`: add `import "std/show"`

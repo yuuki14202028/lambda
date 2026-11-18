@@ -5,5 +5,5 @@ error: module `Point` has no member `z`
   |              ^^^ this value has type `Point`
   |
   = note: `x.z` calls the function `Point.z` (the type of `x` is `Point`) or the trait method `z` in scope, and neither exists
+  = note: members of `Point`: `x`, `y`
   = help: define it in the module of the type: `module Point { let z… }`, import the trait that declares it, or call the function directly
-  = help: similar names exist: `x`, `y`

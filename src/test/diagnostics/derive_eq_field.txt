@@ -4,5 +4,5 @@ error: `derive Eq[Handler]` needs `Eq[i32 → i32]`
 3 | derive Eq[Handler]
   | ^^^^^^^^^^^^^^^^^^ this derive
   |
-  = note: the constructor `MkHandler` has a field of type `i32 → i32`, and the derived instance compares or shows each field with `Eq`
-  = help: declare an instance `Eq[…]` for the field's type before this derive (for a data type, `derive Eq[…]`; if the types refer to each other, put the derives in one `rec { … }`), or write the `impl` by hand
+  = note: the derived instance uses the instance of each field's type, and `Eq[i32 → i32]` is not declared before this point
+  = help: declare that instance before this derive (for a data type, with `derive`; if the types refer to each other, put the derives in one `rec { … }`), or write the `impl` by hand

@@ -2,18 +2,9 @@ package com.yuuki14202028
 
 class TraitCheckSuite extends munit.FunSuite {
 
-  private def validate(src: String): Either[String, TypeRec[AST.Program.type]] =
-    ParserAST.programParser.parseAll(src).left.map(e => s"Parse error: $e").flatMap(p => TAnalyser.validate(p).left.map(_.render))
-
-  private def desugar(src: String): Either[String, TypeRec[AST.Program.type]] =
-    validate(src).map(PatternDesugar.desugar).map(TraitEncoder.encode)
-
-  private def church(src: String): Either[String, TypeRec[AST.Program.type]] =
-    desugar(src).map(ChurchEncoder.encode)
-
-  private def assertLeftContains(result: Either[String, ?], expected: String): Unit = result match {
-    case Left(err) => assert(err.contains(expected), clue(err))
-    case Right(_)  => fail(s"expected error containing '$expected', but succeeded")
+  private def assertError(source: String)(expected: PartialFunction[CompileError, Unit])(using munit.Location): Unit = {
+    val found = Lam.errors(source)
+    assert(found.exists(expected.isDefinedAt), clue(found.map(_.message)))
   }
 
   private val monadProgram =
@@ -47,22 +38,16 @@ class TraitCheckSuite extends munit.FunSuite {
       |}
       |""".stripMargin
 
-  test("成功: trait/impl プログラムが型検査・脱糖・Church encoding を通る") {
-    church(monadProgram) match {
-      case Right(_)  => ()
-      case Left(err) => fail(err)
-    }
+  test("成功: trait/impl プログラムがコンパイルでき、メソッドがインスタンスの実装を呼ぶ") {
+    assertEquals(Lam.exitCode(monadProgram), 42)
   }
 
-  test("成功: 脱糖結果に辞書値と辞書型が現れる") {
-    desugar(monadProgram) match {
-      case Right(p) =>
-        val shown = p.show
-        assert(shown.contains("$inst_Monad_Maybe"), clue(shown))
-        assert(shown.contains("MkMonad"), clue(shown))
-        assert(shown.contains("$dict"), clue(shown))
-      case Left(err) => fail(err)
-    }
+  test("成功: 辞書は構成子 MkMonad の値として組み立てられる") {
+    val src = monadProgram.replace("let main", "let unused") +
+      """let identity: Monad[Maybe] = MkMonad[Maybe](Λa. λx: a. Just[a](x))(Λa. Λb. λv: Maybe[a]. λf: a → Maybe[b]. Nothing[b])
+        |let main(): i32 = extract(bind[Maybe](with identity)[i32][i32](Just[i32](1))(λx: i32. Just[i32](x)))
+        |""".stripMargin
+    assertEquals(Lam.exitCode(src), 0)
   }
 
   test("OverlappingInstance: 同一 (trait, head) の impl は拒否") {
@@ -75,7 +60,7 @@ class TraitCheckSuite extends munit.FunSuite {
         |}
         |let main(): i32 = 0
         |""".stripMargin
-    assertLeftContains(validate(src), "Overlapping instance")
+    assertError(src) { case _: CompileError.OverlappingInstance => }
   }
 
   test("MissingMethod: trait の全メソッドを与えない impl は拒否") {
@@ -89,7 +74,7 @@ class TraitCheckSuite extends munit.FunSuite {
         |}
         |let main(): i32 = 0
         |""".stripMargin
-    assertLeftContains(validate(src), "Missing method")
+    assertError(src) { case CompileError.MissingMethods("impl Pair[i32]", List("second"), _) => }
   }
 
   test("ExtraMethod: trait にないメソッドを与える impl は拒否") {
@@ -100,7 +85,7 @@ class TraitCheckSuite extends munit.FunSuite {
         |}
         |let main(): i32 = 0
         |""".stripMargin
-    assertLeftContains(validate(src), "Extra method")
+    assertError(src) { case CompileError.ExtraMethod("Show", "extra", _) => }
   }
 
   test("MethodTypeMismatch: 本体の型が特殊化済み署名と一致しない impl は拒否") {
@@ -110,7 +95,7 @@ class TraitCheckSuite extends munit.FunSuite {
         |}
         |let main(): i32 = 0
         |""".stripMargin
-    assertLeftContains(validate(src), "Method type mismatch")
+    assertError(src) { case CompileError.MethodTypeMismatch("impl Show[i32]", "show", _, _, _) => }
   }
 
   test("カインド不一致: trait パラメータと合わない impl 対象は拒否") {
@@ -122,7 +107,7 @@ class TraitCheckSuite extends munit.FunSuite {
         |}
         |let main(): i32 = 0
         |""".stripMargin
-    assertLeftContains(validate(src), "Kind mismatch")
+    assertError(src) { case _: CompileError.KindMismatch => }
   }
 
   test("NoInstance: インスタンスのない型でのメソッド利用は型検査で拒否") {
@@ -132,7 +117,7 @@ class TraitCheckSuite extends munit.FunSuite {
         |}
         |let main(): i32 = show[bool](true)
         |""".stripMargin
-    assertLeftContains(validate(src), "No instance")
+    assertError(src) { case error: CompileError.NoInstance if error.message.contains("Show[bool]") => }
   }
 
   test("型適用なしの裸参照は、制約が残った型になり型検査で拒否") {
@@ -143,20 +128,19 @@ class TraitCheckSuite extends munit.FunSuite {
         |let f: ∀a. a → i32 = show
         |let main(): i32 = 0
         |""".stripMargin
-    assertLeftContains(validate(src), "Type mismatch: expected ∀a. a → i32, actual ∀a. [Show[a]] → a → i32")
+    assertError(src) {
+      case error: CompileError.TypeMismatch if error.message.contains("expected `∀a. a → i32`, found `∀a. [Show[a]] → a → i32`") =>
+    }
   }
 
   test("シャドーイング: メソッド名を束縛し直した場合は辞書を挿入しない") {
     val src = showTrait +
       """impl Show[i32] {
-        |  def show = λx: i32. x
+        |  def show = λx: i32. 0
         |}
         |let main(): i32 = (λshow: i32 → i32. show(1))(λx: i32. x)
         |""".stripMargin
-    desugar(src) match {
-      case Right(_)  => ()
-      case Left(err) => fail(err)
-    }
+    assertEquals(Lam.exitCode(src), 1)
   }
 
   test("impl の型パラメータが trait やメソッドの型パラメータと同じ名前でも、メソッドの型を正しく求める") {
@@ -169,8 +153,11 @@ class TraitCheckSuite extends munit.FunSuite {
         |trait Semigroup[a] { def append(x: a)(y: a): a }
         |data Box[a] = { MkBox(a) }
         |impl[a] Semigroup[Box[a]] { def append(x: Box[a])(y: Box[a]): Box[a] = x }
-        |let main(): i32 = 0
+        |let main(): i32 =
+        |  match conv[Pair[bool][i32]][Pair[i32][bool]](map[Pair[bool]][i32][i32](MkPair[bool][i32](true)(6))(λn: i32. 7)) {
+        |    MkPair(n)(_) => match append[Box[i32]](MkBox[i32](n))(MkBox[i32](0)) { MkBox(m) => m }
+        |  }
         |""".stripMargin
-    assert(church(src).isRight, clue(church(src)))
+    assertEquals(Lam.exitCode(src), 7)
   }
 }

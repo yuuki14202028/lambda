@@ -79,18 +79,6 @@ impl Div[f32] {
   def div(x: f32)(y: f32): f32 = intrinsic[div_f32](x)(y)
 }
 
-impl BitAnd[f32] {
-  def bitAnd(x: f32)(y: f32): f32 = intrinsic[and_f32](x)(y)
-}
-
-impl BitOr[f32] {
-  def bitOr(x: f32)(y: f32): f32 = intrinsic[or_f32](x)(y)
-}
-
-impl BitXor[f32] {
-  def bitXor(x: f32)(y: f32): f32 = intrinsic[xor_f32](x)(y)
-}
-
 impl Neg[f32] {
   def neg(x: f32): f32 = intrinsic[neg_f32](x)
 }
@@ -109,18 +97,6 @@ impl Mul[f64] {
 
 impl Div[f64] {
   def div(x: f64)(y: f64): f64 = intrinsic[div_f64](x)(y)
-}
-
-impl BitAnd[f64] {
-  def bitAnd(x: f64)(y: f64): f64 = intrinsic[and_f64](x)(y)
-}
-
-impl BitOr[f64] {
-  def bitOr(x: f64)(y: f64): f64 = intrinsic[or_f64](x)(y)
-}
-
-impl BitXor[f64] {
-  def bitXor(x: f64)(y: f64): f64 = intrinsic[xor_f64](x)(y)
 }
 
 impl Neg[f64] {

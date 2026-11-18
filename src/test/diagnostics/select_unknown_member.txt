@@ -5,8 +5,8 @@ error: module `List` has no member `sizes`
   |              ^^^^^^^^^^^^^ this value has type `List[i32]`
   |
   = note: `x.sizes` calls the function `List.sizes` (the type of `x` is `List[i32]`) or the trait method `sizes` in scope, and neither exists
+  = note: members of `List`: `isEmpty`, `size`
   = help: define it in the module of the type: `module List { let sizes… }`, import the trait that declares it, or call the function directly
-  = help: a similar name exists: `size`
 
 error: module `List` has no member `length`
  --> select_unknown_member.lam:8:14

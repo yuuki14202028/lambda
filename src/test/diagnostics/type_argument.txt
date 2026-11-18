@@ -3,4 +3,4 @@ error: mismatched types
   |
 5 | let total: i32 = add(1)(true)
   |                         ^^^^ expected `i32`, found `bool`
-  |                  ------ this function has type `i32 → i32`
+  |                  ----- this function has type `i32 → i32`

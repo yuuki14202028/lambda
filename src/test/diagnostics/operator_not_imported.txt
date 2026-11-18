@@ -4,5 +4,5 @@ error: the operator `+` is not declared
 1 | let main(): i32 = 1 + 2
   |                     ^ used here
   |
-  = note: an operator calls the function it is declared for, with the type of its left operand: after `infixl 6 + = add`, `a + b` means `add[T](a)(b)`
+  = note: an operator calls the function it is declared for: after `infixl 6 + = add`, `a + b` means `add(a)(b)`
   = help: the standard operators are declared in the standard library: add `import "std/operators"`

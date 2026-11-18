@@ -1,3 +1,0 @@
-let twice(x: i32): i32 = x
-infixl 6 + = twice
-let main(): i32 = 0

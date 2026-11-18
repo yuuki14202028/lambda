@@ -21,13 +21,8 @@ class DocSuite extends munit.FunSuite {
 
   private def compile(code: String): Either[String, Unit] = {
     val withMain = if (code.linesIterator.exists(_.startsWith("let main("))) code else code + "\n\nlet main(): i32 = 0\n"
-    val src = "import \"std/prelude\"\n\n" + withMain
-    val result = for {
-      ast <- ParserAST.programParser.parseAll(src).left.map(CompileError.ParseFailure.apply)
-      resolved <- ImportResolver.resolve(ast, Paths.get("docs/snippet.lam"))
-      typed <- TAnalyser.validate(resolved)
-    } yield Compiler.desugar(typed)
-    result.left.map(Diagnostic.render(_, Sources("snippet.lam", src))).map(_ => ())
+    val withPrelude = if (code.contains("import \"std/prelude\"")) withMain else "import \"std/prelude\"\n\n" + withMain
+    Compiler.compile(withPrelude, "docs/snippet.lam").left.map(Diagnostics.render(_, "docs/snippet.lam", withPrelude)).map(_ => ())
   }
 
   test("文書にコード例がある") {

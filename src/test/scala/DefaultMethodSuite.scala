@@ -2,20 +2,9 @@ package com.yuuki14202028
 
 class DefaultMethodSuite extends munit.FunSuite {
 
-  private def validate(src: String): Either[String, TypeRec[AST.Program.type]] =
-    ParserAST.programParser.parseAll(src).left.map(e => s"Parse error: $e").flatMap(p => TAnalyser.validate(p).left.map(_.render))
-
-  private def encode(src: String): Either[String, TypeRec[AST.Program.type]] =
-    validate(src).map(p => Compiler.desugar(p))
-
-  private def assertRight(result: Either[String, ?]): Unit = result match {
-    case Right(_) => ()
-    case Left(err) => fail(err)
-  }
-
-  private def assertLeftContains(result: Either[String, ?], expected: String): Unit = result match {
-    case Left(err) => assert(err.contains(expected), clue(err))
-    case Right(_) => fail(s"expected failure containing: $expected")
+  private def assertError(source: String)(expected: PartialFunction[CompileError, Unit])(using munit.Location): Unit = {
+    val found = Lam.errors(source)
+    assert(found.exists(expected.isDefinedAt), clue(found.map(_.message)))
   }
 
   private val not = "trait Not[a] { def not(x: a): a }; prefix ! = not; impl Not[bool] { def not(a: bool): bool = intrinsic[not_bool](a) }\n"
@@ -29,21 +18,23 @@ class DefaultMethodSuite extends munit.FunSuite {
 
   private val main = "let main(): i32 = 0\n"
 
+  private def mainOf(condition: String): String = s"let main(): i32 = if $condition then 1 else 0\n"
+
   test("デフォルトを持つメソッドは impl で省略できる") {
-    val shown = encode(equal + "impl Equal[bool] { def same = λx: bool. λy: bool. true }\nlet b: bool = differ[bool](true)(false)\n" + main)
-      .fold(fail(_), _.show)
-    assert(shown.contains("$default_Equal_differ"), clue(shown))
-    assert(shown.contains("$method_0"), clue(shown))
+    val src = equal + "impl Equal[bool] { def same = λx: bool. λy: bool. false }\n"
+    assertEquals(Lam.exitCode(src + mainOf("differ[bool](true)(false)")), 1)
+    assertEquals(Lam.exitCode(src + mainOf("same[bool](true)(false)")), 0)
   }
 
   test("デフォルトは impl で上書きできる") {
-    val src = equal + "impl Equal[bool] { def same = λx: bool. λy: bool. true  def differ = λx: bool. λy: bool. false }\n"
-    val shown = encode(src + main).fold(fail(_), _.show)
-    assert(!shown.contains("$method_0"), clue(shown))
+    val src = equal + "impl Equal[bool] { def same = λx: bool. λy: bool. false; def differ = λx: bool. λy: bool. false }\n"
+    assertEquals(Lam.exitCode(src + mainOf("differ[bool](true)(false)")), 0)
   }
 
   test("デフォルトを持たないメソッドは省略できない") {
-    assertLeftContains(validate(equal + "impl Equal[bool] { def differ = λx: bool. λy: bool. false }\n" + main), "same")
+    assertError(equal + "impl Equal[bool] { def differ = λx: bool. λy: bool. false }\n" + main) {
+      case CompileError.MissingMethods("impl Equal[bool]", List("same"), _) =>
+    }
   }
 
   test("デフォルトの本体の型はシグネチャと一致しなければならない") {
@@ -53,7 +44,7 @@ class DefaultMethodSuite extends munit.FunSuite {
         |  def differ(x: a)(y: a): bool = x
         |}
         |""".stripMargin
-    assertLeftContains(validate(src + main), "the default of method differ")
+    assertError(src + main) { case CompileError.TypeMismatch(expected, actual, _) if Type.show(expected) == "bool" && Type.show(actual) == "a" => }
   }
 
   test("デフォルトの本体からは必須メソッドが普通の関数として見える（型適用は付けない）") {
@@ -63,7 +54,7 @@ class DefaultMethodSuite extends munit.FunSuite {
         |  def differ(x: a)(y: a): bool = !same[a](x)(y)
         |}
         |""".stripMargin
-    assertLeftContains(validate(src + main), "Not a polymorphic function")
+    assertError(src + main) { case _: CompileError.NotPolymorphic => }
   }
 
   test("デフォルトから別のデフォルトは呼べない") {
@@ -74,7 +65,7 @@ class DefaultMethodSuite extends munit.FunSuite {
         |  def reallyDiffer(x: a)(y: a): bool = differ(x)(y)
         |}
         |""".stripMargin
-    assertLeftContains(validate(src + main), "Variable differ is not defined")
+    assertError(src + main) { case CompileError.UndefinedVariable("differ", _) => }
   }
 
   test("デフォルトは自分自身を呼べない（再帰にならない）") {
@@ -84,7 +75,7 @@ class DefaultMethodSuite extends munit.FunSuite {
         |  def spin(x: a): a = spin(x)
         |}
         |""".stripMargin
-    assertLeftContains(validate(src + main), "Variable spin is not defined")
+    assertError(src + main) { case CompileError.UndefinedVariable("spin", _) => }
   }
 
   test("デフォルトの本体から自身のインスタンスは使えない") {
@@ -100,7 +91,10 @@ class DefaultMethodSuite extends munit.FunSuite {
         |  def bad(x: a): a = needsLater[a](x)
         |}
         |""".stripMargin
-    assertLeftContains(validate(src + main), "No instance")
+    Lam.errors(src + main) match {
+      case List(error: CompileError.NoInstance) => assertEquals(Type.show(error.goal), "Later[a]")
+      case other => fail(other.map(_.message).mkString("\n"))
+    }
   }
 
   test("デフォルトの本体ではスーパークラスの制約が使える") {
@@ -111,9 +105,8 @@ class DefaultMethodSuite extends munit.FunSuite {
         |}
         |impl Equal[bool] { def same = λx: bool. λy: bool. true }
         |impl Compare[bool] { def less = λx: bool. λy: bool. false }
-        |let b: bool = lessOrSame[bool](true)(false)
         |""".stripMargin
-    assertRight(encode(src + main))
+    assertEquals(Lam.exitCode(src + mainOf("lessOrSame[bool](true)(false)")), 1)
   }
 
   test("メソッド自身の型パラメータと制約を持つデフォルト") {
@@ -124,10 +117,9 @@ class DefaultMethodSuite extends munit.FunSuite {
         |}
         |data Box[a] = { MkBox(a) }
         |impl Container[Box] { def first[a](xs: Box[a])(fallback: a): a = match xs { MkBox(x) => x } }
-        |impl Equal[bool] { def same = λx: bool. λy: bool. true }
-        |let b: bool = firstDiffers[Box][bool](MkBox[bool](true))(false)
+        |impl Equal[bool] { def same = λx: bool. λy: bool. false }
         |""".stripMargin
-    assertRight(encode(src + main))
+    assertEquals(Lam.exitCode(src + mainOf("firstDiffers[Box][bool](MkBox[bool](true))(false)")), 1)
   }
 
   test("文脈付きの impl と rec impl でもデフォルトで埋められる") {
@@ -135,7 +127,10 @@ class DefaultMethodSuite extends munit.FunSuite {
       """rec data List[a] = { Nil, Cons(a)(List[a]) }
         |rec impl[a] Equal[List[a]] with Equal[a] {
         |  def same = λxs: List[a]. λys: List[a]. match xs {
-        |    Nil => true
+        |    Nil => match ys {
+        |      Nil => true
+        |      Cons(y)(yt) => false
+        |    }
         |    Cons(x)(xt) => match ys {
         |      Nil => false
         |      Cons(y)(yt) => if same[a](x)(y) then same[List[a]](xt)(yt) else false
@@ -143,15 +138,10 @@ class DefaultMethodSuite extends munit.FunSuite {
         |  }
         |}
         |impl Equal[bool] { def same = λx: bool. λy: bool. true }
-        |let b: bool = differ[List[bool]](Nil[bool])(Nil[bool])
+        |let one: List[bool] = Cons[bool](true)(Nil[bool])
         |""".stripMargin
-    assertRight(encode(src + main))
-  }
-
-  test("デフォルトを使わない impl の辞書は従来と同じ形") {
-    val shown = encode(equal + "impl Equal[bool] { def same = λx: bool. λy: bool. true  def differ = λx: bool. λy: bool. false }\n" + main)
-      .fold(fail(_), _.show)
-    assert(!shown.contains("$method_"), clue(shown))
+    assertEquals(Lam.exitCode(src + mainOf("differ[List[bool]](Nil[bool])(Nil[bool])")), 0)
+    assertEquals(Lam.exitCode(src + mainOf("differ[List[bool]](one)(Cons[bool](true)(one))")), 1)
   }
 
   test("module の中の trait でもデフォルトを使える") {
@@ -162,9 +152,8 @@ class DefaultMethodSuite extends munit.FunSuite {
         |    def differ(x: a)(y: a): bool = !same(x)(y)
         |  }
         |}
-        |impl M.Equal[bool] { def same = λx: bool. λy: bool. true }
-        |let b: bool = M.differ[bool](true)(false)
+        |impl M.Equal[bool] { def same = λx: bool. λy: bool. false }
         |""".stripMargin
-    assertRight(encode(src + main))
+    assertEquals(Lam.exitCode(src + mainOf("M.differ[bool](true)(false)")), 1)
   }
 }

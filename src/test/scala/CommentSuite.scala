@@ -2,12 +2,7 @@ package com.yuuki14202028
 
 class CommentSuite extends munit.FunSuite {
 
-  private def validate(src: String): Either[String, TypeRec[AST.Program.type]] =
-    ParserAST.programParser.parseAll(src).left.map(e => s"Parse error: $e").flatMap(p => TAnalyser.validate(p).left.map(_.render))
-
-  private def shown(src: String): String =
-    ParserAST.programParser.parseAll(src).fold(e => fail(e.toString), p => eraseIndex(p).show)
-
+  // コメントのないプログラム。コメントを足しても結果は変わらない
   private val plain =
     """let add(x: i32)(y: i32): i32 = intrinsic[add_i32](x)(y)
       |data Option[a] = { None, Some(a) }
@@ -19,7 +14,7 @@ class CommentSuite extends munit.FunSuite {
       |""".stripMargin
 
   test("行コメント: // から行末まで") {
-    val src =
+    val source =
       """// 足し算
         |let add(x: i32)(y: i32): i32 = intrinsic[add_i32](x)(y) // 組み込み
         |
@@ -33,12 +28,12 @@ class CommentSuite extends munit.FunSuite {
         |} // ここまで
         |let main(): i32 = f(Some[i32](1))
         |// 終わり""".stripMargin
-    assertEquals(shown(src), shown(plain))
-    assert(validate(src).isRight)
+    assertEquals(Lam.exitCode(plain), 2)
+    assertEquals(Lam.exitCode(source), 2)
   }
 
   test("ブロックコメント: /* から */ まで。式や型の途中にも書ける") {
-    val src =
+    val source =
       """/* 足し算
         |   2 行にわたる説明 */
         |let add(x: /* 左 */ i32)(y: i32 /* 右 */): i32 = intrinsic[add_i32](x)(y)
@@ -49,41 +44,47 @@ class CommentSuite extends munit.FunSuite {
         |}
         |let main(): i32 = f(Some[i32](1))
         |""".stripMargin
-    assertEquals(shown(src), shown(plain))
+    assertEquals(Lam.exitCode(source), 2)
   }
 
   test("ブロックコメントは入れ子にできる") {
-    val src = "/* 外 /* 内 */ まだ外 */\n" + plain
-    assertEquals(shown(src), shown(plain))
+    assertEquals(Lam.exitCode("/* 外 /* 内 */ まだ外 */\n" + plain), 2)
   }
 
   test("コメントだけの行は宣言を区切らない・つなげない") {
-    val src =
+    val source =
       """let x: i32 = 1
         |// あいだ
         |
         |/* あいだ */
         |let main(): i32 = x
         |""".stripMargin
-    assert(validate(src).isRight)
+    assertEquals(Lam.exitCode(source), 1)
   }
 
   test("文字列の中の // はコメントではない") {
-    val src = "let s: foreign.C.String = \"a // b /* c */\"\nlet main(): i32 = 0\n"
-    assert(shown(src).contains("a // b /* c */"))
+    val source =
+      """let print: foreign.C.String → i32 = foreign[foreign.C.String → i32] print_string_inline
+        |let s: foreign.C.String = "a // b /* c */"
+        |let main(): i32 = print(s)
+        |""".stripMargin
+    assertEquals(Lam.output(source), "a // b /* c */")
   }
 
   test("割り算はコメントにならない") {
-    val src =
+    val source =
       """trait Div[a] { def div(x: a)(y: a): a }; infixl 7 / = div; impl Div[i32] { def div(a: i32)(b: i32): i32 = intrinsic[div_i32](a)(b) }
         |let half(n: i32): i32 = n / 2 // 半分
         |let quarter(n: i32): i32 = n / 2 / 2
-        |let main(): i32 = 0
+        |let main(): i32 = intrinsic[add_i32](half(20))(quarter(20))
         |""".stripMargin
-    assert(validate(src).isRight)
+    assertEquals(Lam.exitCode(source), 15)
   }
 
   test("閉じていないブロックコメントは構文エラー") {
-    assert(ParserAST.programParser.parseAll("let x: i32 = 1 /* 閉じない\nlet main(): i32 = 0\n").isLeft)
+    Lam.errors("let x: i32 = 1 /* 閉じない\nlet main(): i32 = 0\n") match {
+      case List(_: CompileError.Syntax) => ()
+      case other => fail(s"expected a syntax error: $other")
+    }
   }
 }

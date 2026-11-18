@@ -1,13 +1,13 @@
 # Lambda
 
 Scala 3 で実装した、小さな型付きラムダ計算系言語（System Fω 相当 + trait）のコンパイラです。
-`.lam` ソースを型検査し、ARM64/macOS 向けアセンブリを生成して clang でリンクします。
+`.lam` ソースを型検査し、すべてをラムダ式に落としてから、インタプリタで実行するか、ARM64/macOS 向けアセンブリを生成して clang でリンクします。
 
 ## 特徴
 
 言語の説明は [`docs/language.md`](docs/language.md) にあります（コード例はすべてテストでコンパイルしています）。
 
-- **型はすべて書く**: System Fω（値のラムダ、型の抽象と適用、型レベルの関数とカインド）。型推論はありません
+- **型は書く**: System Fω（値のラムダ、型の抽象と適用、型レベルの関数とカインド）。束縛には型注釈を書きます。推論は 1 つだけで、多相関数に渡す型引数を値の引数の型から読みます（`map(xs)(f)`。読めないものは `Nil[i32]` と書く）
 - **代数的データ型とパターン**: `data` と `match`。入れ子のパターン、リテラル、選択肢、条件、束縛での分解。網羅性を検査します
 - **再帰は `rec` と書いた所だけ**: `rec let` / `rec data` / `rec impl`、相互再帰は `rec { … }`
 - **trait**: 型クラス。スーパークラス、デフォルトメソッド、高階カインド、量化された制約、`derive`
@@ -18,7 +18,8 @@ Scala 3 で実装した、小さな型付きラムダ計算系言語（System F�
 - **module**: 名前空間、`private`、`opaque type` / `opaque data`
 - **エラー表示**: 原因の部分に下線を引き、関係する位置と直し方を添えます
 - **C FFI**: `foreign[T → U] name` で C の関数を参照します
-- **コード生成**: 関数値はコードポインタ + 環境ポインタのクロージャとしてコンパイルされます。末尾位置の呼び出しはジャンプになるので、末尾再帰でループを書けます（メモリは確保するだけで解放しません）
+- **すべてはラムダ式**: データ型と `match` も関数に符号化し、型のないラムダ式にしてから実行・コード生成します
+- **コード生成**: 関数値は、コードのアドレスと捕まえた変数を持つクロージャとしてコンパイルされます。末尾位置の呼び出しはジャンプになるので、末尾再帰でループを書けます（メモリは確保するだけで解放しません）
 
 組み込み型は次のとおりです。
 
@@ -28,7 +29,7 @@ char bool unit
 foreign.C.String  foreign.C.VoidPtr  foreign.C.Ptr[T]
 ```
 
-`+` や `==` などの演算子は、`infixl 6 + = add` のように宣言された関数の呼び出しです（`a + b` は `add[T](a)(b)`、`T` は `a` の型）。
+`+` や `==` などの演算子は、`infixl 6 + = add` のように宣言された関数の呼び出しです（`a + b` は `add(a)(b)`）。
 `stdlib/operators.lam` が演算子ごとの trait（`Add` / `Eq` / `Ord` など）と組み込みの型のインスタンスを宣言しているので、演算子を使うには `import "std/operators"` が必要です。自分の型では、その trait を実装します。記号・優先順位・結合性は宣言で決まるので、`infixr 5 :: = cons` のように独自の演算子も作れます。`&&` と `||` だけは `bool` 専用の組み込みです。
 
 ## 使い方
@@ -36,10 +37,11 @@ foreign.C.String  foreign.C.VoidPtr  foreign.C.Ptr[T]
 必要なもの: ARM64 macOS、sbt、clang。
 
 ```bash
-./run.sh          # main.lam をコンパイル → clang でリンク → 実行（終了コードを表示）
+sbt "run <src.lam>"            # コンパイルして、インタプリタで実行する（どの環境でも動く）
 
-sbt "run <src.lam> <out.s>"                              # 任意のソースをアセンブリへ
-clang -arch arm64 build/out.s runtime/ffi.c -o build/out # 手動リンク
+./run.sh                       # main.lam をコンパイル → clang でリンク → 実行（終了コードを表示）
+sbt "run <src.lam> <out.s>"    # 任意のソースをアセンブリへ
+clang -arch arm64 build/out.s runtime/ffi.c -o build/out   # 手動リンク
 
 sbt test                        # 全テスト（munit）。実際にコンパイル・実行する end-to-end テストを含みます
 ./benchmarks/run_fibonacci.sh   # 他言語とのベンチマーク比較
@@ -76,23 +78,18 @@ error: no instance for `Show[bool]`
 ## アーキテクチャ
 
 ```
-ParserAST (cats-parse)
-  → ImportResolver   import の解決・展開
-  → TAnalyser        型検査（trait / context / derive / module は構文を保ったまま型付け。制約と名前の解決もここで行う）
-  → ModuleDesugar    module を平らな宣言列に戻し、opaque type を表現へ読み替える
-  → RecordDesugar    名前付きフィールドを読む関数（アクセサ）を生成し、名前付きの構築を位置の適用へ
-  → Deriver          derive 宣言を手書きと同形の impl へ合成
-  → ContextDesugar   context ブロックを pure / flatMap へ脱糖
-  → PatternDesugar   match と束縛のパターンを、構成子 1 段の分岐と if / let へ展開
-  → SelectDesugar    ドット記法 x.f を、x の型の module の関数か trait のメソッドの適用へ
-  → OperatorDesugar  演算子を、宣言された関数の適用へ（&& と || は if へ）
-  → TraitEncoder     trait / impl を辞書渡しへ脱糖
-  → ChurchEncoder    data / match / fold を Church encoding 化
+Lexer → Parser       構文解析（Surface: 名前は綴りのまま、演算子は並びのまま）
+  → Imports          import の展開
+  → Resolve          名前解決（Resolved: 名前は Symbol に。module・private・open、演算子の結び付き、パターンの構成子 / 変数）
+  → Check            型検査（Typed: 読んだ型引数、解決した辞書、match の決定木が入る）
+  → Lower            糖衣を外す（Core: Fω + data。型つきで、CoreCheck が毎回検査する）
+  → Encode           data / match を関数に符号化し、型を消す（Lambda: 型のないラムダ式）
+  → Interpreter      そのまま評価する
   → Generator        ARM64 アセンブリ生成
 ```
 
-全フェーズが単一の GADT 風 AST（`AST.scala`）を高階再帰スキーム（`HFix` / `HCofree`）で共有し、
-ユーザー起因のエラーは構造化された `CompileError` として型検査までに報告されます。各フェーズの設計（制約の表現、module、パターンの脱糖、エラー表示など）は [`CLAUDE.md`](CLAUDE.md) にまとめています。
+木は段階ごとの普通の enum で、処理はパターンマッチと明示的な再帰で書いています。
+ユーザー起因のエラーは構造化された `CompileError` として型検査までに報告されます。各段階の設計（型の表現、型引数を読む規則、制約の表現、module、エラー表示など）は [`CLAUDE.md`](CLAUDE.md) にまとめています。
 
 ## リポジトリ構成
 

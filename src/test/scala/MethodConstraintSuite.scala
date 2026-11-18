@@ -1,32 +1,11 @@
 package com.yuuki14202028
 
+/** メソッド自身の型パラメータに付く制約（def m[g](…): T with C[g]） */
 class MethodConstraintSuite extends munit.FunSuite {
 
-  private def parseDecl(src: String): AST[Rec, Decl] =
-    ParserAST.programParser.parseAll(src) match {
-      case Right(p) => eraseIndex(p).unfix match {
-        case AST.Program(decls) => decls.head.unfix
-      }
-      case Left(err) => fail(s"parse failed: $err")
-    }
-
-  private def validate(src: String): Either[String, TypeRec[AST.Program.type]] =
-    ParserAST.programParser.parseAll(src).left.map(e => s"Parse error: $e").flatMap(p => TAnalyser.validate(p).left.map(_.render))
-
-  private def desugar(src: String): Either[String, TypeRec[AST.Program.type]] =
-    validate(src).map(PatternDesugar.desugar).map(TraitEncoder.encode)
-
-  private def church(src: String): Either[String, TypeRec[AST.Program.type]] =
-    desugar(src).map(ChurchEncoder.encode)
-
-  private def assertRight(result: Either[String, ?]): Unit = result match {
-    case Right(_) => ()
-    case Left(err) => fail(err)
-  }
-
-  private def assertLeftContains(result: Either[String, ?], expected: String): Unit = result match {
-    case Left(err) => assert(err.contains(expected), clue(err))
-    case Right(_) => fail(s"expected failure containing: $expected")
+  private def assertError(source: String)(expected: PartialFunction[CompileError, Unit])(using munit.Location): Unit = {
+    val found = Lam.errors(source)
+    assert(found.exists(expected.isDefinedAt), clue(found.map(_.message)))
   }
 
   // メソッド自身の型変数 g に制約を付ける（trait のパラメータ t とは別）
@@ -53,46 +32,36 @@ class MethodConstraintSuite extends munit.FunSuite {
       |}
       |""".stripMargin
 
-  test("パース: trait メソッドの with 節はメソッドの型パラメータ直下の暗黙引数になる") {
-    parseDecl("trait Wrap[t: * → *] {\n  def wrapIn[g: * → *][a](x: t[a]): g[t[a]] with Pointed[g]\n}\n") match {
-      case AST.TopTrait(_, _, _, methods) =>
-        assertEquals(methods.map(_.sig.show), Seq("∀(g: * → *). ∀a. [Pointed[g]] → t[a] → g[t[a]]"))
-      case other => fail(s"not TopTrait: $other")
-    }
-  }
+  private val unwrap =
+    """let main(): i32 = match wrapIn[Box][Id][i32](MkBox[i32](7)) {
+      |  MkId(b) => match b {
+      |    MkBox(n) => n
+      |  }
+      |}
+      |""".stripMargin
 
-  test("パース: impl メソッドの with 節は本体の暗黙引数の抽象になる") {
-    parseDecl("impl Wrap[Box] {\n  def wrapIn[g: * → *][a](x: Box[a]) with Pointed[g] = point[g][Box[a]](x)\n}\n") match {
-      case AST.TopImpl(_, _, _, _, methods, _) =>
-        assertEquals(methods.map(_.body.show), Seq("Λ(g: * → *). Λa. λ[Pointed[g]]. λx: Box[a]. point[g][Box[a]](x)"))
-      case other => fail(s"not TopImpl: $other")
+  test("trait メソッドの with 節はメソッドの型パラメータ直下の暗黙引数になる") {
+    val src = prelude + wrapBox + "let bad: i32 = wrapIn[Box]\nlet main(): i32 = 0\n"
+    // 型は、不一致のエラーの表示から読む
+    assertError(src) {
+      case error: CompileError.TypeMismatch if error.message.contains("found `∀(g: * → *). ∀a. [Pointed[g]] → Box[a] → g[Box[a]]`") =>
     }
   }
 
   test("成功: 制約付きメソッドの呼び出しは、メソッドの型引数の後でも辞書が解決される") {
-    val src = prelude + wrapBox +
-      """let main(): i32 = match wrapIn[Box][Id][i32](MkBox[i32](7)) {
-        |  MkId(b) => match b {
-        |    MkBox(n) => n
-        |  }
-        |}
-        |""".stripMargin
-    assertRight(church(src))
-    desugar(src) match {
-      case Right(p) =>
-        val shown = p.show
-        assert(shown.contains("$inst_Wrap_Box"), clue(shown))
-        assert(shown.contains("$inst_Pointed_Id"), clue(shown))
-      case Left(err) => fail(err)
-    }
+    assertEquals(Lam.exitCode(prelude + wrapBox + unwrap), 7)
   }
 
   test("成功: 制約付き関数の中から、スコープ中の制約で制約付きメソッドを呼べる") {
     val src = prelude + wrapBox +
       """let wrapAny[t: * → *][g: * → *][a](x: t[a]): g[t[a]] with Wrap[t], Pointed[g] = wrapIn[t][g][a](x)
-        |let main(): i32 = 0
+        |let main(): i32 = match wrapAny[Box][Id][i32](MkBox[i32](9)) {
+        |  MkId(b) => match b {
+        |    MkBox(n) => n
+        |  }
+        |}
         |""".stripMargin
-    assertRight(church(src))
+    assertEquals(Lam.exitCode(src), 9)
   }
 
   test("検査失敗: メソッドの制約を満たすインスタンスがなければ No instance") {
@@ -101,7 +70,7 @@ class MethodConstraintSuite extends munit.FunSuite {
         |  MkBox(b) => 0
         |}
         |""".stripMargin
-    assertLeftContains(validate(src), "No instance for Pointed[Box]")
+    assertError(src) { case error: CompileError.NoInstance if Type.show(error.goal) == "Pointed[Box]" => }
   }
 
   test("検査失敗: impl が with 節を省くとメソッドの型が合わない") {
@@ -111,7 +80,7 @@ class MethodConstraintSuite extends munit.FunSuite {
         |}
         |let main(): i32 = 0
         |""".stripMargin
-    assertLeftContains(validate(src), "No instance for Pointed[g]")
+    assertError(src) { case error: CompileError.NoInstance if Type.show(error.goal) == "Pointed[g]" => }
   }
 
   test("検査失敗: 本体が制約を使わなくても、with 節のない impl は型が合わない") {
@@ -128,6 +97,6 @@ class MethodConstraintSuite extends munit.FunSuite {
         |}
         |let main(): i32 = 0
         |""".stripMargin
-    assertLeftContains(validate(src), "Method type mismatch")
+    assertError(src) { case CompileError.MethodTypeMismatch("impl Keep[Box]", "keep", _, _, _) => }
   }
 }

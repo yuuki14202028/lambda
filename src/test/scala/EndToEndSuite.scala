@@ -4,14 +4,14 @@ import java.nio.file.{Files, Path, Paths}
 import java.util.concurrent.TimeUnit
 import scala.concurrent.duration.*
 
-/** .lam をコンパイル → clang でリンク → 実行し、標準出力と終了コードを確かめる。
- * ARM64 macOS と clang が必要なので、それ以外の環境ではスキップする。
+/** .lam のプログラムを最後まで通し、標準出力と終了コードを確かめる。
+ * インタプリタで実行し、ARM64 macOS では、アセンブリを clang でリンクして実行した結果も同じであることを確かめる。
  */
 class EndToEndSuite extends munit.FunSuite {
 
-  override val munitTimeout: Duration = 2.minutes
+  override val munitTimeout: Duration = 3.minutes
 
-  private val supported: Boolean =
+  private val native: Boolean =
     System.getProperty("os.name").toLowerCase.contains("mac") && System.getProperty("os.arch") == "aarch64"
 
   private val workDir: Path = Files.createTempDirectory("lambda-e2e")
@@ -26,34 +26,38 @@ class EndToEndSuite extends munit.FunSuite {
     (process.exitValue(), output)
   }
 
-  private def run(source: String): (Int, String) = {
-    val srcPath = Paths.get(source)
-    val name = srcPath.getFileName.toString.stripSuffix(".lam")
-    val src = Files.readString(srcPath)
-    val asm = Compiler.compile(src, srcPath) match {
-      case Right(asm) => asm
-      case Left(err) => fail(Diagnostic.render(err, Sources(source, src)))
+  private def compile(file: String): Lambda.Program = {
+    val source = Files.readString(Paths.get(file))
+    Compiler.compile(source, file) match {
+      case Right(program) => program
+      case Left(errors) => fail(Diagnostics.render(errors, file, source))
     }
-    val asmPath = workDir.resolve(s"$name.s")
-    val binPath = workDir.resolve(name)
-    Files.writeString(asmPath, asm)
-    val (linkExit, linkOutput) = exec("clang", "-arch", "arm64", asmPath.toString, "runtime/ffi.c", "-o", binPath.toString)
-    assertEquals(linkExit, 0, clue(linkOutput))
-    exec(binPath.toString)
   }
 
-  private def program(source: String, stdout: String, exitCode: Int = 0)(using munit.Location): Unit =
-    test(source) {
-      assume(supported, "requires ARM64 macOS")
-      assertEquals(run(source), (exitCode, stdout))
+  private def runNative(file: String, program: Lambda.Program): (Int, String) = {
+    val name = Paths.get(file).getFileName.toString.stripSuffix(".lam")
+    val assembly = workDir.resolve(s"$name.s")
+    val binary = workDir.resolve(name)
+    Files.writeString(assembly, Generator.generate(program))
+    val (linkExit, linkOutput) = exec("clang", "-arch", "arm64", assembly.toString, "runtime/ffi.c", "-o", binary.toString)
+    assertEquals(linkExit, 0, clue(linkOutput))
+    exec(binary.toString)
+  }
+
+  private def program(file: String, stdout: String, exitCode: Int = 0)(using munit.Location): Unit = {
+    test(s"$file (interpreter)") {
+      val result = Interpreter.run(compile(file))
+      assertEquals((result.exitCode, result.output), (exitCode, stdout))
     }
+    test(s"$file (native)") {
+      assume(native, "requires ARM64 macOS")
+      assertEquals(runNative(file, compile(file)), (exitCode, stdout))
+    }
+  }
 
   // examples/ のサンプルは、期待する出力を同名の .expected に置く
   private def example(name: String)(using munit.Location): Unit =
-    test(s"examples/$name.lam") {
-      assume(supported, "requires ARM64 macOS")
-      assertEquals(run(s"examples/$name.lam"), (0, Files.readString(Paths.get(s"examples/$name.expected"))))
-    }
+    program(s"examples/$name.lam", Files.readString(Paths.get(s"examples/$name.expected")))
 
   example("calculator")
   example("transformer")

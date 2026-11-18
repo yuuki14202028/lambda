@@ -5,7 +5,7 @@ cd "$(dirname "$0")"
 
 mkdir -p build
 
-sbt -error -batch "run"
+sbt -error -batch "run main.lam build/out.s"
 
 clang -arch arm64 build/out.s runtime/ffi.c -o build/out
 

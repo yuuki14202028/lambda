@@ -1,791 +1,341 @@
 package com.yuuki14202028
 
-import cats.data.{ReaderT, State}
-import cats.syntax.all.*
+import scala.collection.mutable.ListBuffer
 
-import scala.annotation.tailrec
-
+/** Lambda を ARM64 (macOS) のアセンブリに落とす。
+ *
+ * 値はすべて 64 ビットの 1 語（整数は型の幅に丸めて符号・ゼロ拡張した形、浮動小数点数はビット列のまま、
+ * 文字列は char*、関数はクロージャへのポインタ）。
+ *
+ * クロージャ: ヒープ上の [コードのアドレス, 捕まえた変数 0, 捕まえた変数 1, …]。
+ * 呼び出し:   x0 = クロージャ、x1 = 引数。結果は x0。
+ * フレーム:   [x29] = 呼び出し元の x29 / x30、[x29 + 16] = 自分のクロージャ、[x29 + 24] = 引数、その上に let の変数。
+ *            計算の途中の値は、sp に積んで下ろす。
+ *
+ * rec の変数だけは、値を入れるセル（ヒープの 1 語）へのポインタを置き、クロージャはそのセルを捕まえる。
+ * トップレベルの変数は大域の領域に置くので、捕まえない。
+ * 関数本体の末尾位置の呼び出しは、フレームを畳んでからジャンプする。
+ * メモリは malloc するだけで解放しない。
+ */
 object Generator {
-  sealed trait Binding {
-    def name: String
-  }
-  case class HeapBinding(name: String) extends Binding
-  // tail: いま生成している式が関数本体の末尾位置にあるか（末尾位置の呼び出しはフレームを畳んでジャンプにする）
-  case class Env(values: Seq[Binding], directFunctions: Map[String, Label], tail: Boolean = false) {
-    def withHeap(name: String): Env = copy(values = HeapBinding(name) +: values)
-    def withDirectFunction(name: String, label: Label): Env = copy(directFunctions = directFunctions.updated(name, label))
+
+  def generate(program: Lambda.Program): String = new Generator().program(program)
+
+  private type Code = Seq[String]
+
+  private enum Place {
+    case Slot(index: Int)
+    case Captured(index: Int)
   }
 
-  object Env {
-    val empty: Env = Env(Nil, Map.empty)
+  /** cell: 置き場にあるのは値ではなく、値を入れるセルへのポインタ（rec の変数） */
+  private final case class Stored(place: Place, cell: Boolean)
+
+  /** 生成中の関数から見える局所変数。slots は使っているスロットの数、locals は let のために確保した数 */
+  private final case class Frame(variables: Map[Symbol, Stored], slots: Int, locals: Int) {
+    def bind(symbol: Symbol, cell: Boolean): Frame =
+      copy(variables = variables + (symbol -> Stored(Place.Slot(slots), cell)), slots = slots + 1)
+
+    def size: Int = (locals + 5) / 2 * 16
   }
 
-  case class Label(name: String)
-  case class Reg(name: String)
+  private val closureSlot = 0
+  private val argumentSlot = 1
 
-  sealed trait Operand {
-    def render: String
-  }
-  case class Register(reg: Reg) extends Operand {
-    def render: String = reg.name
-  }
-  case class Immediate(value: Long) extends Operand {
-    def render: String = s"#$value"
-  }
-  case class LabelOperand(label: Label) extends Operand {
-    def render: String = label.name
-  }
-  case class Page(label: Label) extends Operand {
-    def render: String = s"${label.name}@PAGE"
-  }
-  case class PageOff(label: Label) extends Operand {
-    def render: String = s"${label.name}@PAGEOFF"
-  }
-  case class Shift(kind: String, amount: Int) extends Operand {
-    def render: String = s"$kind #$amount"
-  }
-  case class Condition(name: String) extends Operand {
-    def render: String = name
-  }
-  case class Memory(base: Reg, offset: Option[Int] = None, writeBack: Boolean = false, postIndex: Boolean = false) extends Operand {
-    def render: String = {
-      val off = offset.map(o => s", #$o").getOrElse("")
-      if (postIndex) s"[${base.name}], #${offset.getOrElse(0)}"
-      else s"[${base.name}$off]${if (writeBack) "!" else ""}"
-    }
+  private def slot(index: Int): String = s"[x29, #${16 + 8 * index}]"
+
+  private val stackSize = 1L << 30
+}
+
+private final class Generator {
+  import Generator.*
+  import Lambda.*
+
+  private val functions = ListBuffer.empty[String]
+  private val strings = ListBuffer.empty[(String, String)]
+  private var globals = Map.empty[Symbol, String]
+  private var counter = 0
+
+  private def invariant(message: String): Nothing = sys.error(s"Compiler invariant violation: $message")
+
+  private def fresh(prefix: String): String = {
+    counter += 1
+    s"${prefix}_$counter"
   }
 
-  sealed trait AsmLine {
-    def render: String
-  }
-  case object Blank extends AsmLine {
-    def render: String = ""
-  }
-  case class Directive(name: String, args: Vector[String] = Vector.empty) extends AsmLine {
-    def render: String = if (args.isEmpty) s".$name" else s".$name ${args.mkString(", ")}"
-  }
-  case class LabelDef(label: Label) extends AsmLine {
-    def render: String = s"${label.name}:"
-  }
-  case class Instruction(mnemonic: String, operands: Vector[Operand] = Vector.empty) extends AsmLine {
-    def render: String = if (operands.isEmpty) s"    $mnemonic" else s"    $mnemonic ${operands.map(_.render).mkString(", ")}"
-  }
+  def program(program: Program): String = {
+    val locals = program.declarations.map {
+      case Decl.Let(_, value) => countLocals(value)
+      case Decl.Rec(bindings) => bindings.map(binding => countLocals(binding._2)).sum
+    }.maxOption.getOrElse(0)
 
-  case class Code(lines: Vector[AsmLine]) {
-    def ++(that: Code): Code = Code(lines ++ that.lines)
-  }
-
-  object Code {
-    val empty: Code = Code(Vector.empty)
-    def apply(lines: AsmLine*): Code = Code(lines.toVector)
-    def concat(values: Iterable[Code]): Code = Code(values.toVector.flatMap(_.lines))
-  }
-
-  case class StringDef(label: Label, value: String)
-  case class FunctionDef(label: Label, body: Code)
-  case class AssemblyProgram(externs: Set[String], strings: Vector[StringDef], main: FunctionDef, functions: Vector[FunctionDef])
-
-  private val x0 = Reg("x0")
-  private val x1 = Reg("x1")
-  private val x9 = Reg("x9")
-  private val x10 = Reg("x10")
-  private val x16 = Reg("x16")
-  private val x29 = Reg("x29")
-  private val x30 = Reg("x30")
-  private val sp = Reg("sp")
-  private val w0 = Reg("w0")
-  private val w1 = Reg("w1")
-  private val w10 = Reg("w10")
-  private val s0 = Reg("s0")
-  private val s1 = Reg("s1")
-  private val d0 = Reg("d0")
-  private val d1 = Reg("d1")
-
-  private def r(reg: Reg): Operand = Register(reg)
-  private def imm(value: Long): Operand = Immediate(value)
-  private def mem(base: Reg): Operand = Memory(base)
-  private def mem(base: Reg, offset: Int): Operand = Memory(base, Some(offset))
-  private def pre(base: Reg, offset: Int): Operand = Memory(base, Some(offset), writeBack = true)
-  private def post(base: Reg, offset: Int): Operand = Memory(base, Some(offset), postIndex = true)
-  private def ins(mnemonic: String, operands: Operand*): AsmLine = Instruction(mnemonic, operands.toVector)
-  private def code(lines: AsmLine*): Code = Code(lines*)
-
-  case class GenState(funcs: Vector[FunctionDef], counter: Int, externs: Set[String], strings: Vector[StringDef])
-  type GenS[A] = State[GenState, A]
-  type Gen[A] = ReaderT[GenS, Env, A]
-  private type GenCode[I] = Gen[Code]
-
-  private def fresh(prefix: String): GenS[Label] = {
-    State { st =>
-      val c = st.counter + 1
-      (st.copy(counter = c), Label(s"_${prefix}_$c"))
-    }
-  }
-
-  private def label(): GenS[String] = {
-    State { st =>
-      val c = st.counter + 1
-      (st.copy(counter = c), s"L$c")
-    }
-  }
-
-  private def addFunc(fn: FunctionDef): GenS[Unit] =
-    State.modify(st => st.copy(funcs = st.funcs :+ fn))
-
-  private def addExtern(symbol: String): GenS[Unit] =
-    State.modify(st => st.copy(externs = st.externs + symbol))
-
-  private def addString(value: String): GenS[Label] = {
-    State { st =>
-      val c = st.counter + 1
-      val label = Label(s"Lstr$c")
-      (st.copy(counter = c, strings = st.strings :+ StringDef(label, value)), label)
-    }
-  }
-
-  private def liftS[A](sa: GenS[A]): Gen[A] = ReaderT.liftF(sa)
-  private def pure[A](a: A): Gen[A] = ReaderT.pure[GenS, Env, A](a)
-  private val ask: Gen[Env] = ReaderT.ask[GenS, Env]
-
-  private def sequenceExprCode(values: Seq[Gen[Code]]): Gen[List[Code]] =
-    values.foldRight(pure[List[Code]](Nil)) { (value, acc) =>
-      value.flatMap(code => acc.map(code :: _))
-    }
-
-  private def loadImm32(n: Int): Code = {
-    if (n >= 0 && n <= 0xFFFF) code(ins("mov", r(w0), imm(n)))
-    else {
-      val low  = n & 0xFFFF
-      val high = (n >>> 16) & 0xFFFF
-      val first = code(ins("movz", r(w0), imm(low)))
-      if (high != 0) first ++ code(ins("movk", r(w0), imm(high), Shift("lsl", 16))) else first
-    }
-  }
-
-  private def loadImm64(n: Long): Code = {
-    val parts = (0 until 4).map(i => (n >>> (i * 16)) & 0xFFFFL)
-    val firstIdx = parts.indexWhere(_ != 0)
-    if (firstIdx < 0) code(ins("mov", r(x0), imm(0)))
-    else {
-      val first = code(ins("movz", r(x0), imm(parts(firstIdx)), Shift("lsl", firstIdx * 16)))
-      val rest = parts.zipWithIndex.collect {
-        case (part, idx) if idx != firstIdx && part != 0 => code(ins("movk", r(x0), imm(part), Shift("lsl", idx * 16)))
+    function("lambda_start", Frame(Map.empty, 2, locals)) { frame =>
+      val declarations = program.declarations.flatMap {
+        case Decl.Let(symbol, value) =>
+          val code = expression(value, frame, tail = false)
+          code ++ defineGlobal(symbol)
+        case Decl.Rec(bindings) =>
+          val define = bindings.map(binding => defineGlobal(binding._1))
+          bindings.zip(define).flatMap { case ((_, value), store) => expression(value, frame, tail = false) ++ store }
       }
-      first ++ Code.concat(rest)
+      declarations ++ expression(Apply(Variable(program.main), Constant(Literal.Unit)), frame, tail = true)
+    }
+
+    val lines = entry ++ functions ++
+      Vector(".section __TEXT,__cstring,cstring_literals") ++ strings.flatMap((label, text) => Vector(s"$label:", s".asciz \"$text\"")) ++
+      globals.values.toVector.sorted.map(label => s".zerofill __DATA,__bss,$label,8,3")
+    lines.map(line => if (line.endsWith(":") || line.startsWith(".")) line else s"    $line").mkString("", "\n", "\n")
+  }
+
+  /** 深い再帰のために大きなスタックを確保し、sp を移してからプログラムを動かす */
+  private def entry: Code =
+    Vector(".section __TEXT,__text,regular,pure_instructions", ".globl _main", ".p2align 2", "_main:",
+      "stp x29, x30, [sp, #-16]!", "stp x19, x20, [sp, #-16]!", "mov x19, sp") ++
+      // mmap(0, size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0)
+      Vector("mov x0, #0") ++ constant("x1", stackSize) ++ Vector("mov w2, #3", "mov w3, #0x1002", "mov w4, #-1", "mov x5, #0", "bl _mmap") ++
+      constant("x9", stackSize) ++
+      Vector("add x0, x0, x9", "mov sp, x0", "bl lambda_start", "mov sp, x19", "ldp x19, x20, [sp], #16", "ldp x29, x30, [sp], #16", "ret")
+
+  private def defineGlobal(symbol: Symbol): Code = {
+    val label = fresh("global")
+    globals += symbol -> label
+    Vector(s"adrp x9, $label@PAGE", s"str x0, [x9, $label@PAGEOFF]")
+  }
+
+  // ---- 関数とフレーム ----
+
+  private def function(label: String, frame: Frame)(body: Frame => Code): Unit =
+    functions ++= Vector(".p2align 2", s"$label:") ++ constant("x16", frame.size) ++
+      Vector("sub sp, sp, x16", "stp x29, x30, [sp]", "mov x29, sp", s"str x0, ${slot(closureSlot)}", s"str x1, ${slot(argumentSlot)}") ++
+      body(frame)
+
+  private def leave(frame: Frame): Code = Vector("ldp x29, x30, [sp]") ++ constant("x16", frame.size) ++ Vector("add sp, sp, x16")
+
+  private def returnValue(frame: Frame): Code = leave(frame) :+ "ret"
+
+  /** parameter を受け取る関数を作り、captured を捕まえたクロージャを x0 に置く */
+  private def closure(parameter: Symbol, captured: List[Symbol], locals: Int, frame: Frame)(body: Frame => Code): Code = {
+    val label = fresh("function")
+    val variables = captured.zipWithIndex.map((symbol, index) => symbol -> Stored(Place.Captured(index), frame.variables(symbol).cell))
+    function(label, Frame(variables.toMap + (parameter -> Stored(Place.Slot(argumentSlot), cell = false)), 2, locals))(body)
+
+    Vector(s"mov x0, #${8 * (1 + captured.length)}", "bl _malloc", s"adrp x9, $label@PAGE", s"add x9, x9, $label@PAGEOFF", "str x9, [x0]") ++
+      captured.zipWithIndex.flatMap((symbol, index) => storage("x9", symbol, frame) :+ s"str x9, [x0, #${8 * (index + 1)}]")
+  }
+
+  /** 変数の置き場にある語（rec の変数ならセルへのポインタ）を読む */
+  private def storage(register: String, symbol: Symbol, frame: Frame): Code = frame.variables.get(symbol) match {
+    case Some(Stored(Place.Slot(index), _)) => Vector(s"ldr $register, ${slot(index)}")
+    case Some(Stored(Place.Captured(index), _)) => Vector(s"ldr $register, ${slot(closureSlot)}", s"ldr $register, [$register, #${8 * (index + 1)}]")
+    case None =>
+      val label = globals.getOrElse(symbol, invariant(s"$symbol is not in scope"))
+      Vector(s"adrp $register, $label@PAGE", s"ldr $register, [$register, $label@PAGEOFF]")
+  }
+
+  private def variable(register: String, symbol: Symbol, frame: Frame): Code =
+    storage(register, symbol, frame) ++ (if (frame.variables.get(symbol).exists(_.cell)) Vector(s"ldr $register, [$register]") else Vector.empty)
+
+  private def free(term: Lambda): List[Symbol] = term match {
+    case Variable(symbol) => List(symbol)
+    case Constant(_) | Foreign(_, _, _) => Nil
+    case Abstraction(parameter, body) => free(body).filterNot(_ == parameter)
+    case Apply(function, argument) => free(function) ++ free(argument)
+    case Let(symbol, value, body) => free(value) ++ free(body).filterNot(_ == symbol)
+    case LetRec(bindings, body) => (bindings.flatMap(binding => free(binding._2)) ++ free(body)).filterNot(bindings.map(_._1).contains)
+    case If(condition, thenBranch, elseBranch) => free(condition) ++ free(thenBranch) ++ free(elseBranch)
+    case Primitive(_, arguments) => arguments.flatMap(free)
+  }
+
+  /** この関数のフレームに置く let の変数の数（中の関数の分は数えない） */
+  private def countLocals(term: Lambda): Int = term match {
+    case Variable(_) | Constant(_) | Foreign(_, _, _) | Abstraction(_, _) => 0
+    case Apply(function, argument) => countLocals(function) + countLocals(argument)
+    case Let(_, value, body) => 1 + countLocals(value) + countLocals(body)
+    case LetRec(bindings, body) => bindings.map(binding => 1 + countLocals(binding._2)).sum + countLocals(body)
+    case If(condition, thenBranch, elseBranch) => countLocals(condition) + countLocals(thenBranch) + countLocals(elseBranch)
+    case Primitive(_, arguments) => arguments.map(countLocals).sum
+  }
+
+  // ---- 式 ----
+
+  private val push: Code = Vector("str x0, [sp, #-16]!")
+  private def pop(register: String): Code = Vector(s"ldr $register, [sp], #16")
+
+  private def constant(register: String, value: Long): Code = {
+    val parts = (0 until 4).map(index => (value >>> (16 * index)) & 0xffff)
+    Vector(s"movz $register, #${parts(0)}") ++ (1 until 4).collect { case index if parts(index) != 0 => s"movk $register, #${parts(index)}, lsl #${16 * index}" }
+  }
+
+  /** 式の値を x0 に置く。tail なら、その値を関数の結果として返す所まで生成する */
+  private def expression(term: Lambda, frame: Frame, tail: Boolean): Code = term match {
+    case Apply(function, argument) =>
+      val call = if (tail) leave(frame) ++ Vector("ldr x9, [x0]", "br x9") else Vector("ldr x9, [x0]", "blr x9")
+      expression(function, frame, tail = false) ++ push ++ expression(argument, frame, tail = false) ++ Vector("mov x1, x0") ++ pop("x0") ++ call
+
+    case Let(symbol, value, body) =>
+      val inner = frame.bind(symbol, cell = false)
+      expression(value, frame, tail = false) ++ Vector(s"str x0, ${slot(frame.slots)}") ++ expression(body, inner, tail)
+
+    case LetRec(bindings, body) =>
+      val inner = bindings.foldLeft(frame)((frame, binding) => frame.bind(binding._1, cell = true))
+      val cells = bindings.indices.map(index => slot(frame.slots + index))
+      cells.flatMap(cell => Vector("mov x0, #8", "bl _malloc", s"str x0, $cell")) ++
+        bindings.zip(cells).flatMap { case ((_, value), cell) => expression(value, inner, tail = false) ++ Vector(s"ldr x9, $cell", "str x0, [x9]") } ++
+        expression(body, inner, tail)
+
+    case If(condition, thenBranch, elseBranch) =>
+      val otherwise = fresh("Lelse")
+      val end = fresh("Lend")
+      expression(condition, frame, tail = false) ++ Vector(s"cbz x0, $otherwise") ++
+        expression(thenBranch, frame, tail) ++ (if (tail) Vector.empty else Vector(s"b $end")) ++
+        Vector(s"$otherwise:") ++ expression(elseBranch, frame, tail) ++ Vector(s"$end:")
+
+    case _ => value(term, frame) ++ (if (tail) returnValue(frame) else Vector.empty)
+  }
+
+  /** 呼び出しも分岐もしない式 */
+  private def value(term: Lambda, frame: Frame): Code = term match {
+    case Variable(symbol) => variable("x0", symbol, frame)
+
+    case Constant(literal) => literal match {
+      case Literal.Int(text, _) => constant("x0", BigInt(text).toLong)
+      case Literal.Float(text, "f32") => constant("x0", java.lang.Float.floatToRawIntBits(text.toFloat) & 0xffffffffL)
+      case Literal.Float(text, _) => constant("x0", java.lang.Double.doubleToRawLongBits(text.toDouble))
+      case Literal.Bool(value) => constant("x0", if (value) 1 else 0)
+      case Literal.Char(value) => constant("x0", value.toLong)
+      case Literal.Unit => constant("x0", 0)
+      case Literal.Str(value) =>
+        val label = fresh("Lstring")
+        strings += label -> escape(value)
+        Vector(s"adrp x0, $label@PAGE", s"add x0, x0, $label@PAGEOFF")
+    }
+
+    case Abstraction(parameter, body) =>
+      val captured = free(term).distinct.filter(frame.variables.contains)
+      closure(parameter, captured, countLocals(body), frame)(expression(body, _, tail = true))
+
+    case Primitive(intrinsic, List(operand)) => expression(operand, frame, tail = false) ++ unary(intrinsic)
+    case Primitive(intrinsic, List(left, right)) =>
+      expression(left, frame, tail = false) ++ push ++ expression(right, frame, tail = false) ++ Vector("mov x1, x0") ++ pop("x0") ++ binary(intrinsic)
+
+    case Foreign(name, parameters, result) =>
+      if (parameters.isEmpty) invariant(s"the foreign function $name takes no arguments")
+      foreign(name, parameters, result, Nil, frame)
+
+    case _ => invariant(s"$term is not a simple expression")
+  }
+
+  private def escape(text: String): String =
+    text.getBytes(java.nio.charset.StandardCharsets.UTF_8).map { byte =>
+      if (byte >= 0x20 && byte < 0x7f && byte != '"' && byte != '\\') byte.toChar.toString else f"\\${byte & 0xff}%03o"
+    }.mkString
+
+  // ---- 組み込み演算（左が x0、右が x1） ----
+
+  /** x0 を、型の幅と符号に合わせて丸める */
+  private def wrap(typeName: String): Code = typeName match {
+    case "i8" => Vector("sxtb x0, w0")
+    case "i16" => Vector("sxth x0, w0")
+    case "i32" => Vector("sxtw x0, w0")
+    case "u8" => Vector("and x0, x0, #0xff")
+    case "u16" => Vector("and x0, x0, #0xffff")
+    case "u32" | "char" => Vector("mov w0, w0")
+    case _ => Vector.empty
+  }
+
+  /** 浮動小数点数のレジスタと、同じ幅の整数のレジスタの接頭辞 */
+  private def floatRegisters(typeName: String): (String, String) = if (typeName == "f32") ("s", "w") else ("d", "x")
+
+  private def unary(intrinsic: Intrinsic): Code = intrinsic.op match {
+    case PrimOp.Not => Vector("eor x0, x0, #1")
+    case PrimOp.Neg if Primitives.floats(intrinsic.typeName) =>
+      val (float, integer) = floatRegisters(intrinsic.typeName)
+      Vector(s"fmov ${float}0, ${integer}0", s"fneg ${float}0, ${float}0", s"fmov ${integer}0, ${float}0")
+    case PrimOp.Neg => Vector("neg x0, x0") ++ wrap(intrinsic.typeName)
+    case _ => invariant(s"intrinsic ${intrinsic.name} takes one argument")
+  }
+
+  private def binary(intrinsic: Intrinsic): Code =
+    if (Primitives.floats(intrinsic.typeName)) floating(intrinsic) else integer(intrinsic)
+
+  private def integer(intrinsic: Intrinsic): Code = {
+    val typeName = intrinsic.typeName
+    // 64 ビットより狭い型の値は拡張してあるので、符号つきの演算で正しい結果になる
+    val unsigned = typeName == "u64" || typeName == "usize"
+    val divide = if (unsigned) "udiv" else "sdiv"
+    def compare(signedCondition: String, unsignedCondition: String): Code =
+      Vector("cmp x0, x1", s"cset x0, ${if (unsigned) unsignedCondition else signedCondition}")
+
+    intrinsic.op match {
+      case PrimOp.Add => Vector("add x0, x0, x1") ++ wrap(typeName)
+      case PrimOp.Sub => Vector("sub x0, x0, x1") ++ wrap(typeName)
+      case PrimOp.Mul => Vector("mul x0, x0, x1") ++ wrap(typeName)
+      case PrimOp.Div => Vector(s"$divide x0, x0, x1") ++ wrap(typeName)
+      case PrimOp.Mod => Vector(s"$divide x9, x0, x1", "msub x0, x9, x1, x0") ++ wrap(typeName)
+      case PrimOp.And => Vector("and x0, x0, x1")
+      case PrimOp.Or => Vector("orr x0, x0, x1")
+      case PrimOp.Xor => Vector("eor x0, x0, x1")
+      case PrimOp.Eq => compare("eq", "eq")
+      case PrimOp.Neq => compare("ne", "ne")
+      case PrimOp.Lt => compare("lt", "lo")
+      case PrimOp.Leq => compare("le", "ls")
+      case PrimOp.Gt => compare("gt", "hi")
+      case PrimOp.Geq => compare("ge", "hs")
+      case PrimOp.Neg | PrimOp.Not => invariant(s"intrinsic ${intrinsic.name} takes two arguments")
     }
   }
 
-  private def loadNum(value: String, typeName: String): Code = typeName match {
-    // 負の数は match のパターンのリテラルから来る
-    case _ if value.startsWith("-") && !Set("f32", "f64")(typeName) =>
-      if (Set("i64", "u64", "isize", "usize")(typeName)) loadImm64(java.lang.Long.parseLong(value))
-      else loadImm32(java.lang.Integer.parseInt(value))
-    case "i64" | "u64" | "isize" | "usize" => loadImm64(java.lang.Long.parseUnsignedLong(value))
-    case "f32" => loadImm32(java.lang.Float.floatToRawIntBits(value.toFloat))
-    case "f64" => loadImm64(java.lang.Double.doubleToRawLongBits(value.toDouble))
-    case _ => loadImm32(java.lang.Integer.parseUnsignedInt(value))
-  }
+  private def floating(intrinsic: Intrinsic): Code = {
+    val (float, integer) = floatRegisters(intrinsic.typeName)
+    val operands = Vector(s"fmov ${float}0, ${integer}0", s"fmov ${float}1, ${integer}1")
+    def arithmetic(instruction: String): Code = operands ++ Vector(s"$instruction ${float}0, ${float}0, ${float}1", s"fmov ${integer}0, ${float}0")
+    // 条件は、どちらかが NaN のときに偽になるものを選ぶ（ne だけは真）
+    def compare(condition: String): Code = operands ++ Vector(s"fcmp ${float}0, ${float}1", s"cset x0, $condition")
 
-  private def varLookup(name: String, env: Env): Code = {
-    val found = env.values.foldLeft(Option.empty[(Binding, Int)]) {
-      case (some @ Some(_), _) => some
-      case (None, binding @ HeapBinding(`name`)) => Some(binding -> env.values.takeWhile(_ ne binding).count(_.isInstanceOf[HeapBinding]))
-      case (None, _) => None
-    }
-    found match {
-      case Some((HeapBinding(_), idx)) =>
-        code(ins("ldr", r(x0), mem(x29, -16))) ++
-          Code.concat(List.fill(idx)(code(ins("ldr", r(x0), mem(x0, 8))))) ++
-          code(ins("ldr", r(x0), mem(x0)))
-      case None =>
-        env.directFunctions.get(name) match {
-          case Some(label) => closureAllocNoEnv(label)
-          case None => sys.error(s"Unbound variable: $name")
-        }
+    intrinsic.op match {
+      case PrimOp.Add => arithmetic("fadd")
+      case PrimOp.Sub => arithmetic("fsub")
+      case PrimOp.Mul => arithmetic("fmul")
+      case PrimOp.Div => arithmetic("fdiv")
+      case PrimOp.Eq => compare("eq")
+      case PrimOp.Neq => compare("ne")
+      case PrimOp.Lt => compare("mi")
+      case PrimOp.Leq => compare("ls")
+      case PrimOp.Gt => compare("gt")
+      case PrimOp.Geq => compare("ge")
+      case _ => invariant(s"intrinsic ${intrinsic.name} is applied to floating-point numbers")
     }
   }
 
-  @tailrec
-  private def primitiveName(t: TypeRec[Type]): Option[String] = t.project match {
-    case AST.Primitive(name) => Some(name)
-    case AST.TypeApp(function, _) => primitiveName(function)
-    case _ => None
+  // ---- C の関数 ----
+
+  /** 引数を 1 つ受け取るたびに、それまでの引数を捕まえたクロージャを返す。最後の引数で C の関数を呼ぶ */
+  private def foreign(name: String, parameters: List[String], result: String, received: List[Symbol], frame: Frame): Code = {
+    val parameter = new Symbol(s"argument${received.length}")
+    val arguments = received :+ parameter
+    closure(parameter, received, locals = 0, frame) { inner =>
+      val body = if (arguments.length == parameters.length) foreignCall(name, parameters.zip(arguments), result, inner) else foreign(name, parameters, result, arguments, inner)
+      body ++ returnValue(inner)
+    }
   }
 
-  private def is64BitScalar(name: String): Boolean =
-    Set("i64", "u64", "isize", "usize", BuiltinTypes.CString, BuiltinTypes.VoidPtr, BuiltinTypes.Ptr).contains(name)
+  private def foreignCall(name: String, arguments: List[(String, Symbol)], result: String, frame: Frame): Code = {
+    // unit の引数は C に渡さない
+    val (floats, integers) = arguments.filterNot(_._1 == "unit").partition((typeName, _) => Primitives.floats(typeName))
+    if (floats.length > 8 || integers.length > 8) invariant(s"the foreign function $name takes too many arguments")
 
-  private def isUnsigned(name: String): Boolean =
-    Set("u8", "u16", "u32", "u64", "usize").contains(name)
-
-  private def scalarReg(prefix: String, index: Int): Reg = Reg(s"$prefix$index")
-
-  private def binInstr(op: BinOps, operandType: TypeRec[Type]): Code = primitiveName(operandType) match {
-    case Some("f32") =>
-      op match {
-        case BinOps.Add => code(ins("fmov", r(s1), r(w1)), ins("fmov", r(s0), r(w0)), ins("fadd", r(s0), r(s1), r(s0)), ins("fmov", r(w0), r(s0)))
-        case BinOps.Sub => code(ins("fmov", r(s1), r(w1)), ins("fmov", r(s0), r(w0)), ins("fsub", r(s0), r(s1), r(s0)), ins("fmov", r(w0), r(s0)))
-        case BinOps.Mul => code(ins("fmov", r(s1), r(w1)), ins("fmov", r(s0), r(w0)), ins("fmul", r(s0), r(s1), r(s0)), ins("fmov", r(w0), r(s0)))
-        case BinOps.Div => code(ins("fmov", r(s1), r(w1)), ins("fmov", r(s0), r(w0)), ins("fdiv", r(s0), r(s1), r(s0)), ins("fmov", r(w0), r(s0)))
-        case BinOps.Mod => sys.error("Modulo must be implemented by the standard library")
-        case BinOps.Eq  => code(ins("fmov", r(s1), r(w1)), ins("fmov", r(s0), r(w0)), ins("fcmp", r(s1), r(s0)), ins("cset", r(w0), Condition("eq")))
-        case BinOps.Neq => code(ins("fmov", r(s1), r(w1)), ins("fmov", r(s0), r(w0)), ins("fcmp", r(s1), r(s0)), ins("cset", r(w0), Condition("ne")))
-        case BinOps.Lt  => code(ins("fmov", r(s1), r(w1)), ins("fmov", r(s0), r(w0)), ins("fcmp", r(s1), r(s0)), ins("cset", r(w0), Condition("lt")))
-        case BinOps.Leq => code(ins("fmov", r(s1), r(w1)), ins("fmov", r(s0), r(w0)), ins("fcmp", r(s1), r(s0)), ins("cset", r(w0), Condition("le")))
-        case BinOps.Gt  => code(ins("fmov", r(s1), r(w1)), ins("fmov", r(s0), r(w0)), ins("fcmp", r(s1), r(s0)), ins("cset", r(w0), Condition("gt")))
-        case BinOps.Geq => code(ins("fmov", r(s1), r(w1)), ins("fmov", r(s0), r(w0)), ins("fcmp", r(s1), r(s0)), ins("cset", r(w0), Condition("ge")))
-        case BinOps.And => code(ins("and", r(w0), r(w1), r(w0)))
-        case BinOps.Or  => code(ins("orr", r(w0), r(w1), r(w0)))
-        case BinOps.Xor => code(ins("eor", r(w0), r(w1), r(w0)))
-        case BinOps.ShortAnd | BinOps.ShortOr => sys.error(s"Short-circuit operator $op must be lowered by operator resolution")
+    val pass = integers.zipWithIndex.flatMap { case ((_, symbol), index) => variable(s"x$index", symbol, frame) } ++
+      floats.zipWithIndex.flatMap { case ((typeName, symbol), index) =>
+        val (float, integer) = floatRegisters(typeName)
+        variable("x9", symbol, frame) :+ s"fmov $float$index, ${integer}9"
       }
-    case Some("f64") =>
-      op match {
-        case BinOps.Add => code(ins("fmov", r(d1), r(x1)), ins("fmov", r(d0), r(x0)), ins("fadd", r(d0), r(d1), r(d0)), ins("fmov", r(x0), r(d0)))
-        case BinOps.Sub => code(ins("fmov", r(d1), r(x1)), ins("fmov", r(d0), r(x0)), ins("fsub", r(d0), r(d1), r(d0)), ins("fmov", r(x0), r(d0)))
-        case BinOps.Mul => code(ins("fmov", r(d1), r(x1)), ins("fmov", r(d0), r(x0)), ins("fmul", r(d0), r(d1), r(d0)), ins("fmov", r(x0), r(d0)))
-        case BinOps.Div => code(ins("fmov", r(d1), r(x1)), ins("fmov", r(d0), r(x0)), ins("fdiv", r(d0), r(d1), r(d0)), ins("fmov", r(x0), r(d0)))
-        case BinOps.Mod => sys.error("Modulo must be implemented by the standard library")
-        case BinOps.Eq  => code(ins("fmov", r(d1), r(x1)), ins("fmov", r(d0), r(x0)), ins("fcmp", r(d1), r(d0)), ins("cset", r(w0), Condition("eq")))
-        case BinOps.Neq => code(ins("fmov", r(d1), r(x1)), ins("fmov", r(d0), r(x0)), ins("fcmp", r(d1), r(d0)), ins("cset", r(w0), Condition("ne")))
-        case BinOps.Lt  => code(ins("fmov", r(d1), r(x1)), ins("fmov", r(d0), r(x0)), ins("fcmp", r(d1), r(d0)), ins("cset", r(w0), Condition("lt")))
-        case BinOps.Leq => code(ins("fmov", r(d1), r(x1)), ins("fmov", r(d0), r(x0)), ins("fcmp", r(d1), r(d0)), ins("cset", r(w0), Condition("le")))
-        case BinOps.Gt  => code(ins("fmov", r(d1), r(x1)), ins("fmov", r(d0), r(x0)), ins("fcmp", r(d1), r(d0)), ins("cset", r(w0), Condition("gt")))
-        case BinOps.Geq => code(ins("fmov", r(d1), r(x1)), ins("fmov", r(d0), r(x0)), ins("fcmp", r(d1), r(d0)), ins("cset", r(w0), Condition("ge")))
-        case BinOps.And => code(ins("and", r(x0), r(x1), r(x0)))
-        case BinOps.Or  => code(ins("orr", r(x0), r(x1), r(x0)))
-        case BinOps.Xor => code(ins("eor", r(x0), r(x1), r(x0)))
-        case BinOps.ShortAnd | BinOps.ShortOr => sys.error(s"Short-circuit operator $op must be lowered by operator resolution")
-      }
-    case Some(name) =>
-      val p = if (is64BitScalar(name)) "x" else "w"
-      val r0 = scalarReg(p, 0)
-      val r1 = scalarReg(p, 1)
-      val signedCond = Map(BinOps.Lt -> "lt", BinOps.Leq -> "le", BinOps.Gt -> "gt", BinOps.Geq -> "ge")
-      val unsignedCond = Map(BinOps.Lt -> "lo", BinOps.Leq -> "ls", BinOps.Gt -> "hi", BinOps.Geq -> "hs")
-      op match {
-        case BinOps.Add => code(ins("add", r(r0), r(r1), r(r0)))
-        case BinOps.Sub => code(ins("sub", r(r0), r(r1), r(r0)))
-        case BinOps.Mul => code(ins("mul", r(r0), r(r1), r(r0)))
-        case BinOps.Div => code(ins(if (isUnsigned(name)) "udiv" else "sdiv", r(r0), r(r1), r(r0)))
-        case BinOps.Mod => sys.error("Modulo must be implemented by the standard library")
-        case BinOps.Eq  => code(ins("cmp", r(r1), r(r0)), ins("cset", r(w0), Condition("eq")))
-        case BinOps.Neq => code(ins("cmp", r(r1), r(r0)), ins("cset", r(w0), Condition("ne")))
-        case BinOps.And => code(ins("and", r(r0), r(r1), r(r0)))
-        case BinOps.Or  => code(ins("orr", r(r0), r(r1), r(r0)))
-        case BinOps.Xor => code(ins("eor", r(r0), r(r1), r(r0)))
-        case BinOps.ShortAnd | BinOps.ShortOr => sys.error(s"Short-circuit operator $op must be lowered by operator resolution")
-        case cmp        => code(ins("cmp", r(r1), r(r0)), ins("cset", r(w0), Condition(if (isUnsigned(name)) unsignedCond(cmp) else signedCond(cmp))))
-      }
-    case None => sys.error(s"Unsupported binary operand type: ${operandType.show}")
-  }
-
-  private def asmString(value: String): String =
-    value.flatMap {
-      case '"' => "\\\""
-      case '\\' => "\\\\"
-      case '\n' => "\\n"
-      case '\r' => "\\r"
-      case '\t' => "\\t"
-      case '\u0000' => "\\0"
-      case ch => ch.toString
+    val receive = result match {
+      case "f32" => Vector("fmov w0, s0")
+      case "f64" => Vector("fmov x0, d0")
+      case "bool" => Vector("cmp w0, #0", "cset x0, ne")
+      case "unit" => Vector("mov x0, #0")
+      case _ => wrap(result)
     }
-
-  private def function(label: Label, body: Code): FunctionDef =
-    FunctionDef(label, code(Blank, Directive("p2align", Vector("2")), LabelDef(label)) ++ body)
-
-  private def liftedFn(label: Label, body: Code): FunctionDef =
-    function(label,
-      code(
-        ins("stp", r(x29), r(x30), pre(sp, -16)),
-        ins("mov", r(x29), r(sp)),
-        ins("sub", r(sp), r(sp), imm(16)),
-        ins("stp", r(x0), r(x1), pre(sp, -16)),
-        ins("mov", r(x0), imm(16)),
-        ins("bl", LabelOperand(Label("_malloc"))),
-        ins("mov", r(x9), r(x0)),
-        ins("ldp", r(x0), r(x1), post(sp, 16)),
-        ins("str", r(x1), mem(x9)),
-        ins("ldr", r(x10), mem(x0, 8)),
-        ins("str", r(x10), mem(x9, 8)),
-        ins("str", r(x9), mem(x29, -16))
-      ) ++ body ++ epilogue
-    )
-
-  private case class ForeignSig(args: Vector[TypeRec[Type]], returnType: TypeRec[Type])
-  private sealed trait ForeignArgSource
-  private case class SavedEnvArg(envIndex: Int) extends ForeignArgSource
-  private case object SavedCurrentArg extends ForeignArgSource
-
-  private def destructForeignSig(t: TypeRec[Type]): Option[ForeignSig] = {
-    @tailrec
-    def loop(current: TypeRec[Type], args: Vector[TypeRec[Type]]): ForeignSig = destructArrow(current) match {
-      case Some((from, to)) => loop(to, args :+ from)
-      case None => ForeignSig(args, current)
-    }
-    val sig = loop(t, Vector.empty)
-    Option.when(sig.args.nonEmpty)(sig)
+    pass ++ Vector(s"bl _$name") ++ receive
   }
-
-  private def foreignArgLocations(args: Vector[TypeRec[Type]]): Vector[(TypeRec[Type], Reg)] = {
-    val (_, _, locations) = args.foldLeft((0, 0, Vector.empty[(TypeRec[Type], Reg)])) {
-      case ((intCount, floatCount, acc), t) =>
-        primitiveName(t) match {
-          case Some("f32") =>
-            if (floatCount >= 8) sys.error("Foreign functions with more than 8 floating-point arguments are not supported")
-            (intCount, floatCount + 1, acc :+ (t -> scalarReg("s", floatCount)))
-          case Some("f64") =>
-            if (floatCount >= 8) sys.error("Foreign functions with more than 8 floating-point arguments are not supported")
-            (intCount, floatCount + 1, acc :+ (t -> scalarReg("d", floatCount)))
-          case _ =>
-            if (intCount >= 8) sys.error("Foreign functions with more than 8 integer/pointer arguments are not supported")
-            (intCount + 1, floatCount, acc :+ (t -> scalarReg("x", intCount)))
-        }
-    }
-    locations
-  }
-
-  private def loadSavedForeignArg(source: ForeignArgSource): Code = source match {
-    case SavedCurrentArg =>
-      code(ins("ldr", r(x10), mem(x29, -32)))
-    case SavedEnvArg(envIndex) =>
-      val hops = code(ins("ldr", r(x9), mem(x29, -16)), ins("ldr", r(x9), mem(x9, 8))) ++
-        Code.concat(List.fill(envIndex)(code(ins("ldr", r(x9), mem(x9, 8)))))
-      hops ++ code(ins("ldr", r(x10), mem(x9)))
-  }
-
-  private def moveForeignArg(source: ForeignArgSource, t: TypeRec[Type], target: Reg): Code =
-    loadSavedForeignArg(source) ++ (primitiveName(t) match {
-      case Some("f32") => code(ins("fmov", r(target), r(w10)))
-      case Some("f64") => code(ins("fmov", r(target), r(x10)))
-      case _ => code(ins("mov", r(target), r(x10)))
-    })
-
-  private def foreignReturnMove(t: TypeRec[Type]): Code = primitiveName(t) match {
-    case Some("f32") => code(ins("fmov", r(w0), r(s0)))
-    case Some("f64") => code(ins("fmov", r(x0), r(d0)))
-    case _ => Code.empty
-  }
-
-  private def foreignCaptureWrapper(label: Label, nextLabel: Label): FunctionDef =
-    function(label,
-      code(
-        ins("stp", r(x29), r(x30), pre(sp, -16)),
-        ins("mov", r(x29), r(sp)),
-        ins("sub", r(sp), r(sp), imm(16)),
-        ins("stp", r(x0), r(x1), pre(sp, -16)),
-        ins("mov", r(x0), imm(16)),
-        ins("bl", LabelOperand(Label("_malloc"))),
-        ins("mov", r(x9), r(x0)),
-        ins("ldp", r(x0), r(x1), post(sp, 16)),
-        ins("str", r(x1), mem(x9)),
-        ins("ldr", r(x10), mem(x0, 8)),
-        ins("str", r(x10), mem(x9, 8)),
-        ins("str", r(x9), mem(x29, -16))
-      ) ++ closureAlloc(nextLabel) ++ epilogue
-    )
-
-  private def foreignCallWrapper(label: Label, symbol: String, args: Vector[TypeRec[Type]], returnType: TypeRec[Type]): FunctionDef = {
-    val previousCount = args.length - 1
-    val sources = args.indices.map { argIndex =>
-      if (argIndex == previousCount) SavedCurrentArg else SavedEnvArg(previousCount - 1 - argIndex)
-    }.toVector
-    val moves = foreignArgLocations(args).zip(sources).map { case ((t, target), source) => moveForeignArg(source, t, target) }
-    function(label,
-      code(
-        ins("stp", r(x29), r(x30), pre(sp, -16)),
-        ins("mov", r(x29), r(sp)),
-        ins("str", r(x0), pre(sp, -16)),
-        ins("str", r(x1), pre(sp, -16))
-      ) ++ Code.concat(moves) ++ code(
-        ins("bl", LabelOperand(Label(s"_$symbol")))
-      ) ++ foreignReturnMove(returnType) ++ code(
-        ins("mov", r(sp), r(x29)),
-        ins("ldp", r(x29), r(x30), post(sp, 16)),
-        ins("ret")
-      )
-    )
-  }
-
-  private def foreignWrappers(labels: Vector[Label], symbol: String, sig: ForeignSig): Vector[FunctionDef] = {
-    val captureWrappers = labels.dropRight(1).zip(labels.tail).map { case (label, nextLabel) => foreignCaptureWrapper(label, nextLabel) }
-    captureWrappers :+ foreignCallWrapper(labels.last, symbol, sig.args, sig.returnType)
-  }
-
-  private def closureAlloc(label: Label): Code = code(
-    ins("mov", r(x0), imm(16)),
-    ins("bl", LabelOperand(Label("_malloc"))),
-    ins("adrp", r(x9), Page(label)),
-    ins("add", r(x9), r(x9), PageOff(label)),
-    ins("str", r(x9), mem(x0)),
-    ins("ldr", r(x9), mem(x29, -16)),
-    ins("str", r(x9), mem(x0, 8))
-  )
-
-  private def closureAllocNoEnv(label: Label): Code = code(
-    ins("mov", r(x0), imm(16)),
-    ins("bl", LabelOperand(Label("_malloc"))),
-    ins("adrp", r(x9), Page(label)),
-    ins("add", r(x9), r(x9), PageOff(label)),
-    ins("str", r(x9), mem(x0)),
-    ins("mov", r(x9), imm(0)),
-    ins("str", r(x9), mem(x0, 8))
-  )
-
-  private val epilogue: Code = code(
-    ins("mov", r(sp), r(x29)),
-    ins("ldp", r(x29), r(x30), post(sp, 16)),
-    ins("ret")
-  )
-
-  // クロージャを介さず label へ直接飛ぶ関数。引数は通常の関数と同じくヒープの環境フレームに置く
-  // （本体の let や λ が [x29, -16] を環境ポインタとして使うため、引数をそこへ直接置くことはできない）
-  private def directFn(label: Label, body: Code): FunctionDef =
-    function(label,
-      code(
-        ins("stp", r(x29), r(x30), pre(sp, -16)),
-        ins("mov", r(x29), r(sp)),
-        ins("sub", r(sp), r(sp), imm(16)),
-        ins("str", r(x1), pre(sp, -16)),
-        ins("mov", r(x0), imm(16)),
-        ins("bl", LabelOperand(Label("_malloc"))),
-        ins("ldr", r(x1), post(sp, 16)),
-        ins("str", r(x1), mem(x0)),
-        ins("mov", r(x9), imm(0)),
-        ins("str", r(x9), mem(x0, 8)),
-        ins("str", r(x0), mem(x29, -16))
-      ) ++ body ++ epilogue
-    )
-
-  @tailrec
-  private def isFunctionType(t: TypeRec[Type]): Boolean = t.project match {
-    case AST.Arrow(_, _) => true
-    case AST.ForAll(_, _, body) => isFunctionType(body)
-    case _ => false
-  }
-
-  private val appSeq: Code = code(
-    ins("mov", r(x1), r(x0)),
-    ins("ldr", r(x0), post(sp, 16)),
-    ins("ldr", r(x16), mem(x0)),
-    ins("blr", r(x16))
-  )
-
-  // 末尾呼び出し: 引数はレジスタ、束縛はヒープにあるので、自分のフレームを畳んでから飛べばよい
-  private val leaveFrame: Code = code(
-    ins("mov", r(sp), r(x29)),
-    ins("ldp", r(x29), r(x30), post(sp, 16))
-  )
-
-  private val tailAppSeq: Code = code(
-    ins("mov", r(x1), r(x0)),
-    ins("ldr", r(x0), post(sp, 16)),
-    ins("ldr", r(x16), mem(x0))
-  ) ++ leaveFrame ++ code(ins("br", r(x16)))
-
-  // 末尾位置でない子の式
-  private def nonTail[A](gen: Gen[A]): Gen[A] = gen.local((env: Env) => env.copy(tail = false))
-
-  private def mainFunction(body: Code): FunctionDef =
-    FunctionDef(Label("_main"),
-      code(
-        Directive("text"),
-        Directive("globl", Vector("_main")),
-        Directive("p2align", Vector("2")),
-        LabelDef(Label("_main")),
-        ins("stp", r(x29), r(x30), pre(sp, -16)),
-        ins("mov", r(x29), r(sp)),
-        ins("sub", r(sp), r(sp), imm(16)),
-        ins("mov", r(x0), imm(0)),
-        ins("str", r(x0), mem(x29, -16))
-      ) ++ body ++ epilogue
-    )
-
-  private val genAlg: RAlgebra[TypedAST, TypeRec, GenCode] = [x] => he => he.ast match {
-    case AST.Num(v, t) => pure(loadNum(v, t))
-    case AST.Char(v) => pure(loadImm32(v.toInt))
-    case AST.StringLit(v) => for {
-      lbl <- liftS(addString(v))
-    } yield code(
-      ins("adrp", r(x0), Page(lbl)),
-      ins("add", r(x0), r(x0), PageOff(lbl))
-    )
-    case AST.StrInterp(_) => sys.error("string interpolation must be desugared by OperatorDesugar before code generation")
-    case AST.Context(_, _, _, _) => sys.error("Context must be desugared by ContextDesugar before code generation")
-    case AST.Bool(v) => pure(loadImm32(if (v) 1 else 0))
-    case AST.UnitLit() => pure(loadImm32(0))
-
-    case AST.Block(discarded, result) => for {
-      discardedCode <- sequenceExprCode(discarded.map(d => nonTail(d.result)))
-      resultCode <- result match {
-        case Some(expr) => expr.result
-        case None => pure(loadImm32(0))
-      }
-    } yield Code.concat(discardedCode) ++ resultCode
-
-    case AST.UnaryOp(_, _, _) => pure(sys.error("operators must be desugared by OperatorDesugar before code generation"))
-
-    case AST.BinOp(_, _, _, _) | AST.OpSeq(_, _) => pure(sys.error("operators must be desugared by OperatorDesugar before code generation"))
-
-    case AST.Intrinsic(IntrinsicOps.BinOp(op, _), Seq(l, rExpr)) => for {
-      lc <- nonTail(l.result)
-      rc <- nonTail(rExpr.result)
-    } yield lc ++ code(ins("str", r(x0), pre(sp, -16))) ++ rc ++ code(ins("ldr", r(x1), post(sp, 16))) ++ binInstr(op, typeOf(l.original))
-
-    case AST.Intrinsic(IntrinsicOps.UnaryOp(UnaryOps.Neg, _), Seq(body)) =>
-      nonTail(body.result).map(_ ++ (primitiveName(typeOf(body.original)) match {
-        case Some("f32") => code(ins("fmov", r(s0), r(w0)), ins("fneg", r(s0), r(s0)), ins("fmov", r(w0), r(s0)))
-        case Some("f64") => code(ins("fmov", r(d0), r(x0)), ins("fneg", r(d0), r(d0)), ins("fmov", r(x0), r(d0)))
-        case Some(name) if is64BitScalar(name) => code(ins("neg", r(x0), r(x0)))
-        case _ => code(ins("neg", r(w0), r(w0)))
-      }))
-
-    case AST.Intrinsic(IntrinsicOps.UnaryOp(UnaryOps.Not, _), Seq(body)) =>
-      nonTail(body.result).map(_ ++ code(
-        ins("cmp", r(w0), imm(0)),
-        ins("cset", r(w0), Condition("eq"))
-      ))
-
-    case AST.Intrinsic(op, args) =>
-      pure(sys.error(s"Unsupported intrinsic $op with ${args.length} arguments"))
-
-    case AST.Var(Variable(name)) =>
-      ask.map(env => varLookup(name, env))
-
-    case AST.Foreign(Variable(name), _) => for {
-      sig = he.ann match {
-        case ExprAnn(t) => destructForeignSig(t).getOrElse(sys.error(s"Foreign must have function type: ${t.show}"))
-        case _ => sys.error("Foreign node must have expression annotation")
-      }
-      labels <- liftS(sig.args.indices.toList.traverse(_ => fresh(s"foreign_$name")))
-      _ <- liftS(addExtern(name))
-      _ <- liftS(State.modify[GenState](st => st.copy(funcs = st.funcs ++ foreignWrappers(labels.toVector, name, sig))))
-    } yield closureAllocNoEnv(labels.head)
-
-    case AST.Abs(Variable(param), _, body) => for {
-      lbl <- liftS(fresh("lambda"))
-      bc  <- body.result.local((env: Env) => env.withHeap(param).copy(tail = true))
-      _   <- liftS(addFunc(liftedFn(lbl, bc)))
-    } yield closureAlloc(lbl)
-
-    case AST.TyAbs(_, _, body) => body.result
-    case AST.InstAbs(_, _) => pure(sys.error("InstAbs must be desugared by TraitEncoder before code generation"))
-    case AST.InstApp(_, _) => pure(sys.error("InstApp must be desugared by TraitEncoder before code generation"))
-    case AST.Summon(_, _) => pure(sys.error("Summon must be desugared by TraitEncoder before code generation"))
-    case AST.Path(_, _, _, _, _) | AST.Select(_, _, _, _, _) | AST.TupleLit(_, _) => pure(sys.error("dot notation must be desugared by SelectDesugar before code generation"))
-    case AST.ListLit(_, _, _) => pure(sys.error("list literals must be desugared by OperatorDesugar before code generation"))
-    case AST.NamedApp(_, _, _) => pure(sys.error("named construction must be desugared by RecordDesugar before code generation"))
-    case AST.Using(_, _) => pure(sys.error("Using must be desugared by TraitEncoder before code generation"))
-    case AST.Instance(_, _, _, _) => pure(sys.error("Instance must be desugared by TraitEncoder before code generation"))
-
-    case AST.Let(Variable(param), _, value, body) => for {
-      vc <- nonTail(value.result)
-      bc <- body.result.local((env: Env) => env.withHeap(param))
-    } yield vc ++ bindValueToHeap ++ bc ++ restoreHeap
-
-    // 組の全員のセルを先に確保してから、順に値を入れる
-    case AST.LetRec(bindings, body) =>
-      val names = bindings.map(_.variable.name)
-      val scope = (env: Env) => names.foldLeft(env)(_.withHeap(_))
-      for {
-        values <- bindings.traverse(b => nonTail(b.value.result.local(scope)))
-        bc <- body.result.local(scope)
-      } yield names.foldLeft(Code.empty)((acc, _) => acc ++ allocateRecCell) ++
-        values.zipWithIndex.foldLeft(Code.empty) { case (acc, (vc, index)) => acc ++ vc ++ storeRecCell(names.length - 1 - index) } ++
-        bc ++ names.foldLeft(Code.empty)((acc, _) => acc ++ restoreHeap)
-
-    case AST.TypeLet(_, _, _, body) => body.result
-    case AST.DataLet(_, _, _, _) | AST.DataLetRec(_, _) => pure(sys.error("DataLet must be Church encoded before code generation"))
-    case AST.PatternMatch(_, _) | AST.LetPattern(_, _, _, _) => pure(sys.error("patterns must be desugared by PatternDesugar before code generation"))
-    case AST.Match(_, _) => pure(sys.error("Match must be Church encoded before code generation"))
-    case AST.Fold(_, _, _) => pure(sys.error("Fold must be Church encoded before code generation"))
-
-    case AST.App(f, a) =>
-      @tailrec
-      def directName(expr: TypeRec[Expr]): Option[String] = expr.project match {
-        case AST.Var(Variable(name)) => Some(name)
-        case AST.TyApp(function, _) => directName(function)
-        case _ => None
-      }
-      ask.flatMap { env =>
-        directName(f.original).flatMap(env.directFunctions.get) match {
-          case Some(label) =>
-            nonTail(a.result).map { ac =>
-              if (env.tail) ac ++ code(ins("mov", r(x1), r(x0))) ++ leaveFrame ++ code(ins("b", LabelOperand(label)))
-              else ac ++ code(ins("mov", r(x1), r(x0)), ins("bl", LabelOperand(label)))
-            }
-          case None => for {
-            fc <- nonTail(f.result)
-            ac <- nonTail(a.result)
-          } yield fc ++ code(ins("str", r(x0), pre(sp, -16))) ++ ac ++ (if (env.tail) tailAppSeq else appSeq)
-        }
-      }
-
-    case AST.TyApp(f, _) => f.result
-
-    case AST.If(c, t, e) => for {
-      l <- liftS(label())
-      cond <- nonTail(c.result)
-      trB <- t.result
-      elB <- e.result
-    } yield cond ++ code(
-      ins("cbnz", r(w0), LabelOperand(Label(s".$l" + "true"))),
-      ins("b", LabelOperand(Label(s".$l" + "false"))),
-      LabelDef(Label(s".$l" + "true"))
-    ) ++ trB ++ code(
-      ins("b", LabelOperand(Label(s".$l" + "end"))),
-      LabelDef(Label(s".$l" + "false"))
-    ) ++ elB ++ code(
-      LabelDef(Label(s".$l" + "end"))
-    )
-
-    case AST.Program(_) => pure(Code.empty)
-
-    case AST.TopLet(_, _, _) => pure(Code.empty)
-    case AST.TopRec(_) => pure(Code.empty)
-    case AST.TopImport(_) => pure(Code.empty)
-    case AST.TopType(_, _, _) => pure(Code.empty)
-    case AST.TopData(_, _, _) => pure(Code.empty)
-    case AST.TopTrait(_, _, _, _) => pure(sys.error("TopTrait must be desugared before code generation"))
-    case AST.TopImpl(_, _, _, _, _, _) => pure(sys.error("TopImpl must be desugared before code generation"))
-    case AST.TopDerive(_, _) => pure(sys.error("TopDerive must be desugared before code generation"))
-    case AST.TopModule(_, _) | AST.TopOpen(_) | AST.TopOperator(_, _, _) | AST.TopSyntax(_, _) | AST.TopModified(_, _) => pure(sys.error("modules must be desugared before code generation"))
-
-    case AST.Primitive(_) => pure(Code.empty)
-    case AST.TypeVar(_) => pure(Code.empty)
-    case AST.Arrow(_, _)  => pure(Code.empty)
-    case AST.InstArrow(_, _) => pure(sys.error("InstArrow must be desugared by TraitEncoder before code generation"))
-    case AST.ForAll(_, _, _) => pure(Code.empty)
-    case AST.TypeApp(_, _) => pure(Code.empty)
-    case AST.TypeAbs(_, _, _) => pure(Code.empty)
-    case AST.TupleType(_) => pure(sys.error("tuple types must be resolved by the type checker before code generation"))
-  }
-
-  private val bindValueToHeap: Code = code(
-    ins("ldr", r(x9), mem(x29, -16)),
-    ins("str", r(x9), pre(sp, -16)),
-    ins("str", r(x0), pre(sp, -16)),
-    ins("mov", r(x0), imm(16)),
-    ins("bl", LabelOperand(Label("_malloc"))),
-    ins("ldr", r(x1), post(sp, 16)),
-    ins("str", r(x1), mem(x0)),
-    ins("ldr", r(x9), post(sp, 16)),
-    ins("str", r(x9), mem(x0, 8)),
-    ins("str", r(x0), mem(x29, -16))
-  )
-
-  private val restoreHeap: Code = code(
-    ins("mov", r(x9), r(x0)),
-    ins("ldr", r(x0), mem(x29, -16)),
-    ins("ldr", r(x0), mem(x0, 8)),
-    ins("str", r(x0), mem(x29, -16)),
-    ins("mov", r(x0), r(x9))
-  )
-
-  private val allocateRecCell: Code = code(
-    ins("ldr", r(x9), mem(x29, -16)),
-    ins("str", r(x9), pre(sp, -16)),
-    ins("mov", r(x0), imm(16)),
-    ins("bl", LabelOperand(Label("_malloc"))),
-    ins("ldr", r(x9), post(sp, 16)),
-    ins("str", r(x9), mem(x0, 8)),
-    ins("mov", r(x9), imm(0)),
-    ins("str", r(x9), mem(x0)),
-    ins("str", r(x0), mem(x29, -16))
-  )
-
-  // x0 の値を、現在のフレームから depth 個外側のセルに入れる
-  private def storeRecCell(depth: Int): Code =
-    code(ins("ldr", r(x9), mem(x29, -16))) ++
-      (0 until depth).foldLeft(Code.empty)((acc, _) => acc ++ code(ins("ldr", r(x9), mem(x9, 8)))) ++
-      code(ins("str", r(x0), mem(x9)))
-
-  @tailrec
-  private def unwrapTypeAbs(expr: TypeRec[Expr]): TypeRec[Expr] = expr.project match {
-    case AST.TyAbs(_, _, body) => unwrapTypeAbs(body)
-    case _ => expr
-  }
-
-  private def directFunctionValue(name: String, value: TypeRec[Expr]): Option[(String, TypeRec[Expr])] = unwrapTypeAbs(value).project match {
-    case AST.Abs(Variable(param), _, body) if freeVars(value).subsetOf(Set(Variable(name))) && !isFunctionType(typeOf(body)) =>
-      Some(param -> body)
-    case _ => None
-  }
-
-  private def genDecl(decl: TypeRec[Decl], env: Env): GenS[(Code, Env)] = decl.project match {
-    case AST.TopLet(Variable(param), _, value) =>
-      value.para(genAlg).run(env).map(code => (code ++ bindValueToHeap, env.withHeap(param)))
-
-    case AST.TopRec(Seq(single)) => single.project match {
-      case AST.TopLet(Variable(param), _, value) => directFunctionValue(param, value) match {
-        case Some((arg, body)) => for {
-          label <- fresh(s"direct_$param")
-          valueEnv = env.withDirectFunction(param, label)
-          bodyCode <- body.para(genAlg).run(Env(Seq(HeapBinding(arg)), valueEnv.directFunctions, tail = true))
-          _ <- addFunc(directFn(label, bodyCode))
-        } yield {
-          (Code.empty, valueEnv)
-        }
-        case None => genRecLets(Seq(param -> value), env)
-      }
-      case _ => sys.error("rec must contain let declarations at code generation")
-    }
-
-    case AST.TopRec(decls) =>
-      genRecLets(decls.map(_.project).map {
-        case AST.TopLet(Variable(param), _, value) => param -> value
-        case _ => sys.error("rec must contain let declarations at code generation")
-      }, env)
-
-    case AST.TopImport(_) => State.pure((Code.empty, env))
-    case AST.TopType(_, _, _) => State.pure((Code.empty, env))
-    case AST.TopData(_, _, _) => State.pure((Code.empty, env))
-    case AST.TopTrait(_, _, _, _) => sys.error("TopTrait must be desugared before code generation")
-    case AST.TopImpl(_, _, _, _, _, _) => sys.error("TopImpl must be desugared before code generation")
-    case AST.TopDerive(_, _) => sys.error("TopDerive must be desugared before code generation")
-    case AST.TopModule(_, _) | AST.TopOpen(_) | AST.TopOperator(_, _, _) | AST.TopSyntax(_, _) | AST.TopModified(_, _) => sys.error("modules must be desugared before code generation")
-  }
-
-  // top-level の rec の組: 全員のセルを先に確保してから、順に値を入れる
-  private def genRecLets(lets: Seq[(String, TypeRec[Expr])], env: Env): GenS[(Code, Env)] = {
-    val valueEnv = lets.foldLeft(env) { case (acc, (name, _)) => acc.withHeap(name) }
-    lets.toList.traverse { case (_, value) => value.para(genAlg).run(valueEnv) }.map { values =>
-      val cells = lets.foldLeft(Code.empty)((acc, _) => acc ++ allocateRecCell)
-      val stores = values.zipWithIndex.foldLeft(Code.empty) { case (acc, (vc, index)) => acc ++ vc ++ storeRecCell(lets.length - 1 - index) }
-      (cells ++ stores, valueEnv)
-    }
-  }
-
-  private def genProgram(decls: Seq[TypeRec[Decl]]): Gen[AssemblyProgram] = ReaderT { initialEnv =>
-    decls.toList.foldLeftM((Code.empty, initialEnv)) { case ((code, env), decl) =>
-      genDecl(decl, env).map { case (declCode, nextEnv) => (code ++ declCode, nextEnv) }
-    }.flatMap { case (declCode, env) =>
-      val main = appT(intTypeT, varrType(Variable("main"), arrowT(unitTypeT, intTypeT)), unitLitT(unitTypeT))
-      main.para(genAlg).run(env).map { mainCode =>
-        AssemblyProgram(Set.empty, Vector.empty, mainFunction(declCode ++ mainCode), Vector.empty)
-      }
-    }
-  }
-
-  private def render(program: AssemblyProgram): String = {
-    val externs = program.externs.toSeq.sorted.map(sym => Directive("extern", Vector(s"_$sym")).render)
-    val strings =
-      if (program.strings.isEmpty) Nil
-      else Directive("section", Vector("__TEXT,__cstring,cstring_literals")).render ::
-        program.strings.toList.flatMap { case StringDef(label, value) =>
-          List(LabelDef(label).render, Directive("asciz", Vector(s""""${asmString(value)}"""")).render)
-        }
-    val body = program.main.body.lines.map(_.render) ++ program.functions.flatMap(_.body.lines.map(_.render))
-    (externs ++ strings ++ body).mkString("\n") + "\n"
-  }
-
-  def generateProgram(prog: TypeRec[AST.Program.type]): AssemblyProgram = {
-    val gen = prog.project match {
-      case AST.Program(decls) => genProgram(decls)
-    }
-    val (finalSt, program) = gen.run(Env.empty).run(GenState(Vector.empty, 0, Set.empty, Vector.empty)).value
-    program.copy(externs = finalSt.externs, strings = finalSt.strings, functions = finalSt.funcs)
-  }
-
-  def generate(prog: TypeRec[AST.Program.type]): String = render(generateProgram(prog))
 }

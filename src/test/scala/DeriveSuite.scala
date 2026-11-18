@@ -1,36 +1,14 @@
 package com.yuuki14202028
 
+/** derive: データ型の形から Functor / Foldable / Traversable / Eq / Ord / Show のインスタンスを作る */
 class DeriveSuite extends munit.FunSuite {
 
-  private def parseDecls(src: String): Seq[Rec[Decl]] =
-    ParserAST.programParser.parseAll(src) match {
-      case Right(p) => eraseIndex(p).unfix match { case AST.Program(decls) => decls }
-      case Left(e)  => fail(s"parse failed: $e")
-    }
-
-  private def validate(src: String): Either[String, TypeRec[AST.Program.type]] =
-    ParserAST.programParser.parseAll(src).left.map(e => s"Parse error: $e").flatMap(p => TAnalyser.validate(p).left.map(_.render))
-
-  private def desugar(src: String): Either[String, TypeRec[AST.Program.type]] =
-    validate(src).map(PatternDesugar.desugar).map(Deriver.desugar).map(TraitEncoder.encode)
-
-  private def church(src: String): Either[String, TypeRec[AST.Program.type]] =
-    desugar(src).map(ChurchEncoder.encode)
-
-  private def assertRight(result: Either[String, ?]): Unit = result match {
-    case Right(_)  => ()
-    case Left(err) => fail(err)
-  }
-
-  private def assertLeftContains(result: Either[String, ?], expected: String): Unit = result match {
-    case Left(err) => assert(err.contains(expected), clue(err))
-    case Right(_)  => fail(s"expected error containing '$expected', but succeeded")
-  }
-
-  private def shownOrFail(result: Either[String, TypeRec[AST.Program.type]]): String = result match {
-    case Right(p)  => p.show
-    case Left(err) => fail(err)
-  }
+  private val arithmetic =
+    """let addInt(x: i32)(y: i32): i32 = intrinsic[add_i32](x)(y)
+      |let mulInt(x: i32)(y: i32): i32 = intrinsic[mul_i32](x)(y)
+      |infixl 6 + = addInt
+      |infixl 7 * = mulInt
+      |""".stripMargin
 
   private val functorTrait =
     """trait Functor[f: * → *] {
@@ -48,96 +26,134 @@ class DeriveSuite extends munit.FunSuite {
   private val optionData = "data Option[a] = { None, Some(a) }\n"
   private val listData = "rec data List[a] = { Nil, Cons(a)(List[a]) }\n"
   private val eitherData = "data Either[e][a] = { Left(e), Right(a) }\n"
+  private val roseData = "rec data Rose[a] = { Node(a)(List[Rose[a]]) }\n"
   private val mainDecl = "let main(): i32 = 0\n"
 
-  // ---- パース ----
+  private val sumList =
+    """rec let sum(xs: List[i32]): i32 = match xs {
+      |  Nil => 0
+      |  Cons(x)(rest) => x + sum(rest)
+      |}
+      |""".stripMargin
 
-  test("パース: derive 宣言は TopDerive ノードになる") {
-    parseDecls("derive Functor[Option]\n").head.unfix match {
-      case AST.TopDerive(traitName, target) =>
-        assertEquals(traitName, TypeVariable("Functor"))
-        assertEquals(target, TypeVariable("Option"))
-      case other => fail(s"not TopDerive: $other")
-    }
+  // Node(1) の下に Node(2) と Node(3)
+  private val sampleRose =
+    "let rose: Rose[i32] = Node(1)(Cons(Node(2)(Nil[Rose[i32]]))(Cons(Node(3)(Nil[Rose[i32]]))(Nil[Rose[i32]])))\n"
+
+  private def assertError(source: String)(expected: PartialFunction[CompileError, Unit])(using munit.Location): Unit = {
+    val found = Lam.errors(source)
+    assert(found.exists(expected.isDefinedAt), clue(found.map(_.message)))
   }
+
+  private def assertUnsupported(source: String, traitName: String, target: String)(using munit.Location): Unit =
+    assertError(source) { case CompileError.DeriveUnsupported(`traitName`, `target`, _, _) => }
+
+  private def assertNoInstance(source: String, goal: String)(using munit.Location): Unit =
+    assertError(source) { case error: CompileError.NoInstance if error.message.contains(goal) => }
+
+  private def assertDeriveNeeds(source: String, traitName: String, target: String, goal: String)(using munit.Location): Unit =
+    assertError(source) { case CompileError.DeriveNeeds(`traitName`, `target`, needed, _) if Type.show(needed) == goal => }
 
   // ---- Functor 導出 ----
 
-  test("Functor[Option]: 型検査・合成・辞書化・Church encoding を通る") {
-    assertRight(church(functorTrait + optionData + "derive Functor[Option]\n" + mainDecl))
+  test("Functor[Option]: 導出したインスタンスは、手書きの impl と同じように解決される") {
+    val source = arithmetic + functorTrait + optionData +
+      """derive Functor[Option]
+        |let inc(x: Option[i32]): Option[i32] = map[Option][i32][i32](x)(λn: i32. n + 1)
+        |let main(): i32 = match inc(Some(1)) {
+        |  Some(n) => n
+        |  None => 0
+        |}
+        |""".stripMargin
+    assertEquals(Lam.exitCode(source), 2)
   }
 
-  test("Functor[Option]: 手書き impl と同じ辞書 let が生成される") {
-    val shown = shownOrFail(desugar(functorTrait + optionData + "derive Functor[Option]\n" + mainDecl))
-    assert(shown.contains("$inst_Functor_Option"), clue(shown))
-    assert(shown.contains("MkFunctor"), clue(shown))
-  }
-
-  test("Functor[List]: 再帰データ型は内部 letRec で自己再帰する") {
-    val src = functorTrait + listData + "derive Functor[List]\n" + mainDecl
-    assertRight(church(src))
-    val shown = shownOrFail(desugar(src))
-    assert(shown.contains("$go"), clue(shown))
+  test("Functor[List]: 再帰データ型は自身のインスタンスで再帰する") {
+    val source = arithmetic + functorTrait + listData + sumList +
+      """derive Functor[List]
+        |let main(): i32 = sum(map[List][i32][i32](Cons(1)(Cons(2)(Nil[i32])))(λn: i32. n * 10))
+        |""".stripMargin
+    assertEquals(Lam.exitCode(source), 30)
   }
 
   test("Functor[Either]: 先行パラメータはインスタンスパラメータになる") {
-    val src = functorTrait + eitherData + "derive Functor[Either]\n" + mainDecl
-    assertRight(church(src))
-    assert(shownOrFail(desugar(src)).contains("$inst_Functor_Either"))
+    val source = arithmetic + functorTrait + eitherData +
+      """derive Functor[Either]
+        |let get(x: Either[bool][i32]): i32 = match map[Either[bool]][i32][i32](x)(λn: i32. n + 1) {
+        |  Left(flag) => if flag then 10 else 20
+        |  Right(n) => n
+        |}
+        |let main(): i32 = get(Right[bool][i32](1)) + get(Left[bool][i32](true))
+        |""".stripMargin
+    assertEquals(Lam.exitCode(source), 12)
   }
 
   test("Functor[Rose]: ネストした関手フィールドは先行インスタンスへ委譲する") {
-    val roseData = "rec data Rose[a] = { Node(a)(List[Rose[a]]) }\n"
-    val src = functorTrait + listData + roseData +
-      "derive Functor[List]\nderive Functor[Rose]\n" + mainDecl
-    assertRight(church(src))
-    val shown = shownOrFail(desugar(src))
-    assert(shown.contains("$inst_Functor_Rose"), clue(shown))
-    assert(shown.contains("$inst_Functor_List"), clue(shown))
+    val source = arithmetic + functorTrait + listData + roseData + sampleRose +
+      """derive Functor[List]
+        |derive Functor[Rose]
+        |rec {
+        |  let total(r: Rose[i32]): i32 = match r { Node(x)(children) => x + totalAll(children) }
+        |  let totalAll(rs: List[Rose[i32]]): i32 = match rs {
+        |    Nil => 0
+        |    Cons(r)(rest) => total(r) + totalAll(rest)
+        |  }
+        |}
+        |let main(): i32 = total(map[Rose][i32][i32](rose)(λn: i32. n * 2))
+        |""".stripMargin
+    assertEquals(Lam.exitCode(source), 12)
   }
 
   test("Functor: 共変位置の関数フィールドも導出できる") {
-    val src = functorTrait + "data Reader[a] = { MkReader(i32 → a) }\n" +
-      "derive Functor[Reader]\n" + mainDecl
-    assertRight(church(src))
-  }
-
-  test("導出インスタンスの利用: 呼び出し側で辞書が解決される") {
-    val src = functorTrait + optionData + "derive Functor[Option]\n" +
-      "let inc(x: Option[i32]): Option[i32] = map[Option][i32][i32](x)(λn: i32. n)\n" + mainDecl
-    assertRight(church(src))
-    val shown = shownOrFail(desugar(src))
-    assert(shown.contains("$inst_Functor_Option"), clue(shown))
+    val source = arithmetic + functorTrait +
+      """data Reader[a] = { MkReader(i32 → a) }
+        |derive Functor[Reader]
+        |let main(): i32 = match map[Reader][i32][i32](MkReader(λn: i32. n + 1))(λn: i32. n * 2) {
+        |  MkReader(run) => run(3)
+        |}
+        |""".stripMargin
+    assertEquals(Lam.exitCode(source), 8)
   }
 
   // ---- Foldable 導出 ----
 
+  private val digits =
+    """let leftDigits[f: * → *](xs: f[i32]): i32 with Foldable[f] = foldLeft[f][i32][i32](xs)(0)(λacc: i32. λx: i32. acc * 10 + x)
+      |let rightDigits[f: * → *](xs: f[i32]): i32 with Foldable[f] = foldRight[f][i32][i32](xs)(0)(λx: i32. λacc: i32. acc * 10 + x)
+      |""".stripMargin
+
   test("Foldable[Option] / Foldable[List]: 導出が通る") {
-    val src = foldableTrait + optionData + listData +
-      "derive Foldable[Option]\nderive Foldable[List]\n" + mainDecl
-    assertRight(church(src))
-    val shown = shownOrFail(desugar(src))
-    assert(shown.contains("$inst_Foldable_Option"), clue(shown))
-    assert(shown.contains("$inst_Foldable_List"), clue(shown))
+    val source = arithmetic + foldableTrait + optionData + listData + digits +
+      """derive Foldable[Option]
+        |derive Foldable[List]
+        |let list: List[i32] = Cons(1)(Cons(2)(Nil[i32]))
+        |let main(): i32 = leftDigits[List](list) + rightDigits[List](list) + leftDigits[Option](Some(5)) + rightDigits[Option](None[i32])
+        |""".stripMargin
+    assertEquals(Lam.exitCode(source), 12 + 21 + 5)
   }
 
   test("Foldable[Rose]: ネストしたフィールドは先行インスタンスへ委譲する") {
-    val roseData = "rec data Rose[a] = { Node(a)(List[Rose[a]]) }\n"
-    val src = foldableTrait + listData + roseData +
-      "derive Foldable[List]\nderive Foldable[Rose]\n" + mainDecl
-    assertRight(church(src))
+    val source = arithmetic + foldableTrait + listData + roseData + sampleRose + digits +
+      """derive Foldable[List]
+        |derive Foldable[Rose]
+        |let main(): i32 = leftDigits[Rose](rose)
+        |""".stripMargin
+    assertEquals(Lam.exitCode(source), 123)
   }
 
   test("Foldable[Either]: a を含まないコンストラクタは畳み込みに影響しない") {
-    assertRight(church(foldableTrait + eitherData + "derive Foldable[Either]\n" + mainDecl))
+    val source = arithmetic + foldableTrait + eitherData + digits +
+      """derive Foldable[Either]
+        |let main(): i32 = leftDigits[Either[i32]](Left[i32][i32](9)) + leftDigits[Either[i32]](Right[i32][i32](4))
+        |""".stripMargin
+    assertEquals(Lam.exitCode(source), 4)
   }
 
   // ---- エラー ----
 
   test("エラー: 未対応の trait は導出できない") {
-    val src = "trait Pretty[a] {\n  def pretty(x: a): i32\n}\n" + optionData +
-      "derive Pretty[Option]\n" + mainDecl
-    assertLeftContains(validate(src), "not derivable")
+    val source = "trait Pretty[a] {\n  def pretty(x: a): i32\n}\n" + optionData + "derive Pretty[Option]\n" + mainDecl
+    assertUnsupported(source, "Pretty", "Option")
   }
 
   test("エラー: 同名でもシグネチャが正準形でない trait は導出できない") {
@@ -146,36 +162,33 @@ class DeriveSuite extends munit.FunSuite {
         |  def map[a][b](g: a → b): f[b] → f[a]
         |}
         |""".stripMargin
-    assertLeftContains(validate(flipped + optionData + "derive Functor[Option]\n" + mainDecl), "must have signature")
+    assertUnsupported(flipped + optionData + "derive Functor[Option]\n" + mainDecl, "Functor", "Option")
   }
 
   test("エラー: データ型でない対象は導出できない") {
-    assertLeftContains(validate(functorTrait + "derive Functor[Functor]\n" + mainDecl), "not a data type")
+    assertUnsupported(functorTrait + "type Alias[a] = a\nderive Functor[Alias]\n" + mainDecl, "Functor", "Alias")
+    assertUnsupported(functorTrait + "derive Functor[Functor]\n" + mainDecl, "Functor", "Functor")
   }
 
   test("エラー: 型パラメータのないデータ型は導出できない") {
-    val src = functorTrait + "data Wrap = { MkWrap(i32) }\n" + "derive Functor[Wrap]\n" + mainDecl
-    assertLeftContains(validate(src), "final type parameter")
+    assertUnsupported(functorTrait + "data Wrap = { MkWrap(i32) }\nderive Functor[Wrap]\n" + mainDecl, "Functor", "Wrap")
   }
 
   test("エラー: 負の位置の出現は導出できない") {
-    val src = functorTrait + "data Pred[a] = { MkPred(a → bool) }\n" + "derive Functor[Pred]\n" + mainDecl
-    assertLeftContains(validate(src), "negative position")
+    assertUnsupported(functorTrait + "data Pred[a] = { MkPred(a → bool) }\nderive Functor[Pred]\n" + mainDecl, "Functor", "Pred")
   }
 
   test("エラー: Foldable は関数フィールドを畳み込めない") {
-    val src = foldableTrait + "data Reader[a] = { MkReader(i32 → a) }\n" + "derive Foldable[Reader]\n" + mainDecl
-    assertLeftContains(validate(src), "cannot derive over")
+    assertUnsupported(foldableTrait + "data Reader[a] = { MkReader(i32 → a) }\nderive Foldable[Reader]\n" + mainDecl, "Foldable", "Reader")
   }
 
   test("エラー: ネストしたフィールドのインスタンスが先行して存在しない") {
-    val src = functorTrait + optionData + "data Boxed[a] = { MkBoxed(Option[a]) }\n" +
-      "derive Functor[Boxed]\n" + mainDecl
-    assertLeftContains(validate(src), "is not defined at this point")
+    val source = functorTrait + optionData + "data Boxed[a] = { MkBoxed(Option[a]) }\nderive Functor[Boxed]\n" + mainDecl
+    assertDeriveNeeds(source, "Functor", "Boxed", "Functor[Option]")
   }
 
   test("エラー: 手書き impl と重複する derive は Overlapping instance") {
-    val src = functorTrait + optionData +
+    val source = functorTrait + optionData +
       """impl Functor[Option] {
         |  def map[a][b](o: Option[a])(g: a → b): Option[b] = match o {
         |    None => None[b]
@@ -184,25 +197,37 @@ class DeriveSuite extends munit.FunSuite {
         |}
         |derive Functor[Option]
         |""".stripMargin + mainDecl
-    assertLeftContains(validate(src), "Overlapping instance")
+    assertError(source) { case _: CompileError.OverlappingInstance => }
   }
 
   test("エラー: 同じ derive を二度書くと Overlapping instance") {
-    val src = functorTrait + optionData +
-      "derive Functor[Option]\nderive Functor[Option]\n" + mainDecl
-    assertLeftContains(validate(src), "Overlapping instance")
+    val source = functorTrait + optionData + "derive Functor[Option]\nderive Functor[Option]\n" + mainDecl
+    assertError(source) { case _: CompileError.OverlappingInstance => }
   }
 
   test("パラメータを含まない自己適用フィールドはそのまま保持される") {
-    val src = functorTrait + "rec data Weird[a] = { MkWeird(Weird[i32]), WNil }\n" +
-      "derive Functor[Weird]\n" + mainDecl
-    assertRight(church(src))
+    val source = arithmetic + functorTrait +
+      """rec data Weird[a] = { MkWeird(Weird[i32])(a), WNil }
+        |derive Functor[Weird]
+        |let main(): i32 = match map[Weird][bool][i32](MkWeird(MkWeird(WNil[i32])(7))(true))(λb: bool. 1) {
+        |  MkWeird(MkWeird(_)(inner))(outer) => inner + outer
+        |  _ => 0
+        |}
+        |""".stripMargin
+    assertEquals(Lam.exitCode(source), 8)
   }
 
-  test("エラー: 非正則な自己適用は導出できない") {
-    val src = functorTrait + "rec data Weird[a] = { MkWeird(Weird[Weird[a]]), WNil }\n" +
-      "derive Functor[Weird]\n" + mainDecl
-    assertLeftContains(validate(src), "cannot derive over")
+  // 導出したインスタンスは普通の impl として検査されるので、非正則な再帰も、型が合えば通る
+  test("非正則な自己適用も、自身のインスタンスで導出できる") {
+    val source = arithmetic + functorTrait +
+      """rec data Weird[a] = { MkWeird(Weird[Weird[a]])(a), WNil }
+        |derive Functor[Weird]
+        |let main(): i32 = match map[Weird][i32][i32](MkWeird(WNil[Weird[i32]])(4))(λn: i32. n + 1) {
+        |  MkWeird(_)(n) => n
+        |  WNil => 0
+        |}
+        |""".stripMargin
+    assertEquals(Lam.exitCode(source), 5)
   }
 
   // ---- Traversable ----
@@ -218,36 +243,71 @@ class DeriveSuite extends munit.FunSuite {
       |}
       |""".stripMargin
 
+  private val optionApplicative = optionData +
+    """impl Functor[Option] {
+      |  def map[a][b](x: Option[a])(g: a → b): Option[b] = match x {
+      |    None => None[b]
+      |    Some(v) => Some[b](g(v))
+      |  }
+      |}
+      |impl Applicative[Option] {
+      |  def pure[a](x: a): Option[a] = Some[a](x)
+      |  def apply[a][b](g: Option[a → b]): Option[a] → Option[b] = λx: Option[a]. match g {
+      |    None => None[b]
+      |    Some(h) => match x {
+      |      None => None[b]
+      |      Some(v) => Some[b](h(v))
+      |    }
+      |  }
+      |}
+      |let eqInt(x: i32)(y: i32): bool = intrinsic[eq_i32](x)(y)
+      |infix 4 == = eqInt
+      |// 0 があれば全体が None
+      |let nonZero(n: i32): Option[i32] = if n == 0 then None[i32] else Some(n * 2)
+      |""".stripMargin
+
   test("derive Traversable: 再帰・パラメータ・定数のフィールド") {
-    val src = traversablePrelude +
-      "rec data List[a] = { Nil, Cons(a)(List[a]) }\ndata Tagged[a] = { Tag(i32)(a) }\n" +
-      "derive Traversable[List]\nderive Traversable[Tagged]\n" + mainDecl
-    val shown = shownOrFail(church(src))
-    assert(shown.contains("$inst_Traversable_List"), clue(shown))
-    assert(shown.contains("$inst_Traversable_Tagged"), clue(shown))
+    val source = arithmetic + traversablePrelude + optionApplicative + listData + sumList +
+      """data Tagged[a] = { Tag(i32)(a) }
+        |derive Traversable[List]
+        |derive Traversable[Tagged]
+        |let total(xs: List[i32]): i32 = match traverse[List][i32][Option][i32](xs)(nonZero) {
+        |  Some(doubled) => sum(doubled)
+        |  None => 100
+        |}
+        |let tagged(t: Tagged[i32]): i32 = match traverse[Tagged][i32][Option][i32](t)(nonZero) {
+        |  Some(Tag(tag)(value)) => tag + value
+        |  None => 100
+        |}
+        |let main(): i32 = total(Cons(1)(Cons(2)(Nil[i32]))) + total(Cons(1)(Cons(0)(Nil[i32]))) + tagged(Tag(1)(2))
+        |""".stripMargin
+    assertEquals(Lam.exitCode(source), 6 + 100 + 5)
   }
 
   test("derive Traversable: 入れ子のコンテナは、そのコンテナの traverse に委譲する") {
-    val src = traversablePrelude +
-      "rec data List[a] = { Nil, Cons(a)(List[a]) }\nrec data Rose[a] = { Node(a)(List[Rose[a]]) }\n" +
-      "derive Traversable[List]\nderive Traversable[Rose]\n" + mainDecl
-    assertRight(church(src))
+    val source = arithmetic + traversablePrelude + optionApplicative + listData + roseData + sampleRose +
+      """derive Traversable[List]
+        |derive Traversable[Rose]
+        |let main(): i32 = match traverse[Rose][i32][Option][i32](rose)(nonZero) {
+        |  Some(Node(x)(Cons(Node(y)(_))(Cons(Node(z)(_))(_)))) => x + y + z
+        |  _ => 0
+        |}
+        |""".stripMargin
+    assertEquals(Lam.exitCode(source), 12)
   }
 
   test("derive Traversable: 入れ子のコンテナにインスタンスがなければエラー") {
-    val src = traversablePrelude +
-      "rec data List[a] = { Nil, Cons(a)(List[a]) }\nrec data Rose[a] = { Node(a)(List[Rose[a]]) }\n" +
-      "derive Traversable[Rose]\n" + mainDecl
-    assertLeftContains(validate(src), "Traversable")
+    val source = traversablePrelude + listData + roseData + "derive Traversable[Rose]\n" + mainDecl
+    assertDeriveNeeds(source, "Traversable", "Rose", "Traversable[List]")
   }
 
   test("derive Traversable: 関数のフィールドは導出できない") {
-    val src = traversablePrelude + "data Reader[a] = { MkReader(i32 → a) }\nderive Traversable[Reader]\n" + mainDecl
-    assertLeftContains(validate(src), "cannot derive over")
+    val source = traversablePrelude + "data Reader[a] = { MkReader(i32 → a) }\nderive Traversable[Reader]\n" + mainDecl
+    assertUnsupported(source, "Traversable", "Reader")
   }
 
   test("derive Traversable: traverse のシグネチャが正準形と違えばエラー") {
-    val src =
+    val source =
       """trait Functor[f: * → *] { def map[a][b](x: f[a])(g: a → b): f[b] }
         |trait Applicative[f: * → *] with Functor[f] {
         |  def pure[a](x: a): f[a]
@@ -259,23 +319,23 @@ class DeriveSuite extends munit.FunSuite {
         |data Box[a] = { MkBox(a) }
         |derive Traversable[Box]
         |""".stripMargin + mainDecl
-    assertLeftContains(validate(src), "traverse")
+    assertUnsupported(source, "Traversable", "Box")
   }
 
   test("derive Traversable: Applicative が定義されていなければエラー") {
-    val src =
+    val source =
       """trait Applicative2[f: * → *] { def pure2[a](x: a): f[a] }
         |trait Traversable[t: * → *] {
-        |  def traverse[g: * → *][a][b](f: a → g[b])(xs: t[a]): g[t[b]] with Applicative2[g]
+        |  def traverse[a][g: * → *][b](xs: t[a])(f: a → g[b]): g[t[b]] with Applicative2[g]
         |}
         |data Box[a] = { MkBox(a) }
         |derive Traversable[Box]
         |""".stripMargin + mainDecl
-    assert(validate(src).isLeft)
+    assertUnsupported(source, "Traversable", "Box")
   }
 
   test("rec { derive }: 相互再帰のデータ型にも Traversable を導出できる") {
-    val src = traversablePrelude +
+    val source = arithmetic + traversablePrelude + optionApplicative +
       """rec {
         |  data Tree[a] = { Node(a)(Forest[a]) }
         |  data Forest[a] = { Empty, Trees(Tree[a])(Forest[a]) }
@@ -284,8 +344,13 @@ class DeriveSuite extends munit.FunSuite {
         |  derive Traversable[Tree]
         |  derive Traversable[Forest]
         |}
-        |""".stripMargin + mainDecl
-    assertRight(church(src))
+        |let tree: Tree[i32] = Node(1)(Trees(Node(2)(Empty[i32]))(Empty[i32]))
+        |let main(): i32 = match traverse[Tree][i32][Option][i32](tree)(nonZero) {
+        |  Some(Node(x)(Trees(Node(y)(_))(_))) => x + y
+        |  _ => 0
+        |}
+        |""".stripMargin
+    assertEquals(Lam.exitCode(source), 6)
   }
 
   // ---- Eq / Ord / Show ----
@@ -297,36 +362,53 @@ class DeriveSuite extends munit.FunSuite {
       |impl Eq[i32] { def eq(x: i32)(y: i32): bool = intrinsic[eq_i32](x)(y) }
       |impl Ord[i32] { def lt(x: i32)(y: i32): bool = intrinsic[lt_i32](x)(y) }
       |impl Show[i32] { def show = foreign[i32 → foreign.C.String] int_to_string }
+      |let print: foreign.C.String → i32 = foreign[foreign.C.String → i32] print_string_inline
       |""".stripMargin
 
+  private def holds(declarations: String, condition: String)(using munit.Location): Boolean =
+    Lam.exitCode(s"${declarations}let main(): i32 = if $condition then 1 else 0\n") == 1
+
   test("derive Eq / Ord / Show: 型パラメータごとに同じ trait の文脈を持つインスタンスになる") {
-    val src = valueTraits + listData + "derive Eq[List]\nderive Ord[List]\nderive Show[List]\n" +
-      "let same: bool = eq[List[i32]](Nil[i32])(Nil[i32])\n" + mainDecl
-    val typed = validate(src).fold(fail(_), identity)
-    val env = typed.extract match { case ProgramAnn(e) => e }
-    val inst = env.instances(instanceKey(TypeVariable("Eq"), Seq("List")))
-    assertEquals(inst.context.map(showTypeConstraint), Seq("Eq[a]"))
-    assertRight(church(src))
+    val source = valueTraits + listData +
+      """derive Eq[List]
+        |derive Ord[List]
+        |derive Show[List]
+        |let one: List[i32] = Cons(1)(Nil[i32])
+        |let oneTwo: List[i32] = Cons(1)(Cons(2)(Nil[i32]))
+        |""".stripMargin
+    assert(holds(source, "eq[List[i32]](oneTwo)(oneTwo)"))
+    assert(!holds(source, "eq[List[i32]](one)(oneTwo)"))
+    // 構成子は宣言順（Nil < Cons）、同じ構成子ならフィールドの辞書順
+    assert(holds(source, "lt[List[i32]](one)(oneTwo)"))
+    assert(!holds(source, "lt[List[i32]](oneTwo)(one)"))
+    assert(holds(source, "lt[List[i32]](oneTwo)(Cons(2)(Nil[i32]))"))
+    assertEquals(Lam.output(source + "let main(): i32 = print(show[List[i32]](oneTwo))\n"), "Cons(1, Cons(2, Nil))")
+    // 文脈 Eq[a] は、要素の型のインスタンスで満たす
+    assertNoInstance(source + "let same: bool = eq[List[bool]](Nil[bool])(Nil[bool])\n" + mainDecl, "Eq[bool]")
   }
 
   test("derive Eq / Ord / Show: 型パラメータのない data・フィールドのない構成子") {
-    assertRight(church(valueTraits + "data Color = { Red, Green }\nderive Eq[Color]\nderive Ord[Color]\nderive Show[Color]\n" + mainDecl))
+    val source = valueTraits + "data Color = { Red, Green }\nderive Eq[Color]\nderive Ord[Color]\nderive Show[Color]\n"
+    assert(holds(source, "eq[Color](Red)(Red) && lt[Color](Red)(Green)"))
+    assert(!holds(source, "eq[Color](Red)(Green) || lt[Color](Green)(Red) || lt[Color](Red)(Red)"))
+    assertEquals(Lam.output(source + "let main(): i32 = print(show[Color](Green))\n"), "Green")
   }
 
   test("derive Ord: スーパークラスの Eq が先に要る") {
-    assertLeftContains(validate(valueTraits + "data Color = { Red, Green }\nderive Ord[Color]\n" + mainDecl), "No instance for Eq[Color]")
+    assertDeriveNeeds(valueTraits + "data Color = { Red, Green }\nderive Ord[Color]\n" + mainDecl, "Ord", "Color", "Eq[Color]")
   }
 
   test("derive Eq: インスタンスのないフィールドはエラー") {
-    assertLeftContains(validate(valueTraits + "data F = { MkF(i32 → i32) }\nderive Eq[F]\n" + mainDecl), "field requires instance Eq[i32 → i32]")
+    assertDeriveNeeds(valueTraits + "data F = { MkF(i32 → i32) }\nderive Eq[F]\n" + mainDecl, "Eq", "F", "Eq[i32 → i32]")
   }
 
   test("derive Eq: 型パラメータはカインド * に限る") {
-    assertLeftContains(validate(valueTraits + "data Apply[f: * → *] = { MkApply(f[i32]) }\nderive Eq[Apply]\n" + mainDecl), "must have kind *")
+    val source = valueTraits + "data Apply[f: * → *] = { MkApply(f[i32]) }\nderive Eq[Apply]\n" + mainDecl
+    assertUnsupported(source, "Eq", "Apply")
   }
 
   test("derive Show: 正準シグネチャと違えばエラー") {
-    val src = "trait Show[a] { def show(x: a): i32 }\ndata Color = { Red }\nderive Show[Color]\n" + mainDecl
-    assertLeftContains(validate(src), "must have signature")
+    val source = "trait Show[a] { def show(x: a): i32 }\ndata Color = { Red }\nderive Show[Color]\n" + mainDecl
+    assertUnsupported(source, "Show", "Color")
   }
 }

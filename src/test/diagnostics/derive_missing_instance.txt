@@ -1,8 +1,8 @@
-error: `derive Functor[Rose]` needs an instance for `List`
+error: `derive Functor[Rose]` needs `Functor[List]`
  --> derive_missing_instance.lam:4:1
   |
 4 | derive Functor[Rose]
   | ^^^^^^^^^^^^^^^^^^^^ this derive
   |
-  = note: the constructor `Node` has a field built with `List`, and `Functor[List]` is not declared before this point
-  = help: declare `derive Functor[List]` first; if the two types refer to each other, put both derives in one `rec { … }`
+  = note: the derived instance uses the instance of each field's type, and `Functor[List]` is not declared before this point
+  = help: declare that instance before this derive (for a data type, with `derive`; if the types refer to each other, put the derives in one `rec { … }`), or write the `impl` by hand

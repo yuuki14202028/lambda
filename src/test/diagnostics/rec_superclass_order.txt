@@ -1,8 +1,8 @@
 error: no instance for `Base[Box]`
- --> rec_superclass_order.lam:5:1
+ --> rec_superclass_order.lam:6:3
   |
-5 | rec {
-  | ^^^^^ this needs the instance
+6 |   impl Derived[Box] { def derived[a](x: Box[a]): Box[a] = x }
+  |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ this needs the instance
   |
   = note: required for `Derived[Box]` by `trait Derived with Base[f]`
   = note: the instance `Base[Box]` is declared later in the same `rec { … }` group

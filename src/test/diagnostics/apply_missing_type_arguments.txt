@@ -1,8 +1,8 @@
-error: missing type arguments
- --> apply_missing_type_arguments.lam:2:19
+error: the type argument `a` cannot be read from the arguments
+ --> apply_missing_type_arguments.lam:3:25
   |
-2 | let main(): i32 = id(1)
-  |                   ^^ has type `∀a. a → a`
+3 | let main(): i32 = match make(()) {
+  |                         ^^^^^^^^ the function has type `∀a. unit → Option[a]`
   |
-  = note: type arguments are always written out; they are not inferred from the value arguments
-  = help: give a type for `a` in brackets before the value arguments: `f[T](x)`
+  = note: a type argument is read from the types of the value arguments; one that appears in none of the arguments given here must be written
+  = help: write it in brackets: `f[T](x)` (a written type argument fills the first type parameter that is not yet known)

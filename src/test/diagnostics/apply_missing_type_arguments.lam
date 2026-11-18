@@ -1,2 +1,5 @@
-let id[a](x: a): a = x
-let main(): i32 = id(1)
+data Option[a] = { None, Some(a) }
+let make[a](u: unit): Option[a] = None[a]
+let main(): i32 = match make(()) {
+  _ => 0
+}

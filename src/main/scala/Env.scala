@@ -1,267 +1,150 @@
 package com.yuuki14202028
 
-case class TypeAlias(params: Seq[(TypeVariable, Kind)], body: TypeRec[Type]) {
-  def paramVars: Seq[TypeVariable] = params.map(_._1)
-}
+/** tpe は構成子の型 ∀ā. フィールド… → D[ā]。index はデータ型の中での順番。
+ *  fields はフィールドごとの名前と、それを読む関数（名前付きフィールドだけが持つ） */
+final case class ConstructorDef(symbol: Symbol, data: Symbol, index: Int, tpe: Type, fields: List[FieldDef]) {
+  def arity: Int = fields.length
 
-// group は rec で一緒に宣言されたデータ型（自身を含む）。rec でなければ空
-case class DataDef(params: Seq[(TypeVariable, Kind)], constructors: Seq[ConstructorDef], group: Set[TypeVariable] = Set.empty) {
-  def paramVars: Seq[TypeVariable] = params.map(_._1)
-  def recursive: Boolean = group.nonEmpty
-}
-
-// fieldNames は fields と同じ長さ（名前のないフィールドは None）
-case class ConstructorDef(name: Variable, owner: TypeVariable, fields: Seq[TypeRec[Type]], tag: Int, fieldNames: Seq[Option[String]] = Nil) {
-  def names: Seq[Option[String]] = if (fieldNames.isEmpty) fields.map(_ => None) else fieldNames
-}
-
-// 引数が展開済み（別名解決・β 正規化済み）の制約
-type TypeConstraint = Constraint[TypeRec]
-
-object TypeConstraint {
-  def apply(name: TypeVariable, arg: Seq[TypeRec[Type]]): TypeConstraint = Constraint[TypeRec](name, arg)
-}
-
-// methods のシグネチャは trait パラメータを自由変数とする型（制約 C[p̄] を含まない）
-// defaults はデフォルトの本体を持つメソッド。それ以外（required）は impl が必ず定義する
-case class TraitDef(
-    param: Seq[(TypeVariable, Kind)],
-    methods: Seq[(Variable, TypeRec[Type])],
-    supers: Seq[TypeConstraint],
-    defaults: Set[Variable] = Set.empty
-) {
-  def paramVars: Seq[TypeVariable] = param.map(_._1)
-  def required: Seq[(Variable, TypeRec[Type])] = methods.filterNot { case (name, _) => defaults(name) }
-}
-case class InstanceDef(name: TypeVariable, targets: Seq[TypeRec[Type]], context: Seq[TypeConstraint], dictName: Variable, params: Seq[(TypeVariable, Kind)])
-
-// メソッドを値として参照したときの型: ∀p̄. [C[p̄]] → sig
-def methodType(traitName: TypeVariable, params: Seq[(TypeVariable, Kind)], sig: TypeRec[Type]): TypeRec[Type] = {
-  val self = TypeConstraint(traitName, params.map { case (p, _) => typeVarT(p) })
-  params.foldRight(instArrowT(self, sig)) { case ((p, k), acc) => forallTypeT(p, k, acc) }
-}
-
-// 制約の辞書の型。trait C は同名のデータ型（辞書）でもあり、C[τ̄] の辞書の型は C[τ̄]。
-// 量化された制約 ∀ā. P̄ ⇒ C[τ̄] の辞書は、前提の辞書から C[τ̄] の辞書を作る多相関数 ∀ā. P̄ の辞書… → C[τ̄]
-def dictionaryType(constraint: TypeConstraint): TypeRec[Type] = {
-  val withPremises = constraint.premises.map(dictionaryType).foldRight(applyTypeConstructor(constraint.name, constraint.arg))(arrowT)
-  constraint.params.foldRight(withPremises) { case ((p, k), acc) => forallTypeT(p, k, acc) }
-}
-
-// module の中の trait M.C の辞書コンストラクタは M.MkC（修飾は最後の名前に付ける）
-// dictionaryType の逆: 辞書の型から、それが表す制約を読み取る（辞書の型でなければ None）
-def constraintOfDictionary(t: TypeRec[Type], traits: Map[TypeVariable, TraitDef]): Option[TypeConstraint] = t.project match {
-  case AST.ForAll(variable, kind, body) =>
-    constraintOfDictionary(body, traits).map(c => c.copy(params = (variable, kind) +: c.params))
-  case AST.Arrow(from, to) => for {
-    premise <- constraintOfDictionary(from, traits)
-    rest <- constraintOfDictionary(to, traits)
-    if rest.params.isEmpty
-  } yield rest.copy(premises = premise +: rest.premises)
-  case _ =>
-    val (head, args) = collectTypeApps(t)
-    head.project match {
-      case AST.TypeVar(name) if traits.get(name).exists(_.param.length == args.length) => Some(TypeConstraint(name, args))
-      case _ => None
+  /** 型引数を渡したときの、フィールドの型 */
+  def fieldTypes(typeArguments: List[Type]): List[Type] = {
+    val instantiated = typeArguments.foldLeft(tpe) {
+      case (Type.Forall(_, _, body), argument) => Type.open(body, argument)
+      case (other, _) => sys.error(s"Compiler invariant violation: constructor $symbol has type ${Type.show(other)}")
     }
-}
+    Type.arrows(instantiated)._1.take(arity)
+  }
 
-def dictionaryConstructor(traitName: TypeVariable): Variable = {
-  val (path, short) = traitName.name.splitAt(traitName.name.lastIndexOf('.') + 1)
-  Variable(s"${path}Mk$short")
-}
-
-def instanceDictionaryName(traitName: TypeVariable, heads: Seq[String]): Variable =
-  Variable(s"$$inst_${traitName.name}_${heads.mkString("_")}")
-
-// trait C のメソッド m のデフォルト: ∀p̄. スーパークラスの辞書… → 必須メソッド… → m のシグネチャ
-def defaultMethodName(traitName: TypeVariable, method: Variable): Variable =
-  Variable(s"$$default_${traitName.name}_${method.name.substring(method.name.lastIndexOf('.') + 1)}")
-
-def superDictionaryName(traitName: TypeVariable, index: Int): Variable =
-  Variable(s"$$super_${traitName.name}_$index")
-
-def instanceKey(traitName: TypeVariable, heads: Seq[String]): (TypeVariable, Seq[Variable]) =
-  (traitName, heads.map(Variable.apply))
-
-// 文脈付きインスタンスの内部型: ∀ā. D₁ → … → Dₖ → C[T̄]
-def instanceType(inst: InstanceDef): TypeRec[Type] = {
-  val dictType = applyTypeConstructor(inst.name, inst.targets)
-  val withContext = inst.context.map(dictionaryType).foldRight(dictType)(arrowT)
-  inst.params.foldRight(withContext) { case ((p, k), acc) => forallTypeT(p, k, acc) }
-}
-
-/** 型検査が作った型付きノードと、その元になったソース上の範囲の対応（同一性で引く）。
- * 親の規則が「この子の式がおかしい」と報告するとき、子の位置を示すのに使う。
- */
-final class SpanTable {
-  private val spans = new java.util.IdentityHashMap[AnyRef, Span]
-  def record(node: AnyRef, span: Span): Unit = spans.putIfAbsent(node, span)
-  def get(node: AnyRef): Option[Span] = Option(spans.get(node))
-}
-
-/** 短い名前から完全な名前（module M の中の x は M.x）への対応。
- * module の公開メンバーの一覧にも、修飾なしで書ける名前の一覧（Env.scope）にも使う。
- */
-case class Names(
-    values: Map[String, Variable],
-    types: Map[String, TypeVariable],
-    modules: Map[String, String],
-    operators: Map[String, OperatorDef] = Map.empty, // 演算子（前置は Operators.prefixKey）に宣言された関数と優先順位
-    syntax: Map[SyntaxHook, Seq[Variable]] = Map.empty // 構文（文字列埋め込み・リテラル・組）に宣言された関数。名前付きのリテラルは値と同じ名前の空間
-) {
-  def withOperator(key: String, definition: OperatorDef): Names = copy(operators = operators + (key -> definition))
-  def withSyntax(hook: SyntaxHook, functions: Seq[Variable]): Names = copy(syntax = syntax + (hook -> functions))
-  def withValue(short: String, full: Variable): Names = copy(values = values + (short -> full))
-  def withType(short: String, full: TypeVariable): Names = copy(types = types + (short -> full))
-  def withModule(short: String, full: String): Names = copy(modules = modules + (short -> full))
-  def ++(other: Names): Names =
-    Names(values ++ other.values, types ++ other.types, modules ++ other.modules, operators ++ other.operators, syntax ++ other.syntax)
-  // この表にあって before にない（または指す先が違う）名前
-  def since(before: Names): Names = {
-    def added[K, V](now: Map[K, V], old: Map[K, V]): Map[K, V] = now.filter { case (key, value) => !old.get(key).contains(value) }
-    Names(added(values, before.values), added(types, before.types), added(modules, before.modules), added(operators, before.operators), added(syntax, before.syntax))
+  /** index 番目のフィールドを読む関数の型 ∀ā. D[ā] → フィールドの型 */
+  def accessorType(index: Int): Type = {
+    val (parameters, body) = Type.openForalls(tpe)
+    val (fieldTypes, result) = Type.arrows(body)
+    parameters.foldRight(Type.Arrow(result, fieldTypes(index)): Type) { case ((parameter, kind), inner) => Type.forall(parameter, kind, inner) }
   }
 }
 
-object Names {
-  val empty: Names = Names(Map.empty, Map.empty, Map.empty)
+final case class FieldDef(name: Option[String], accessor: Option[Symbol])
+
+final case class DataDef(symbol: Symbol, parameters: List[Kind], constructors: List[ConstructorDef]) {
+  def kind: Kind = parameters.foldRight(Kind.Star: Kind)(Kind.Arrow(_, _))
 }
 
-/** 定義（values / typeAliases / dataTypes / …）は完全な名前で引く。ソースに書かれた名前は
- * resolveValue / resolveType で完全な名前に直してから使う（型検査後の AST は完全な名前だけを持つ）。
- */
-case class Env(
-    values: Map[Variable, TypeRec[Type]],
-    typeVars: Map[TypeVariable, Kind],
-    typeAliases: Map[TypeVariable, TypeAlias],
-    dataTypes: Map[TypeVariable, DataDef],
-    constructors: Map[Variable, ConstructorDef],
-    traits: Map[TypeVariable, TraitDef],
-    instances: Map[(TypeVariable, Seq[Variable]), InstanceDef],
-    givens: Seq[TypeConstraint], // スコープ中の制約（with 節・impl の文脈）
-    path: Seq[String] = Seq.empty,                          // 検査中の module（外側から順）
-    scope: Names = Names.empty,                             // 修飾なしで書ける module メンバーと、見えている module
-    members: Names = Names.empty,                           // 検査中の module が公開する名前
-    modules: Map[String, Names] = Map.empty,                // 宣言済みの module（完全な名前）と、その公開メンバー
-    privates: Names = Names.empty,                          // 検査中の module の private なメンバー
-    modulePrivates: Map[String, Names] = Map.empty,         // 宣言済みの module の private なメンバー（同じ module をもう一度開いたときに見える）
-    abstractTypes: Map[TypeVariable, TypeAlias] = Map.empty, // 封印された opaque type と、その表現（ModuleDesugar が読み替える）
-    keepConstraints: Boolean = false,                        // 式の型に残った制約を解決しない（辞書を明示的に渡す適用 f(with d) の f の位置）
-    spans: SpanTable = new SpanTable,                        // 型付きノードの位置（エラー表示用）
-    declared: Set[String] = Set.empty,                       // プログラムのどこかで宣言される top-level の名前（「後で宣言されている」の案内用）
-    defining: Set[String] = Set.empty,                       // rec なしで定義している途中の名前（「rec が要る」の案内用）
-    laterInstances: Set[String] = Set.empty,                 // rec の組の中で後に宣言され、まだスーパークラスに使えないインスタンス（案内用）
-    failed: Set[String] = Set.empty,                         // 検査に失敗した宣言が定義するはずだった名前（それを使う側のエラーは報告しない）
-    failedTraits: Set[String] = Set.empty                    // 検査に失敗した impl / derive の trait（そのインスタンスがないというエラーは報告しない）
+/** signature は trait のパラメータ（parameters の Symbol）で書いたメソッドの型。default はデフォルトの本体を持つ関数 */
+final case class MethodDef(name: String, symbol: Symbol, signature: Type, default: Option[Symbol])
+
+/** trait C[p̄] with S̄ { メソッド… }。辞書のデータ型でもある: data C[p̄] = { MkC(S̄ の辞書…)(メソッド…) }。
+ *  supers は、スーパークラスの制約と、辞書からその辞書を取り出す関数 */
+final case class TraitDef(
+    symbol: Symbol,
+    parameters: List[(Symbol, Kind)],
+    constructor: Symbol,
+    supers: List[(Type, Symbol)],
+    methods: List[MethodDef]
 ) {
-  // 局所的な束縛は、同名の module メンバーを隠す
-  // 名前付きのリテラルも値と同じ名前の空間にあるので、同名の束縛に隠される
-  def withValue(variable: Variable, t: TypeRec[Type]): Env =
-    copy(values = values + (variable -> t), scope = scope.copy(values = scope.values - variable.name, syntax = scope.syntax - SyntaxHook.NamedLiteral(variable.name)))
-  def withValues(bindings: Iterable[(Variable, TypeRec[Type])]): Env =
-    copy(values = values ++ bindings, scope = scope.copy(
-      values = scope.values -- bindings.map(_._1.name),
-      syntax = scope.syntax -- bindings.map(b => SyntaxHook.NamedLiteral(b._1.name))
-    ))
-  def withTypeVar(variable: TypeVariable, kind: Kind): Env = withTypeVars(Seq(variable -> kind))
-  def withTypeVars(params: Iterable[(TypeVariable, Kind)]): Env =
-    copy(typeVars = typeVars ++ params, scope = scope.copy(types = scope.types -- params.map(_._1.name)))
-  // 内側で入った制約を先に調べる（同じ制約があれば内側が優先される）
-  def withGivens(constraints: Seq[TypeConstraint]): Env = copy(givens = constraints ++ givens)
-  def withAlias(variable: TypeVariable, alias: TypeAlias): Env =
-    copy(typeAliases = typeAliases + (variable -> alias), scope = scope.copy(types = scope.types - variable.name))
-  def withData(variable: TypeVariable, dataDef: DataDef): Env =
-    copy(dataTypes = dataTypes + (variable -> dataDef), scope = scope.copy(types = scope.types - variable.name))
+  def instantiate(tpe: Type, arguments: List[Type]): Type = Type.substitute(tpe, parameters.map(_._1).zip(arguments).toMap)
+  def required: List[MethodDef] = methods.filter(_.default.isEmpty)
 
-  def definesTypeName(name: TypeVariable): Boolean =
-    typeVars.contains(name) || typeAliases.contains(name) || dataTypes.contains(name) || abstractTypes.contains(name)
+  /** C[p̄]: 辞書の型 */
+  def dictionaryType: Type = parameters.foldLeft(Type.Data(symbol): Type) { case (applied, (parameter, _)) => Type.Apply(applied, Type.Var(parameter)) }
 
-  // ---- module ----
+  private def quantified(tpe: Type): Type = parameters.foldRight(tpe) { case ((parameter, kind), inner) => Type.forall(parameter, kind, inner) }
 
-  def qualify(name: String): String = (path :+ name).mkString(".")
+  /** メソッドの型 ∀p̄. [C[p̄]] → シグネチャ */
+  def methodType(method: MethodDef): Type = quantified(Type.Given(dictionaryType, method.signature))
 
-  // 検査中の module のメンバーとして宣言する名前。以降は短い名前で書け、module の外へ公開される
-  def exportValue(short: Variable): Env = {
-    val full = Variable(qualify(short.name))
+  /** スーパークラスの辞書を取り出す関数の型 ∀p̄. C[p̄] → S */
+  def projectionType(superConstraint: Type): Type = quantified(Type.Arrow(dictionaryType, superConstraint))
+
+  /** デフォルトの本体を持つ関数の型 ∀p̄. [スーパークラス…] → 必須メソッド… → シグネチャ */
+  def defaultType(method: MethodDef): Type =
+    quantified(supers.map(_._1).foldRight(required.map(_.signature).foldRight(method.signature)(Type.Arrow(_, _)))(Type.Given(_, _)))
+
+  /** 辞書の構成子の型 ∀p̄. スーパークラスの辞書… → メソッド… → C[p̄] */
+  def constructorType: Type = quantified((supers.map(_._1) ++ methods.map(_.signature)).foldRight(dictionaryType)(Type.Arrow(_, _)))
+
+  /** 辞書のデータ型 */
+  def dictionary: DataDef = {
+    val fields = (supers ++ methods).map(_ => FieldDef(None, None))
+    DataDef(symbol, parameters.map(_._2), List(ConstructorDef(constructor, symbol, 0, constructorType, fields)))
+  }
+}
+
+/** 解決に使える辞書: 制約（辞書の型）と、その辞書を表す式 */
+final case class Evidence(constraint: Type, term: Typed)
+
+/** 型の先頭の形。インスタンスは「trait と、引数それぞれの先頭の形」ごとに 1 つまで */
+enum TypeHead {
+  case Named(symbol: Symbol)
+  case Primitive(name: String)
+  case Function
+}
+
+object TypeHead {
+  def of(tpe: Type): Option[TypeHead] = tpe match {
+    case Type.Data(symbol) => Some(Named(symbol))
+    case Type.Var(symbol) => Some(Named(symbol))
+    case Type.Primitive(name) => Some(Primitive(name))
+    case Type.Arrow(_, _) => Some(Function)
+    case Type.Apply(function, _) => of(function)
+    case _ => None
+  }
+}
+
+final case class InstanceKey(traitSymbol: Symbol, heads: List[TypeHead])
+
+/** 型の検査に使う環境（型検査と Core の検査で共有する） */
+final case class Env(
+    values: Map[Symbol, Type],
+    typeVariables: Map[Symbol, Kind],
+    aliases: Map[Symbol, (Type, Kind)],
+    dataTypes: Map[Symbol, DataDef],
+    constructors: Map[Symbol, ConstructorDef],
+    traits: Map[Symbol, TraitDef],
+    // 宣言されたインスタンス（辞書を指す変数）
+    instances: Map[InstanceKey, Evidence],
+    // スコープにある制約（with 節・using）。内側が先頭
+    givens: List[Evidence],
+    // 宣言されているが、ここからは見えないインスタンス（エラーの説明にだけ使う）。true なら、同じ rec の組の後ろにある
+    hidden: List[(Type, Boolean)] = Nil,
+    // 宣言に失敗したインスタンス（これを使う所のエラーは報告しない）
+    failedInstances: Set[InstanceKey] = Set.empty
+) {
+  def withValue(symbol: Symbol, tpe: Type): Env = copy(values = values + (symbol -> tpe))
+  def withValues(bindings: Iterable[(Symbol, Type)]): Env = copy(values = values ++ bindings)
+  def withTypeVariable(symbol: Symbol, kind: Kind): Env = copy(typeVariables = typeVariables + (symbol -> kind))
+  def withTypeVariables(parameters: Iterable[(Symbol, Kind)]): Env = copy(typeVariables = typeVariables ++ parameters)
+  def withAlias(symbol: Symbol, tpe: Type, kind: Kind): Env = copy(aliases = aliases + (symbol -> (tpe, kind)))
+  def withGiven(evidence: Evidence): Env = copy(givens = evidence :: givens)
+  def withInstances(added: Iterable[(InstanceKey, Evidence)]): Env = copy(instances = instances ++ added)
+
+  /** データ型と、その構成子（構成子は値でもある） */
+  def withDataTypes(definitions: List[DataDef]): Env = {
+    val all = definitions.flatMap(_.constructors)
     copy(
-      scope = scope.withValue(short.name, full).copy(syntax = scope.syntax - SyntaxHook.NamedLiteral(short.name)),
-      members = members.withValue(short.name, full).copy(syntax = members.syntax - SyntaxHook.NamedLiteral(short.name))
+      dataTypes = dataTypes ++ definitions.map(d => d.symbol -> d),
+      constructors = constructors ++ all.map(c => c.symbol -> c),
+      values = values ++ all.map(c => c.symbol -> c.tpe)
     )
   }
-  def exportType(short: TypeVariable): Env = {
-    val full = TypeVariable(qualify(short.name))
-    copy(scope = scope.withType(short.name, full), members = members.withType(short.name, full))
-  }
 
-  // 修飾された名前 A.B.x の A.B が指す module の公開メンバー
-  // 修飾子が指す module。閉じた module は公開メンバーの表、検査中の module（自身と外側）はその経路
-  private enum ModuleRef {
-    case Closed(names: Names)
-    case InProgress(modulePath: Seq[String])
-  }
-
-  private def moduleRef(qualifier: Seq[String]): Option[ModuleRef] = qualifier match {
-    case Seq() => None
-    case head +: rest =>
-      // 見えている module を先に、なければ検査中の module（内側から）を探す
-      val start: Option[ModuleRef] = scope.modules.get(head).flatMap(modules.get).map(ModuleRef.Closed(_)).orElse {
-        val index = path.lastIndexOf(head)
-        Option.when(index >= 0)(ModuleRef.InProgress(path.take(index + 1)))
-      }
-      rest.foldLeft(start) { (found, name) =>
-        found.flatMap {
-          case ModuleRef.InProgress(modulePath) if path.startsWith(modulePath :+ name) => Some(ModuleRef.InProgress(modulePath :+ name))
-          // 検査中の module の中で閉じた module は、private でも中からは見える
-          case ModuleRef.InProgress(modulePath) => modules.get((modulePath :+ name).mkString(".")).map(ModuleRef.Closed(_))
-          case ModuleRef.Closed(names) => names.modules.get(name).flatMap(modules.get).map(ModuleRef.Closed(_))
-        }
-      }
-  }
-
-  // open できるのは閉じた module だけ
-  def resolveModule(modulePath: Seq[String]): Option[Names] = moduleRef(modulePath).collect { case ModuleRef.Closed(names) => names }
-
-  // 修飾なしの名前は、module メンバーの短い名前でなければそのまま（局所的な束縛か top-level の名前）。
-  // 検査中の module を修飾子にした名前（M の中の M.x）は、private なものも含めて、定義済みなら参照できる
-  def resolveValue(name: Variable): Option[Variable] = {
-    val segments = name.name.split('.').toSeq
-    if (segments.length == 1) Some(scope.values.getOrElse(name.name, name))
-    else moduleRef(segments.init).flatMap {
-      case ModuleRef.Closed(names) => names.values.get(segments.last)
-      case ModuleRef.InProgress(modulePath) => Some(Variable((modulePath :+ segments.last).mkString("."))).filter(values.contains)
+  /** 型のカインド。型は検査済みのものに限る（合わなければコンパイラのバグ） */
+  def kindOf(tpe: Type): Kind = tpe match {
+    case Type.Var(symbol) => typeVariables.getOrElse(symbol, invariant(s"type variable $symbol is not in scope"))
+    case Type.Data(symbol) => dataTypes.getOrElse(symbol, invariant(s"data type $symbol is not defined")).kind
+    case Type.Primitive(name) => (1 to Primitives.arity(name)).foldLeft(Kind.Star: Kind)((kind, _) => Kind.Arrow(Kind.Star, kind))
+    case Type.Arrow(_, _) | Type.Given(_, _) | Type.Forall(_, _, _) => Kind.Star
+    case Type.Lambda(name, kind, body) =>
+      val parameter = new Symbol(name.name)
+      Kind.Arrow(kind, withTypeVariable(parameter, kind).kindOf(Type.open(body, Type.Var(parameter))))
+    case Type.Apply(function, _) => kindOf(function) match {
+      case Kind.Arrow(_, result) => result
+      case Kind.Star => invariant(s"${Type.show(function)} is applied but has kind *")
     }
+    case Type.Bound(_) => invariant("a bound type variable escaped its binder")
   }
 
-  def resolveType(name: TypeVariable): Option[TypeVariable] = {
-    val segments = name.name.split('.').toSeq
-    if (segments.length == 1) Some(scope.types.getOrElse(name.name, name))
-    else moduleRef(segments.init).flatMap {
-      case ModuleRef.Closed(names) => names.types.get(segments.last)
-      case ModuleRef.InProgress(modulePath) => Some(TypeVariable((modulePath :+ segments.last).mkString("."))).filter(definesTypeName)
-    }
-  }
-
-  // 型の module（型と同じ完全な名前の module）のメンバー。検査中の module なら、private なものと宣言したばかりのものも見える
-  def moduleMember(module: String, member: String): Option[Variable] = {
-    val inside = path.startsWith(module.split('.').toSeq)
-    modules.get(module).flatMap(_.values.get(member))
-      .orElse(Option.when(inside)(Variable(s"$module.$member")).filter(values.contains))
-  }
-
-  def lookupValue(name: Variable): Option[(Variable, TypeRec[Type])] =
-    resolveValue(name).flatMap(full => values.get(full).map(full -> _))
+  private def invariant(message: String): Nothing = sys.error(s"Compiler invariant violation: $message")
 }
 
 object Env {
-  val empty: Env = Env(
-    Map.empty, Map.empty, Map.empty, Map.empty, Map.empty,
-    Map.empty, Map.empty, Seq.empty
-  )
-}
-
-case class DataEnv(dataTypes: Map[TypeVariable, DataDef])
-
-object DataEnv {
-  def from(env: Env): DataEnv = DataEnv(env.dataTypes)
+  val empty: Env = Env(Map.empty, Map.empty, Map.empty, Map.empty, Map.empty, Map.empty, Map.empty, Nil)
 }

@@ -2,32 +2,9 @@ package com.yuuki14202028
 
 class MultiParamTraitSuite extends munit.FunSuite {
 
-  private def parseDecl(src: String): AST[Rec, Decl] =
-    ParserAST.programParser.parseAll(src) match {
-      case Right(p) =>
-        val decls = eraseIndex(p).unfix match { case AST.Program(decls) => decls }
-        assertEquals(decls.size, 1, clue(decls.map(_.show)))
-        decls.head.unfix
-      case Left(e) => fail(s"parse failed: $e")
-    }
-
-  private def validate(src: String): Either[String, TypeRec[AST.Program.type]] =
-    ParserAST.programParser.parseAll(src).left.map(e => s"Parse error: $e").flatMap(p => TAnalyser.validate(p).left.map(_.render))
-
-  private def desugar(src: String): Either[String, TypeRec[AST.Program.type]] =
-    validate(src).map(PatternDesugar.desugar).map(TraitEncoder.encode)
-
-  private def church(src: String): Either[String, TypeRec[AST.Program.type]] =
-    desugar(src).map(ChurchEncoder.encode)
-
-  private def assertLeftContains(result: Either[String, ?], expected: String): Unit = result match {
-    case Left(err) => assert(err.contains(expected), clue(err))
-    case Right(_)  => fail(s"expected error containing '$expected', but succeeded")
-  }
-
-  private def assertRight(result: Either[String, ?]): Unit = result match {
-    case Right(_)  => ()
-    case Left(err) => fail(err)
+  private def assertError(source: String)(expected: PartialFunction[CompileError, Unit])(using munit.Location): Unit = {
+    val found = Lam.errors(source)
+    assert(found.exists(expected.isDefinedAt), clue(found.map(_.message)))
   }
 
   private val conversionTrait =
@@ -42,73 +19,46 @@ class MultiParamTraitSuite extends munit.FunSuite {
       |}
       |
       |impl Conversion[bool][i32] {
-      |  def convert = λx: bool. 42
+      |  def convert = λx: bool. if x then 42 else 0
       |}
       |
       |let main(): i32 = convert[bool][i32](convert[i32][bool](0))
       |""".stripMargin
 
-  // ---- パース ----
-
-  test("パース: 2 パラメータ trait（既定カインド *）") {
-    parseDecl(conversionTrait) match {
-      case AST.TopTrait(v, params, supers, methods) =>
-        assertEquals(v, TypeVariable("Conversion"))
-        assertEquals(params, Seq((TypeVariable("a"), Kind.Star), (TypeVariable("b"), Kind.Star)))
-        assert(supers.isEmpty)
-        assertEquals(methods.map(_.name), Seq(Variable("convert")))
-      case other => fail(s"not TopTrait: $other")
-    }
-  }
+  // ---- 構文 ----
 
   test("パース: カインド注釈付きの混在パラメータ") {
-    parseDecl("trait Collect[f: * → *][a] {\n  def collect(x: a): f[a]\n}\n") match {
-      case AST.TopTrait(v, params, _, _) =>
-        assertEquals(v, TypeVariable("Collect"))
-        assertEquals(
-          params,
-          Seq((TypeVariable("f"), Kind.Arrow(Kind.Star, Kind.Star)), (TypeVariable("a"), Kind.Star))
-        )
-      case other => fail(s"not TopTrait: $other")
-    }
-  }
-
-  test("パース: 複数ターゲットの impl") {
-    parseDecl("impl Conversion[i32][bool] {\n  def convert = λx: i32. true\n}\n") match {
-      case AST.TopImpl(v, params, targets, context, methods, _) =>
-        assertEquals(v, TypeVariable("Conversion"))
-        assert(params.isEmpty)
-        assertEquals(targets.map(_.show), Seq("i32", "bool"))
-        assert(context.isEmpty)
-        assertEquals(methods.map(_.name), Seq(Variable("convert")))
-      case other => fail(s"not TopImpl: $other")
-    }
+    val src =
+      """data Box[a] = { MkBox(a) }
+        |trait Collect[f: * → *][a] {
+        |  def collect(x: a): f[a]
+        |}
+        |impl Collect[Box][i32] {
+        |  def collect(x: i32): Box[i32] = MkBox[i32](x)
+        |}
+        |let main(): i32 = match collect[Box][i32](3) { MkBox(n) => n }
+        |""".stripMargin
+    assertEquals(Lam.exitCode(src), 3)
   }
 
   test("パース: 複数引数の with 制約") {
-    parseDecl("let f[a][b](x: a): i32 with Conversion[a][b] = 0\n") match {
-      case AST.TopLet(v, types, _) =>
-        assertEquals(v, Variable("f"))
-        assertEquals(types.show, "∀a. ∀b. [Conversion[a][b]] → a → i32")
-      case other => fail(s"not TopLet: $other")
-    }
+    val src = conversionTrait + "let f[a][b](x: a): i32 with Conversion[a][b] = 0\nlet g: i32 = f\nlet main(): i32 = 0\n"
+    // 型は、不一致のエラーの表示から読む
+    assertError(src) { case error: CompileError.TypeMismatch if error.message.contains("found `∀a. ∀b. [Conversion[a][b]] → a → i32`") => }
   }
 
   // ---- 成功パス ----
 
-  test("成功: trait/impl/メソッド利用が型検査・脱糖・Church encoding を通る") {
-    assertRight(church(conversionProgram))
+  test("成功: 2 パラメータの trait / 複数ターゲットの impl / メソッド利用") {
+    assertEquals(Lam.exitCode(conversionProgram), 42)
   }
 
-  test("成功: 脱糖結果にヘッド対ごとの辞書値が現れる") {
-    desugar(conversionProgram) match {
-      case Right(p) =>
-        val shown = p.show
-        assert(shown.contains("$inst_Conversion_i32_bool"), clue(shown))
-        assert(shown.contains("$inst_Conversion_bool_i32"), clue(shown))
-        assert(shown.contains("MkConversion"), clue(shown))
-      case Left(err) => fail(err)
-    }
+  test("成功: 辞書は構成子 MkConversion の値で、型は Conversion[a][b]") {
+    val src = conversionTrait +
+      """let custom: Conversion[i32][bool] = MkConversion[i32][bool](λx: i32. false)
+        |let main(): i32 = if convert[i32][bool](with custom)(0) then 1 else 2
+        |""".stripMargin
+    assertEquals(Lam.exitCode(src), 2)
   }
 
   test("成功: 複数引数制約付き関数の辞書渡し") {
@@ -121,7 +71,7 @@ class MultiParamTraitSuite extends munit.FunSuite {
         |
         |let main(): i32 = through[bool][i32](true)
         |""".stripMargin
-    assertRight(church(src))
+    assertEquals(Lam.exitCode(src), 42)
   }
 
   test("成功: ヘッドの組が異なるインスタンスは重複にならない") {
@@ -134,15 +84,15 @@ class MultiParamTraitSuite extends munit.FunSuite {
         |  def convert = λx: i32. x
         |}
         |
-        |let main(): i32 = convert[i32][i32](0)
+        |let main(): i32 = if convert[i32][bool](0) then convert[i32][i32](5) else 0
         |""".stripMargin
-    assertRight(church(src))
+    assertEquals(Lam.exitCode(src), 5)
   }
 
   test("成功: 引数の数が合う with 制約は受理される") {
     val src = conversionTrait +
       "let f[a][b](x: a): i32 with Conversion[a][b] = 0\nlet main(): i32 = 0\n"
-    assertRight(validate(src))
+    assertEquals(Lam.exitCode(src), 0)
   }
 
   // ---- エラーパス ----
@@ -154,7 +104,7 @@ class MultiParamTraitSuite extends munit.FunSuite {
         |}
         |let main(): i32 = 0
         |""".stripMargin
-    assertLeftContains(validate(src), "trait expects 2 type argument(s), got 1")
+    assertError(src) { case CompileError.ImplTargetArity("Conversion", 2, 1, _) => }
   }
 
   test("検査失敗: 同一のヘッドの組は Overlapping instance") {
@@ -167,7 +117,7 @@ class MultiParamTraitSuite extends munit.FunSuite {
         |}
         |let main(): i32 = 0
         |""".stripMargin
-    assertLeftContains(validate(src), "Overlapping instance")
+    assertError(src) { case _: CompileError.OverlappingInstance => }
   }
 
   test("検査失敗: メソッド本体の型が特殊化済み署名と合わない") {
@@ -177,13 +127,16 @@ class MultiParamTraitSuite extends munit.FunSuite {
         |}
         |let main(): i32 = 0
         |""".stripMargin
-    assertLeftContains(validate(src), "Method type mismatch")
+    assertError(src) {
+      case CompileError.MethodTypeMismatch("impl Conversion[i32][bool]", "convert", expected, actual, _)
+          if Type.show(expected) == "bool" && Type.show(actual) == "i32" =>
+    }
   }
 
   test("検査失敗: with 制約の引数の数が trait と合わない") {
     val src = conversionTrait +
       "let f[a](x: a): i32 with Conversion[a] = 0\nlet main(): i32 = 0\n"
-    assertLeftContains(validate(src), "expects 2 type arguments, got 1")
+    assertError(src) { case _: CompileError.KindMismatch => }
   }
 
   test("検査失敗: with 制約の引数のカインドが trait と合わない") {
@@ -191,7 +144,7 @@ class MultiParamTraitSuite extends munit.FunSuite {
       """data Maybe[a] = { Nothing, Just(a) }
         |""".stripMargin + conversionTrait +
         "let f[a](x: a): i32 with Conversion[a][Maybe] = 0\nlet main(): i32 = 0\n"
-    assertLeftContains(validate(src), "has kind * → *, expected *")
+    assertError(src) { case CompileError.KindMismatch(Kind.Star, Kind.Arrow(Kind.Star, Kind.Star), _) => }
   }
 
   test("検査失敗: impl ターゲットのカインドが trait パラメータと合わない") {
@@ -203,18 +156,18 @@ class MultiParamTraitSuite extends munit.FunSuite {
           |}
           |let main(): i32 = 0
           |""".stripMargin
-    assertLeftContains(validate(src), "Kind mismatch")
+    assertError(src) { case _: CompileError.KindMismatch => }
   }
 
   test("検査失敗: パラメータ名の重複は拒否") {
     val src = "trait Conversion[a][a] {\n  def convert(x: a): a\n}\nlet main(): i32 = 0\n"
-    assertLeftContains(validate(src), "duplicate parameters")
+    assertError(src) { case CompileError.AlreadyDefined("a", _) => }
   }
 
   test("検査失敗: スーパークラス制約でも引数の数を検査する") {
     val src = conversionTrait +
       "trait Into[a] with Conversion[a] {\n  def into(x: a): i32\n}\nlet main(): i32 = 0\n"
-    assertLeftContains(validate(src), "expects 2 type arguments, got 1")
+    assertError(src) { case _: CompileError.KindMismatch => }
   }
 
   test("NoInstance: 引数の組に合うインスタンスがなければ型検査で拒否") {
@@ -224,7 +177,7 @@ class MultiParamTraitSuite extends munit.FunSuite {
         |}
         |let main(): i32 = convert[bool][i32](true)
         |""".stripMargin
-    assertLeftContains(validate(src), "No instance")
+    assertError(src) { case error: CompileError.NoInstance if Type.show(error.goal) == "Conversion[bool][i32]" => }
   }
 
   test("型適用が trait パラメータ数に満たない参照は、制約が残った型になり型検査で拒否") {
@@ -235,6 +188,8 @@ class MultiParamTraitSuite extends munit.FunSuite {
         |let f: ∀b. i32 → b = convert[i32]
         |let main(): i32 = 0
         |""".stripMargin
-    assertLeftContains(validate(src), "Type mismatch: expected ∀b. i32 → b, actual ∀b. [Conversion[i32][b]] → i32 → b")
+    assertError(src) {
+      case error: CompileError.TypeMismatch if error.message.contains("expected `∀b. i32 → b`, found `∀b. [Conversion[i32][b]] → i32 → b`") =>
+    }
   }
 }

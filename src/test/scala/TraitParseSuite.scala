@@ -1,134 +1,155 @@
 package com.yuuki14202028
 
+/** trait / impl / with の構文が読めることを、プログラムを動かして確かめる */
 class TraitParseSuite extends munit.FunSuite {
 
-  private def parseDecls(src: String): Seq[Rec[Decl]] =
-    ParserAST.programParser.parseAll(src) match {
-      case Right(p) => eraseIndex(p).unfix match { case AST.Program(decls) => decls }
-      case Left(e)  => fail(s"parse failed: $e")
-    }
+  private def syntaxErrors(source: String): List[CompileError] =
+    Lam.errors(source).collect { case error: CompileError.Syntax => error }
 
-  private def parseDecl(src: String): AST[Rec, Decl] = {
-    val decls = parseDecls(src)
-    assertEquals(decls.size, 1, clue(decls.map(_.show)))
-    decls.head.unfix
-  }
+  private val maybe = "data Maybe[a] = { Nothing, Just(a) }\n"
 
   test("trait: 単一メソッド（注釈なしパラメータ）") {
-    parseDecl("trait Show[a] {\n  def show: a → foreign.C.String\n}\n") match {
-      case AST.TopTrait(v, params, supers, methods) =>
-        assertEquals(v, TypeVariable("Show"))
-        assertEquals(params, Seq((TypeVariable("a"), Kind.Star)))
-        assert(supers.isEmpty)
-        assertEquals(methods.map(_.name), Seq(Variable("show")))
-        assert(methods.forall(_.body.isEmpty))
-      case other => fail(s"not TopTrait: $other")
-    }
+    val src =
+      """trait Show[a] {
+        |  def show: a → foreign.C.String
+        |}
+        |let main(): i32 = 0
+        |""".stripMargin
+    assertEquals(Lam.exitCode(src), 0)
   }
 
   test("trait: 高階カインドパラメータと型パラメータ付きメソッド") {
-    parseDecl("trait Functor[f: * → *] {\n  def fmap[a][b](ab: a → b): f[a] → f[b]\n}\n") match {
-      case AST.TopTrait(v, params, supers, methods) =>
-        assertEquals(v, TypeVariable("Functor"))
-        assertEquals(params, Seq((TypeVariable("f"), Kind.Arrow(Kind.Star, Kind.Star))))
-        assert(supers.isEmpty)
-        assertEquals(methods.map(_.name), Seq(Variable("fmap")))
-      case other => fail(s"not TopTrait: $other")
-    }
+    val src = maybe +
+      """trait Functor[f: * → *] {
+        |  def fmap[a][b](ab: a → b): f[a] → f[b]
+        |}
+        |impl Functor[Maybe] {
+        |  def fmap[a][b](ab: a → b): Maybe[a] → Maybe[b] = λm: Maybe[a]. match m {
+        |    Nothing => Nothing[b]
+        |    Just(x) => Just[b](ab(x))
+        |  }
+        |}
+        |let main(): i32 = match fmap[Maybe][bool][i32](λb: bool. 5)(Just[bool](true)) {
+        |  Nothing => 0
+        |  Just(n) => n
+        |}
+        |""".stripMargin
+    assertEquals(Lam.exitCode(src), 5)
   }
 
   test("trait: 複数メソッド") {
-    parseDecl("trait Monad[m: * → *] {\n  def ret: ∀a. a → m[a]\n  def bind: ∀a. ∀b. m[a] → (a → m[b]) → m[b]\n}\n") match {
-      case AST.TopTrait(_, _, _, methods) =>
-        assertEquals(methods.map(_.name.name), Seq("ret", "bind"))
-      case other => fail(s"not TopTrait: $other")
-    }
+    val src = maybe +
+      """trait Monad[m: * → *] {
+        |  def ret: ∀a. a → m[a]
+        |  def bind: ∀a. ∀b. m[a] → (a → m[b]) → m[b]
+        |}
+        |impl Monad[Maybe] {
+        |  def ret = Λa. λx: a. Just[a](x)
+        |  def bind = Λa. Λb. λv: Maybe[a]. λf: a → Maybe[b]. match v {
+        |    Nothing => Nothing[b]
+        |    Just(x) => f(x)
+        |  }
+        |}
+        |let main(): i32 = match bind[Maybe][i32][i32](ret[Maybe][i32](2))(λn: i32. Just[i32](3)) {
+        |  Nothing => 0
+        |  Just(n) => n
+        |}
+        |""".stripMargin
+    assertEquals(Lam.exitCode(src), 3)
   }
 
   test("trait: スーパークラス制約 with") {
-    parseDecl("trait Ord[a] with Eq[a] {\n  def cmp(x: a)(y: a): i32\n}\n") match {
-      case AST.TopTrait(v, _, supers, _) =>
-        assertEquals(v, TypeVariable("Ord"))
-        assertEquals(supers.map(_.name), Seq(TypeVariable("Eq")))
-        assertEquals(supers.head.arg.map(_.show), Seq("a"))
-      case other => fail(s"not TopTrait: $other")
-    }
+    val src =
+      """trait Eq[a] {
+        |  def same(x: a)(y: a): bool
+        |}
+        |trait Ord[a] with Eq[a] {
+        |  def cmp(x: a)(y: a): i32
+        |}
+        |impl Eq[i32] { def same(x: i32)(y: i32): bool = true }
+        |impl Ord[i32] { def cmp(x: i32)(y: i32): i32 = 4 }
+        |let viaSuper[a](x: a): i32 with Ord[a] = if same[a](x)(x) then cmp[a](x)(x) else 0
+        |let main(): i32 = viaSuper[i32](1)
+        |""".stripMargin
+    assertEquals(Lam.exitCode(src), 4)
   }
 
   test("impl: 注釈なしメソッド") {
-    parseDecl("impl Show[i32] {\n  def show = λx: i32. x\n}\n") match {
-      case AST.TopImpl(v, params, targets, context, methods, _) =>
-        assertEquals(v, TypeVariable("Show"))
-        assert(params.isEmpty)
-        assertEquals(targets.map(_.show), Seq("i32"))
-        assert(context.isEmpty)
-        assertEquals(methods.map(_.name), Seq(Variable("show")))
-        assert(methods.head.sig.isEmpty)
-      case other => fail(s"not TopImpl: $other")
-    }
-  }
-
-  test("impl: 型/値パラメータと戻り値注釈付きメソッド") {
-    parseDecl("impl Functor[Maybe] {\n  def fmap[a][b](ab: a → b): Maybe[a] → Maybe[b] = λm: Maybe[a]. m\n}\n") match {
-      case AST.TopImpl(v, _, targets, _, methods, _) =>
-        assertEquals(v, TypeVariable("Functor"))
-        assertEquals(targets.map(_.show), Seq("Maybe"))
-        val m = methods.head
-        assertEquals(m.name, Variable("fmap"))
-        assert(m.sig.isDefined)
-        // body は型抽象 → ラムダへ脱糖される
-        m.body.unfix match {
-          case AST.TyAbs(_, _, _) => ()
-          case other => fail(s"body not desugared to TyAbs: $other")
-        }
-      case other => fail(s"not TopImpl: $other")
-    }
-  }
-
-  test("impl: 複数メソッド") {
-    parseDecl("impl Monad[Maybe] {\n  def ret = λx: i32. x\n  def bind = λx: i32. x\n}\n") match {
-      case AST.TopImpl(_, _, _, _, methods, _) =>
-        assertEquals(methods.map(_.name.name), Seq("ret", "bind"))
-      case other => fail(s"not TopImpl: $other")
-    }
+    val src =
+      """trait Show[a] {
+        |  def show: a → i32
+        |}
+        |impl Show[i32] {
+        |  def show = λx: i32. x
+        |}
+        |let main(): i32 = show[i32](6)
+        |""".stripMargin
+    assertEquals(Lam.exitCode(src), 6)
   }
 
   test("impl: 型パラメータと with 文脈") {
-    parseDecl("impl[a] Show[Maybe[a]] with Show[a] {\n  def show = λx: Maybe[a]. x\n}\n") match {
-      case AST.TopImpl(v, params, targets, context, methods, _) =>
-        assertEquals(v, TypeVariable("Show"))
-        assertEquals(params, Seq((TypeVariable("a"), Kind.Star)))
-        assertEquals(targets.map(_.show), Seq("Maybe[a]"))
-        assertEquals(context.map(_.name), Seq(TypeVariable("Show")))
-        assertEquals(context.head.arg.map(_.show), Seq("a"))
-        assertEquals(methods.map(_.name), Seq(Variable("show")))
-      case other => fail(s"not TopImpl: $other")
-    }
+    val src = maybe +
+      """trait Show[a] {
+        |  def show: a → i32
+        |}
+        |impl Show[i32] {
+        |  def show = λx: i32. x
+        |}
+        |impl[a] Show[Maybe[a]] with Show[a] {
+        |  def show = λx: Maybe[a]. match x {
+        |    Nothing => 0
+        |    Just(v) => show[a](v)
+        |  }
+        |}
+        |let main(): i32 = show[Maybe[i32]](Just[i32](8))
+        |""".stripMargin
+    assertEquals(Lam.exitCode(src), 8)
   }
 
   test("let: with 制約は型パラメータ直下の暗黙引数になる") {
-    parseDecl("let f[a](x: a): i32 with Show[a] = 0\n") match {
-      case AST.TopLet(v, types, value) =>
-        assertEquals(v, Variable("f"))
-        assertEquals(types.show, "∀a. [Show[a]] → a → i32")
-        assertEquals(value.show, "Λa. λ[Show[a]]. λx: a. 0")
-      case other => fail(s"not TopLet: $other")
-    }
+    val src =
+      """trait Show[a] {
+        |  def show: a → i32
+        |}
+        |let f[a](x: a): i32 with Show[a] = 0
+        |let g: i32 = f
+        |let main(): i32 = 0
+        |""".stripMargin
+    // 型は、不一致のエラーの表示から読む
+    assert(Lam.messages(src).exists(_.contains("found `∀a. [Show[a]] → a → i32`")), clue(Lam.messages(src)))
   }
 
-  test("let: with なしは従来どおり TopLet") {
-    parseDecl("let f[a](x: a): i32 = 0\n") match {
-      case AST.TopLet(v, _, _) => assertEquals(v, Variable("f"))
-      case other => fail(s"not TopLet: $other")
-    }
+  test("let: with なしは従来どおり") {
+    val src =
+      """let f[a](x: a): i32 = 0
+        |let g: i32 = f
+        |let main(): i32 = 0
+        |""".stripMargin
+    assert(Lam.messages(src).exists(_.contains("found `∀a. a → i32`")), clue(Lam.messages(src)))
   }
 
   test("trait と impl を同一プログラムで混在") {
-    val decls = parseDecls(
-      "trait Show[a] {\n  def show: a → foreign.C.String\n}\n\nimpl Show[i32] {\n  def show = λx: i32. x\n}\n"
-    )
-    assertEquals(decls.size, 2)
-    assert(decls(0).unfix.isInstanceOf[AST.TopTrait[?, ?]])
-    assert(decls(1).unfix.isInstanceOf[AST.TopImpl[?, ?]])
+    val src =
+      """trait Show[a] {
+        |  def show: a → foreign.C.String
+        |}
+        |
+        |impl Show[i32] {
+        |  def show = foreign[i32 → foreign.C.String] int_to_string
+        |}
+        |let print: foreign.C.String → i32 = foreign[foreign.C.String → i32] print_string_inline
+        |let main(): i32 = print(show[i32](12))
+        |""".stripMargin
+    assertEquals(Lam.output(src), "12")
+  }
+
+  test("構文エラー: with の後には制約が要る") {
+    assert(syntaxErrors("let f[a](x: a): i32 with = 0\nlet main(): i32 = 0\n").nonEmpty)
+    assert(syntaxErrors("trait Ord[a] with {\n  def cmp(x: a)(y: a): i32\n}\nlet main(): i32 = 0\n").nonEmpty)
+  }
+
+  test("構文エラー: trait / impl の本体は def の並び") {
+    assert(syntaxErrors("trait Show[a] {\n  let show: a → i32\n}\nlet main(): i32 = 0\n").nonEmpty)
+    assert(syntaxErrors("trait Show[a] { def show: a → i32 }\nimpl Show[i32] {\n  show = λx: i32. x\n}\nlet main(): i32 = 0\n").nonEmpty)
   }
 }

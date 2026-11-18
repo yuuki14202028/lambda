@@ -1,8 +1,8 @@
-error: data type `List` refers to itself
- --> rec_data_missing.lam:1:1
+error: cannot find type `List` in this scope
+ --> rec_data_missing.lam:1:31
   |
 1 | data List[a] = { Nil, Cons(a)(List[a]) }
-  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ this declaration
+  |                               ^^^^ not found in this scope
   |
-  = note: recursion must be marked with `rec`
-  = help: write `rec data List …`
+  = note: `List` refers to itself, and recursion must be marked with `rec`
+  = help: write `rec data` to make `List` visible in its own definition
